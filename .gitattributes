@@ -1,0 +1,3 @@
+# Windows (Git Bash) でも検証スクリプトが動くよう LF を強制する
+*.sh   text eol=lf
+*.peec text eol=lf

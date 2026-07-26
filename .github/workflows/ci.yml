@@ -1,0 +1,142 @@
+# OpenPEEC CI — 3 OS でビルド + 解析解との検証 (data/sample/peec_check.sh)。
+# 依存ライブラリなし (OpenMP は任意) のため vcpkg/HDF5 等の手順は不要。
+# 検証スクリプトは 3 OS とも同一の POSIX sh を使う (Windows は Git Bash)。
+name: CI
+
+on:
+  push:
+    branches: [ main, "claude/**" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write   # タグ push 時の Release 添付に使用
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Validation tests (analytic solutions)
+        run: sh data/sample/peec_check.sh "$GITHUB_WORKSPACE/bin/peec" /tmp/peec-check
+
+      - name: Upload binaries (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: peec-linux-x64
+          path: bin/peec
+
+      - name: Package for release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: tar czf peec-linux-x64.tar.gz -C bin peec
+
+      - name: Attach binaries to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: peec-linux-x64.tar.gz
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-logs-linux
+          path: /tmp/peec-check/*.log
+          if-no-files-found: ignore
+
+  # macOS (Apple Silicon)。AppleClang は OpenMP を同梱しないが、
+  # OpenPEEC は OpenMP 任意なのでシリアルビルドで検証する。
+  build-macos:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j"$(sysctl -n hw.ncpu)"
+
+      - name: Validation tests (analytic solutions)
+        run: sh data/sample/peec_check.sh "$GITHUB_WORKSPACE/bin/peec" /tmp/peec-check
+
+      - name: Upload binaries (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: peec-macos-arm64
+          path: bin/peec
+
+      - name: Package for release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: tar czf peec-macos-arm64.tar.gz -C bin peec
+
+      - name: Attach binaries to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: peec-macos-arm64.tar.gz
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-logs-macos
+          path: /tmp/peec-check/*.log
+          if-no-files-found: ignore
+
+  # Windows (MSVC + Ninja)。検証は Git Bash で同一スクリプトを実行する。
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Validation tests (analytic solutions)
+        shell: bash
+        run: sh data/sample/peec_check.sh "$GITHUB_WORKSPACE/bin/peec.exe" /tmp/peec-check
+
+      - name: Upload binaries (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: peec-windows-x64
+          path: bin/peec.exe
+
+      - name: Package for release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: Compress-Archive -Path bin/peec.exe -DestinationPath peec-windows-x64.zip
+
+      - name: Attach binaries to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: peec-windows-x64.zip
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-logs-windows
+          path: /tmp/peec-check/*.log
+          if-no-files-found: ignore

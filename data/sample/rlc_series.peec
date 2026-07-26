@@ -1,0 +1,14 @@
+# 検証 (a) : 直列 RLC (集中定数 MNA)
+#   R = 50 ohm, L = 1 uH, C = 1 nF (node 1 - R - 2 - L - 3 - C - GND)
+#   共振周波数 f0 = 1/(2 pi sqrt(LC)) = 5.0329212e6 Hz
+#   解析解 : Zin(f0) = 50 + j0
+#            Zin(2 f0) = 50 + j (w L - 1/(w C)) = 50 + j 47.43416 ohm
+#              (X = 1.5 sqrt(L/C) = 1.5 * 31.62278)
+OpenPEEC 1 0
+title = series RLC (R=50ohm L=1uH C=1nF)
+resistor = 1 2 50
+inductor = L1 2 3 1e-6
+capacitor = 3 0 1e-9
+port = 1 0 50
+frequency = 5.0329212e6 1.0065842e7 1
+end

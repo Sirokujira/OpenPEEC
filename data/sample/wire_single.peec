@@ -1,0 +1,14 @@
+# 検証 (b) : 単線ワイヤの部分インダクタンス (PEEC 抽出)
+#   l = 1 m, a = 1 mm, sigma = 5.8e7 S/m (銅)
+#   解析解 (ロッドの外部自己インダクタンス、フィラメント d=a) :
+#     Lp = (mu0 l / 2 pi) [asinh(l/a) - sqrt(1+(a/l)^2) + a/l] = 1.32038e-6 H
+#     f = 1 MHz : Xin = 2 pi f Lp = 8.29659 ohm
+#     Rin (DC) = l / (sigma pi a^2) = 5.48810e-3 ohm
+OpenPEEC 1 0
+title = single straight wire (l=1m a=1mm)
+node = 1 0 0 0
+node = 2 0 0 1
+wire = 0 0 0 0 0 1 1e-3 5.8e7 1
+port = 1 2 50
+frequency = 1e6 1e6 0
+end
