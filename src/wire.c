@@ -91,9 +91,29 @@ int wire_build(peec_t *p, FILE *fp_log)
 					s->x2[c] = x[c];
 				}
 				s->len = dist3(s->x1, s->x2);
+				s->shape = w->shape;
 				s->radius = w->radius;
+				s->width = w->width;
+				s->thick = w->thick;
 				s->sigma = w->sigma;
-				s->res = (w->sigma > 0) ? s->len / (w->sigma * PI * w->radius * w->radius) : 0;
+				if (w->shape == SHAPE_BAR) {
+					// 角線 : 等価半径は幾何平均距離 (GMD) 近似
+					//   インダクタンス : GMD = 0.2235 (w + t)  (Grover)
+					//     -> Lp = (mu0 l/2pi)[ln(2l/(w+t)) + 0.5] を再現する
+					//   容量 : 薄板 (t -> 0) の等価半径 w/4 を (w+t)/4 に拡張
+					const double wt = w->width + w->thick;
+					s->aL = 0.2235 * wt;
+					s->aP = 0.25 * wt;
+					s->area = w->width * w->thick;
+					s->perim = 2 * wt;
+				}
+				else {
+					s->aL = w->radius;
+					s->aP = w->radius;
+					s->area = PI * w->radius * w->radius;
+					s->perim = 2 * PI * w->radius;
+				}
+				s->res = (w->sigma > 0) ? s->len / (w->sigma * s->area) : 0;
 				p->nseg++;
 			}
 			idprev = id;

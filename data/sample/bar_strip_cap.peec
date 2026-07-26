@@ -1,0 +1,14 @@
+# 検証 (m) : 薄板の対無限遠容量 (薄板 <-> 丸線の等価半径 w/4)
+#   l = 1 m, w = 10 mm, t = 0.01 mm (t << w) の薄板、ndiv = 1
+#   教科書的な等価関係「幅 w の薄板は半径 w/4 の丸線と同じ容量を持つ」より
+#     Ctotal = 4 pi eps0 l^2 / I_self(l, w/4) = 9.782209e-12 F
+#   (本コードは aP = (w+t)/4 を使うので t/w = 1e-3 分だけずれる : +0.02%)
+OpenPEEC 1 0
+title = thin strip capacitance to infinity
+capacitance = 1
+node = 1 0 0 0
+node = 2 0 0 1
+bar = 0 0 0 0 0 1 1e-2 1e-5 5.8e7 1
+port = 1 2 50
+frequency = 1e6 1e6 0
+end

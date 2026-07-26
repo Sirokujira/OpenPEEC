@@ -44,17 +44,24 @@ int mna_numbering(peec_t *p, FILE *fp_log)
 		markused(used, p->seg[i].n2);
 	}
 
-	// 基準ノード : ノード 0 が使われていれば 0、無ければ port #1 の n2 (浮遊回路の特異回避)
-	p->refnode = used[0] ? 0 : p->port[0].n2;
+	// 基準ノード
+	// - 容量性 PEEC を使うときは無限遠が電位の基準になる。実ノードを接地すると
+	//   そこから無限遠へ電荷が逃げる経路ができ、構造の総電荷が保存しなくなる。
+	//   遅延ありのときこれは放射抵抗の打ち消し (sum q = 0) を壊し、Rin が負に
+	//   なるので、node 0 (= 無限遠) 以外は基準にしない。
+	//   node 0 が未使用ならどの実ノードも消去しない (容量が電位を確定させる)。
+	// - それ以外は従来どおり : ノード 0、無ければ port #1 の n2 (浮遊回路の特異回避)
+	const int usecap = (p->capacitance && (p->ncell > 0));
+	p->refnode = (usecap || used[0]) ? 0 : p->port[0].n2;
 
 	p->nodemap = (int *)malloc((size_t)nid * sizeof(int));
 	int idx = 0;
 	for (int id = 0; id < nid; id++) {
-		if (!used[id]) {
-			p->nodemap[id] = -2;
-		}
-		else if (id == p->refnode) {
+		if (id == p->refnode) {
 			p->nodemap[id] = -1;
+		}
+		else if (!used[id]) {
+			p->nodemap[id] = -2;
 		}
 		else {
 			p->nodemap[id] = idx++;
@@ -171,11 +178,13 @@ void mna_assemble(const peec_t *p, double f, d_complex_t *a)
 		stamp(a, n, rk, i2, d_complex(-1, 0));
 		// 内部インピーダンス : 既定は DC 抵抗、skineffect = 1 で表皮効果 + 内部 L
 		const d_complex_t zint = p->skin
-			? zint_round(p->seg[k].len, p->seg[k].radius, p->seg[k].sigma, f)
+			? zint_seg(&p->seg[k], f)
 			: d_complex(p->seg[k].res, 0);
 		stamp(a, n, rk, rk, d_rmul(-1, zint));
 		for (int m = 0; m < p->nseg; m++) {
-			stamp(a, n, rk, p->offS + m, d_complex(0, -omega * p->lp[(size_t)k * p->nseg + m]));
+			// -j omega Lp (retardation = 1 のとき Lp は複素)
+			stamp(a, n, rk, p->offS + m,
+				d_mul(d_complex(0, -omega), p->lp[(size_t)k * p->nseg + m]));
 		}
 	}
 
@@ -186,7 +195,8 @@ void mna_assemble(const peec_t *p, double f, d_complex_t *a)
 			const int mi = map[p->cellid[i]];
 			for (int j = 0; j < p->ncell; j++) {
 				const int mj = map[p->cellid[j]];
-				stamp(a, n, mi, mj, d_complex(0, omega * p->cmat[(size_t)i * p->ncell + j]));
+				stamp(a, n, mi, mj,
+					d_mul(d_complex(0, omega), p->cmat[(size_t)i * p->ncell + j]));
 			}
 		}
 	}

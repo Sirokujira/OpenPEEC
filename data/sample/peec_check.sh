@@ -90,10 +90,10 @@ cp "$SRC/wire_cap.peec" "$WORK/"
 run wire_cap.peec
 chk "wire Ctotal" "$(getC)" 8.42673e-12 0.001
 
-# (g) 平行 2 線の対無限遠容量 (相互電位係数の検証) : 1.01982e-11 F
+# (g) 平行 2 線の対無限遠容量 (相互電位係数の検証) : 1.0202867e-11 F
 cp "$SRC/twowire_cap.peec" "$WORK/"
 run twowire_cap.peec
-chk "two-wire Ctotal" "$(getC)" 1.01982e-11 0.001
+chk "two-wire Ctotal" "$(getC)" 1.0202867e-11 0.001
 
 # (h) 電気的に小さいループでは容量を入れても Zin が変わらないこと
 awk '{print} /^title = /{print "capacitance = 1"}' "$SRC/loop_square.peec" > "$WORK/loop_cap.peec"
@@ -110,6 +110,54 @@ awk -F, 'NR>1 {
 	printf "%-24s %s (series resonance present)\n", "dipole Xin sign change", pos ? "OK" : "NG";
 	exit pos ? 0 : 1
 }' "$csv" || status=1
+
+echo "--- retardation (full-wave PEEC)"
+# (j) 半波長ダイポール : Xin の零交差で l/lambda = 0.478、Rin = 73.1 ohm (教科書値)
+cp "$SRC/dipole_halfwave.peec" "$WORK/"
+run dipole_halfwave.peec
+res=$(awk -F, 'NR>1 {
+	f = $2; r = $3; x = $4;
+	if (pf && (px < 0) && (x >= 0) && !done) {
+		u = -px / (x - px);              # Xin の零交差を線形補間
+		printf "%.9e %.9e", (pf + u*(f-pf)) / 2.99792458e8, pr + u*(r-pr);
+		done = 1;
+	}
+	pf = f; pr = r; px = x;
+}' "$csv")
+if [ -z "$res" ]; then
+	echo "*** no resonance (Xin zero crossing) in dipole_halfwave sweep" >&2
+	status=1
+else
+	chk "dipole l/lambda" "${res% *}" 0.478 0.05
+	chk "dipole Rin at res." "${res#* }" 73.1 0.10
+fi
+
+# (k) 微小ダイポール : R_rad = 20 pi^2 (l/lambda)^2 = 0.123541 ohm
+cp "$SRC/dipole_short.peec" "$WORK/"
+run dipole_short.peec
+chk "short dipole R_rad" "$(getR)" 0.123541 0.05
+
+# 低周波では遅延ありでも準静的な結果に一致すること
+awk '{print} /^title = /{print "retardation = 1"}' "$SRC/loop_square.peec" > "$WORK/loop_ret.peec"
+run loop_ret.peec
+chk "loop L (retarded)" "$(getL)" 7.24689e-7 0.02
+
+echo "--- rectangular bar conductors"
+# (l) 角線の自己インダクタンス (Grover) と DC 抵抗
+cp "$SRC/bar_single.peec" "$WORK/"
+run bar_single.peec
+chk "bar L (Grover)" "$(getL)" 1.141093e-6 0.005
+chk "bar Rin (DC)" "$(getR)" 1.724138e-3 0.005
+
+# (m) 薄板の対無限遠容量 (薄板 <-> 半径 w/4 の丸線)
+cp "$SRC/bar_strip_cap.peec" "$WORK/"
+run bar_strip_cap.peec
+chk "strip Ctotal" "$(getC)" 9.782209e-12 0.005
+
+# (n) 角線の表皮効果 (高周波極限 R -> l/(sigma delta P))
+cp "$SRC/bar_skin.peec" "$WORK/"
+run bar_skin.peec
+chk "bar skin HF Rin" "$(getR)" 0.118589 0.01
 
 if [ "$status" -ne 0 ]; then
 	echo "*** PEEC validation FAILED" >&2

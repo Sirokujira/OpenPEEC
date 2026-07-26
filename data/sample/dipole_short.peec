@@ -1,0 +1,17 @@
+# 検証 (k) : 遅延あり — 微小ダイポールの放射抵抗
+#   全長 l = 0.1 m, a = 0.1 mm, 各アーム 8 分割、f = 75 MHz (l/lambda = 0.02502)
+#   三角形電流分布を仮定した教科書値 :
+#     R_rad = 20 pi^2 (l/lambda)^2 = 0.123541 ohm
+#   導体損 (DC) はポートから見て 0.009 ohm 程度なので Rin はほぼ放射抵抗。
+#   PEEC の電流分布は厳密には三角形ではないため許容 5%。
+OpenPEEC 1 0
+title = short dipole radiation resistance
+capacitance = 1
+retardation = 1
+node = 1 0 0 -0.0005
+node = 2 0 0 0.0005
+wire = 0 0 -0.05 0 0 -0.0005 1e-4 5.8e7 8
+wire = 0 0 0.0005 0 0 0.05 1e-4 5.8e7 8
+port = 1 2 50
+frequency = 7.5e7 7.5e7 0
+end

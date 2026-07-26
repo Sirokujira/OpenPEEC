@@ -75,3 +75,43 @@ d_complex_t zint_round(double len, double a, double sigma, double freq)
 
 	return d_rmul(len, d_mul(d_complex(kf, kf), ratio));
 }
+
+/*
+角線 (矩形断面) の内部インピーダンス
+
+丸線のような閉形式が無いため、両極限が厳密になる工学的な合成式を使う :
+  低周波 : R -> R_dc = len/(sigma A)、L_int -> mu0 len/(8 pi)
+  高周波 : 電流は周長 P の表皮層 (深さ delta) を流れ
+           R = X/omega*... -> len/(sigma delta P)  (R = X)
+合成 : R = sqrt(R_dc^2 + R_hf^2)、L_int = L_dc L_hf / sqrt(L_dc^2 + L_hf^2)
+       (どちらも滑らかで単調、両極限で厳密)
+遷移域 (delta ~ 断面寸法) は近似なので、その領域の精度が要る用途では
+丸線モデル (SHAPE_ROUND) を使うこと。
+*/
+d_complex_t zint_bar(double len, double area, double perim, double sigma, double freq)
+{
+	if ((sigma <= 0) || (len <= 0) || (area <= 0) || (perim <= 0)) return d_complex(0, 0);
+
+	const double rdc = len / (sigma * area);
+	const double omega = 2 * PI * freq;
+	if (omega <= 0) return d_complex(rdc, 0);
+
+	const double delta = sqrt(2 / (omega * MU0 * sigma));
+	const double rhf = len / (sigma * delta * perim);
+
+	const double ldc = MU0 * len / (8 * PI);
+	const double lhf = rhf / omega;
+
+	const double r = sqrt((rdc * rdc) + (rhf * rhf));
+	const double l = ldc * lhf / sqrt((ldc * ldc) + (lhf * lhf));
+
+	return d_complex(r, omega * l);
+}
+
+// 区間の内部インピーダンス (断面形状で振り分ける)
+d_complex_t zint_seg(const seg_t *s, double freq)
+{
+	return (s->shape == SHAPE_BAR)
+		? zint_bar(s->len, s->area, s->perim, s->sigma, freq)
+		: zint_round(s->len, s->radius, s->sigma, freq);
+}

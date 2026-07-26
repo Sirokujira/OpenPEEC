@@ -207,27 +207,43 @@ int input_data(FILE *fp, peec_t *p)
 				return 1;
 			}
 		}
-		else if (!strcmp(strkey, "wire")) {
-			if (ntoken < 11) err = 1;
+		else if (!strcmp(strkey, "wire") || !strcmp(strkey, "bar")) {
+			// wire = x1 y1 z1 x2 y2 z2 半径     導電率 分割数
+			// bar  = x1 y1 z1 x2 y2 z2 幅 厚さ  導電率 分割数
+			const int isbar = !strcmp(strkey, "bar");
+			if (ntoken < (isbar ? 12 : 11)) err = 1;
 			else {
 				APPEND(p->wire, p->nwire, cwire, wire_t);
 				wire_t *e = &p->wire[p->nwire];
+				memset(e, 0, sizeof(wire_t));
 				for (int k = 0; k < 3; k++) {
 					e->x1[k] = atof(token[2 + k]);
 					e->x2[k] = atof(token[5 + k]);
 				}
-				e->radius = atof(token[8]);
-				e->sigma = atof(token[9]);
-				e->ndiv = atoi(token[10]);
+				if (isbar) {
+					e->shape = SHAPE_BAR;
+					e->width = atof(token[8]);
+					e->thick = atof(token[9]);
+					e->sigma = atof(token[10]);
+					e->ndiv = atoi(token[11]);
+					if ((e->width <= 0) || (e->thick <= 0)) err = 1;
+				}
+				else {
+					e->shape = SHAPE_ROUND;
+					e->radius = atof(token[8]);
+					e->sigma = atof(token[9]);
+					e->ndiv = atoi(token[10]);
+					if (e->radius <= 0) err = 1;
+				}
 				const double dx = e->x2[0] - e->x1[0];
 				const double dy = e->x2[1] - e->x1[1];
 				const double dz = e->x2[2] - e->x1[2];
 				const double len = sqrt((dx * dx) + (dy * dy) + (dz * dz));
-				if ((e->radius <= 0) || (e->sigma < 0) || (e->ndiv < 1) || (len <= 0)) err = 1;
+				if ((e->sigma < 0) || (e->ndiv < 1) || (len <= 0)) err = 1;
 				if (!err) p->nwire++;
 			}
 			if (err) {
-				printf(errfmt2, "wire");
+				printf(errfmt2, strkey);
 				return 1;
 			}
 		}
@@ -275,6 +291,9 @@ int input_data(FILE *fp, peec_t *p)
 		}
 		else if (!strcmp(strkey, "capacitance")) {
 			p->capacitance = atoi(token[2]);
+		}
+		else if (!strcmp(strkey, "retardation")) {
+			p->retardation = atoi(token[2]);
 		}
 		else if (!strcmp(strkey, "gmin")) {
 			p->gmin = atof(token[2]);

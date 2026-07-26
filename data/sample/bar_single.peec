@@ -1,0 +1,15 @@
+# 検証 (l) : 角線 (矩形断面) の自己インダクタンスと DC 抵抗
+#   l = 1 m, w = 10 mm, t = 1 mm, sigma = 5.8e7 S/m, f = 1 MHz
+#   等価半径は幾何平均距離 (GMD) 近似 aL = 0.2235 (w+t) を使う。これにより
+#   Grover の角線自己インダクタンス式
+#     L = (mu0 l/2pi)[ln(2l/(w+t)) + 0.5 + 0.2235(w+t)/l] = 1.141093e-6 H
+#   を再現する (本コードの厳密ロッド式では 1.140762e-6 H、差 -0.03%)。
+#   DC 抵抗は断面積から R = l/(sigma w t) = 1.724138e-3 ohm。
+OpenPEEC 1 0
+title = rectangular bar (self inductance)
+node = 1 0 0 0
+node = 2 0 0 1
+bar = 0 0 0 0 0 1 1e-2 1e-3 5.8e7 1
+port = 1 2 50
+frequency = 1e6 1e6 0
+end

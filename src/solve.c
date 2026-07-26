@@ -36,6 +36,12 @@ int solve(peec_t *p, FILE *fp_log)
 	for (int ifreq = 0; ifreq < p->nfreq; ifreq++) {
 		const double f = freq_at(p, ifreq);
 
+		// 遅延ありのときは部分要素が周波数依存になるので毎回作り直す
+		if (p->retardation) {
+			lp_fill(p, f, fp_log);
+			if (pot_fill(p, f, fp_log)) return 1;
+		}
+
 		mna_assemble(p, f, a);
 		const int ising = lu_decomp(n, a, piv);
 		if (ising >= 0) {

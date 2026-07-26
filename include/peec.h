@@ -38,14 +38,28 @@ typedef struct {char name[NAMELEN]; int n1, n2; double val;} ind_t;           //
 typedef struct {char name1[NAMELEN], name2[NAMELEN]; int l1, l2; double k;} mut_t;  // M = k*sqrt(L1*L2)
 typedef struct {int n1, n2, isvsrc, ibr; double amp, phase;} src_t;           // phase [deg]
 typedef struct {int n1, n2; double z0;} port_t;
-typedef struct {double x1[3], x2[3], radius, sigma; int ndiv;} wire_t;
+// 導体断面 : SHAPE_ROUND = 丸線 (半径 a)、SHAPE_BAR = 角線 (幅 w x 厚さ t)
+#define SHAPE_ROUND 0
+#define SHAPE_BAR   1
+
+typedef struct {
+	double x1[3], x2[3];
+	int    shape;
+	double radius, width, thick, sigma;
+	int    ndiv;
+} wire_t;
 
 // ワイヤ分割後の 1 区間 = PEEC の 1 枝 (向き n1 -> n2)
 typedef struct {
 	int    n1, n2;
 	double x1[3], x2[3];
-	double len, radius, sigma;
-	double res;                   // res : DC 抵抗 = len / (sigma * pi * radius^2)
+	double len;
+	int    shape;
+	double radius, width, thick;
+	double aL, aP;                // 等価半径 : インダクタンス用 (GMD) / 容量用
+	double area, perim;           // 断面積・周長 (DC 抵抗・表皮効果)
+	double sigma;
+	double res;                   // DC 抵抗 = len / (sigma * area)
 } seg_t;
 
 typedef struct {
@@ -65,13 +79,17 @@ typedef struct {
 	// ワイヤ形状から導出
 	int    nseg;
 	seg_t  *seg;
-	double *lp;                   // 部分インダクタンス密行列 (フラット [i*nseg+j])
+	d_complex_t *lp;              // 部分インダクタンス密行列 (フラット [i*nseg+j])
+	int    lpwarn;                // |k| > 1 警告を出したか
 
 	// 容量性 PEEC (capacitance = 1 のときのみ)
 	int    ncell;                 // 容量セル (= 幾何ノード) 数
 	int    *cellid;               // [ncell] セルのノード id
-	double *cmat;                 // [ncell*ncell] 節点容量行列 C = P^-1
-	double ctotal;                // 対無限遠の総容量 = sum C(i,j)
+	seg_t  *half;                 // [2*nseg] 半区間
+	int    *cellof;               // [2*nseg] 半区間 -> セル index
+	double *clen;                 // [ncell] セル長
+	d_complex_t *cmat;            // [ncell*ncell] 節点容量行列 C = P^-1
+	int    clogged;               // 総容量をログ出力したか
 
 	// 形状ノード表 (座標マージ用)
 	int    ngnode;
@@ -92,6 +110,7 @@ typedef struct {
 	double nodetol, gmin;
 	int    skin;                  // skineffect = 1 : 表皮効果 + 内部インダクタンス
 	int    capacitance;           // capacitance = 1 : 容量性 PEEC (電位係数)
+	int    retardation;           // retardation = 1 : 遅延 (フルウェーブ PEEC)
 
 	// 結果
 	d_complex_t *zin;             // [nport * nfreq]
@@ -115,16 +134,19 @@ int  wire_build(peec_t *p, FILE *fp_log);
 
 // partial.c
 double neumann_self(double l, double a);
-double neumann_pair(const seg_t *s1, const seg_t *s2);
+double neumann_pair(const seg_t *s1, const seg_t *s2, double a1, double a2);
+d_complex_t neumann_self_k(const seg_t *s, double a, double kw);
+d_complex_t neumann_pair_k(const seg_t *s1, const seg_t *s2, double a1, double a2, double kw);
 double lp_self(double l, double a);
-double lp_pair(const seg_t *s1, const seg_t *s2);
-void lp_fill(peec_t *p, FILE *fp_log);
+void lp_fill(peec_t *p, double f, FILE *fp_log);
 
 // potential.c
-int  pot_fill(peec_t *p, FILE *fp_log);
+int  pot_fill(peec_t *p, double f, FILE *fp_log);
 
 // skin.c
 d_complex_t zint_round(double len, double a, double sigma, double freq);
+d_complex_t zint_bar(double len, double area, double perim, double sigma, double freq);
+d_complex_t zint_seg(const seg_t *s, double freq);
 
 // mna.c
 int  mna_numbering(peec_t *p, FILE *fp_log);

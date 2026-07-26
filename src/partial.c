@@ -3,16 +3,23 @@ partial.c
 
 幾何二重積分 (Neumann 積分) と部分インダクタンス
 
-  I(s1,s2) = ∫∫ dl1 dl2 / R          … 向きに依らない正の幾何量
-  Lp(s1,s2) = (mu0/4pi) (t1・t2) I    … 部分インダクタンス
-  P(c1,c2)  = I / (4 pi eps0 L1 L2)   … 電位係数 (potential.c で使用)
+  I(s1,s2) = ∬ exp(-j k R) / R dl1 dl2,  R = sqrt(|dr|^2 + a^2)  (細線縮約カーネル)
+  Lp(s1,s2) = (mu0/4pi) (t1・t2) I     … 部分インダクタンス
+  P(c1,c2)  = I / (4 pi eps0 L1 L2)    … 電位係数 (potential.c で使用)
 
-I の評価 :
-- 自己       : 平行フィラメント閉形式を距離 d = radius で評価
-- 平行区間   : 解析式
-- 同一直線上 : d -> 0 の極限式 (特異回避)
+k = 0 (準静的) では I は実数で、次の解析式・数値積分で評価する :
+- 自己       : 平行フィラメント閉形式 (距離 = 等価半径 a)
+- 平行区間   : 解析式 (距離を sqrt(perp^2 + a^2) に正則化)
 - 一般       : 8 点 Gauss-Legendre の複合則 (近接時は 4x4 分割)
 - 遠方       : 中点近似
+
+k > 0 (遅延あり) では特異性抽出を使う :
+  I = I_static + ∬ (exp(-j k R) - 1) / R
+第 2 項は R -> 0 で -jk に収束する正則な被積分関数なので、解析式を保ったまま
+Gauss 求積で安全に評価できる。
+
+全ての項で同一のカーネル (距離を等価半径 a で正則化) を使うことにより
+sum_ij I_ij = I_self(全長) が厳密に成立する (CLAUDE.md の不変条件)。
 */
 
 #include "peec.h"
@@ -40,16 +47,18 @@ static double fpar(double x, double d)
 	return (x * asinh(x / d)) - sqrt((x * x) + (d * d));
 }
 
-// 自己二重積分 : ∫∫ dl dl' / sqrt((l-l')^2 + a^2)
+// 自己二重積分 : ∬ dl dl' / sqrt((l-l')^2 + a^2)
 double neumann_self(double l, double a)
 {
 	return 2 * ((l * asinh(l / a)) - sqrt((l * l) + (a * a)) + a);
 }
 
-// 一般配置の数値積分 (各区間を nsub 分割した複合 8 点 Gauss-Legendre)
-static double gauss_pair(const seg_t *s1, const seg_t *s2, int nsub)
+// 数値積分の共通ループ。mode = 0 : 静的核 1/R、mode = 1 : 遅延補正 (exp(-jkR)-1)/R
+static d_complex_t gauss_kernel(const seg_t *s1, const seg_t *s2,
+	double aeff, double kw, int nsub, int mode)
 {
-	double sum = 0;
+	const double a2 = aeff * aeff;
+	double sumr = 0, sumi = 0;
 
 	for (int i1 = 0; i1 < nsub; i1++) {
 	for (int i2 = 0; i2 < nsub; i2++) {
@@ -61,12 +70,18 @@ static double gauss_pair(const seg_t *s1, const seg_t *s2, int nsub)
 			}
 			for (int j = 0; j < 8; j++) {
 				const double v = (i2 + (0.5 * (1 + xg8[j]))) / nsub;
-				const double rx = s2->x1[0] + ((s2->x2[0] - s2->x1[0]) * v) - q1[0];
-				const double ry = s2->x1[1] + ((s2->x2[1] - s2->x1[1]) * v) - q1[1];
-				const double rz = s2->x1[2] + ((s2->x2[2] - s2->x1[2]) * v) - q1[2];
-				const double r = sqrt((rx * rx) + (ry * ry) + (rz * rz));
-				if (r > 1e-300) {
-					sum += weight8(i) * weight8(j) / r;
+				const double dx = s2->x1[0] + ((s2->x2[0] - s2->x1[0]) * v) - q1[0];
+				const double dy = s2->x1[1] + ((s2->x2[1] - s2->x1[1]) * v) - q1[1];
+				const double dz = s2->x1[2] + ((s2->x2[2] - s2->x1[2]) * v) - q1[2];
+				const double r = sqrt((dx * dx) + (dy * dy) + (dz * dz) + a2);
+				const double w = weight8(i) * weight8(j);
+				if (mode == 0) {
+					sumr += w / r;
+				}
+				else {
+					// (cos(kR) - 1 - j sin(kR)) / R : R -> 0 で -jk に収束する
+					sumr += w * (cos(kw * r) - 1) / r;
+					sumi -= w * sin(kw * r) / r;
 				}
 			}
 		}
@@ -74,12 +89,15 @@ static double gauss_pair(const seg_t *s1, const seg_t *s2, int nsub)
 	}
 
 	// jacobian : (len1/2/nsub)(len2/2/nsub) を nsub^2 個の小領域について合計
-	return s1->len * s2->len * 0.25 * sum / ((double)nsub * nsub);
+	const double fac = s1->len * s2->len * 0.25 / ((double)nsub * nsub);
+
+	return d_complex(fac * sumr, fac * sumi);
 }
 
-// 2 区間の幾何二重積分 (常に正 : 向きの符号は呼び出し側で扱う)
-double neumann_pair(const seg_t *s1, const seg_t *s2)
+// 静的な幾何二重積分 (常に正)。a1, a2 は各区間の等価半径。
+double neumann_pair(const seg_t *s1, const seg_t *s2, double a1, double a2)
 {
+	const double aeff = 0.5 * (a1 + a2);
 	double t1[3], t2[3];
 	for (int c = 0; c < 3; c++) {
 		t1[c] = (s1->x2[c] - s1->x1[c]) / s1->len;
@@ -95,8 +113,8 @@ double neumann_pair(const seg_t *s1, const seg_t *s2)
 
 	if (cross < 1e-9) {
 		// s1 の軸に射影 (a1 = 0, a2 = len1)
-		const double a1 = 0;
-		const double a2 = s1->len;
+		const double p1 = 0;
+		const double p2 = s1->len;
 		double r1[3], r2[3];
 		for (int c = 0; c < 3; c++) {
 			r1[c] = s2->x1[c] - s1->x1[c];
@@ -114,15 +132,10 @@ double neumann_pair(const seg_t *s1, const seg_t *s2)
 		for (int c = 0; c < 3; c++) {
 			perp[c] = r1[c] - (dot3(r1, t1) * t1[c]);
 		}
-		// 細線カーネル : 電流は軸上、電位・磁束は導体表面で評価する。
-		// 距離を半径で下限打ち切りすることで自己項と同じカーネルになり、
-		// 同一直線上 (d -> 0) の特異性も消える。分割数によらず
-		// sum_ij I_ij = I_self(全長) が厳密に成立する。
-		const double aeff = 0.5 * (s1->radius + s2->radius);
-		double d = sqrt(dot3(perp, perp));
-		if (d < aeff) d = aeff;
+		// 縮約カーネル : R = sqrt(軸方向^2 + perp^2 + a^2)
+		const double d = sqrt(dot3(perp, perp) + (aeff * aeff));
 
-		return fpar(a2 - b1, d) - fpar(a2 - b2, d) - fpar(a1 - b1, d) + fpar(a1 - b2, d);
+		return fpar(p2 - b1, d) - fpar(p2 - b2, d) - fpar(p1 - b1, d) + fpar(p1 - b2, d);
 	}
 
 	// 一般 (非平行)
@@ -141,36 +154,81 @@ double neumann_pair(const seg_t *s1, const seg_t *s2)
 		return s1->len * s2->len / rc;
 	}
 
-	// 近接 (端点共有を含む) は分割数を上げる。Gauss 節点は区間内部にあるため
-	// 端点を共有していても被積分関数は有限にとどまる。
-	return gauss_pair(s1, s2, (rc > 2 * lmax) ? 1 : 4);
+	// 近接 (端点共有を含む) は分割数を上げる
+	return gauss_kernel(s1, s2, aeff, 0, (rc > 2 * lmax) ? 1 : 4, 0).r;
 }
 
-// 自己部分インダクタンス (長さ l、半径 a)
-double lp_self(double l, double a)
+// 遅延補正の分割数 : 位相変化 k*L と近接度から決める
+static int corr_nsub(const seg_t *s1, const seg_t *s2, double kw)
 {
-	return MU0 / (4 * PI) * neumann_self(l, a);
+	const double lmax = (s1->len > s2->len) ? s1->len : s2->len;
+	int nsub = 2 + (int)(kw * lmax);
+	if (nsub > 8) nsub = 8;
+
+	return nsub;
 }
 
-// 2 区間の相互部分インダクタンス (符号付き : 各区間の n1 -> n2 向きを基準)
-double lp_pair(const seg_t *s1, const seg_t *s2)
+// 平行 (= 解析式が厳密に使える) かどうか
+static int is_parallel(const seg_t *s1, const seg_t *s2)
 {
 	double t1[3], t2[3];
 	for (int c = 0; c < 3; c++) {
 		t1[c] = (s1->x2[c] - s1->x1[c]) / s1->len;
 		t2[c] = (s2->x2[c] - s2->x1[c]) / s2->len;
 	}
+	const double cx = (t1[1] * t2[2]) - (t1[2] * t2[1]);
+	const double cy = (t1[2] * t2[0]) - (t1[0] * t2[2]);
+	const double cz = (t1[0] * t2[1]) - (t1[1] * t2[0]);
 
-	return MU0 / (4 * PI) * dot3(t1, t2) * neumann_pair(s1, s2);
+	return (sqrt((cx * cx) + (cy * cy) + (cz * cz)) < 1e-9);
 }
 
-// 部分インダクタンス行列 (対称密行列、周波数非依存なので 1 回だけ計算)
-void lp_fill(peec_t *p, FILE *fp_log)
+// 遅延を含む幾何二重積分 (kw = 0 なら静的値がそのまま返る)
+//
+// 放射抵抗は L 項と P 項の大きな値どうしの差として現れるため、静的部と
+// 遅延補正部の評価法が食い違うとその差が汚染される。解析式が厳密な
+// 平行区間以外では、静的部も補正部と同じ求積で評価する。
+d_complex_t neumann_pair_k(const seg_t *s1, const seg_t *s2, double a1, double a2, double kw)
+{
+	if (kw <= 0) return d_complex(neumann_pair(s1, s2, a1, a2), 0);
+
+	const double aeff = 0.5 * (a1 + a2);
+	const int nsub = corr_nsub(s1, s2, kw);
+
+	const double is = is_parallel(s1, s2)
+		? neumann_pair(s1, s2, a1, a2)
+		: gauss_kernel(s1, s2, aeff, 0, nsub, 0).r;
+
+	return d_add(d_complex(is, 0), gauss_kernel(s1, s2, aeff, kw, nsub, 1));
+}
+
+// 遅延を含む自己二重積分
+d_complex_t neumann_self_k(const seg_t *s, double a, double kw)
+{
+	const d_complex_t is = d_complex(neumann_self(s->len, a), 0);
+	if (kw <= 0) return is;
+
+	return d_add(is, gauss_kernel(s, s, a, kw, corr_nsub(s, s, kw), 1));
+}
+
+// 自己部分インダクタンス (長さ l、等価半径 a)
+double lp_self(double l, double a)
+{
+	return MU0 / (4 * PI) * neumann_self(l, a);
+}
+
+// 部分インダクタンス行列 (対称密行列)
+// retardation = 0 なら周波数非依存なので 1 回だけ、1 なら周波数ごとに呼ぶ
+void lp_fill(peec_t *p, double f, FILE *fp_log)
 {
 	const int n = p->nseg;
 	if (n <= 0) return;
 
-	p->lp = (double *)malloc((size_t)n * n * sizeof(double));
+	if (p->lp == NULL) {
+		p->lp = (d_complex_t *)malloc((size_t)n * n * sizeof(d_complex_t));
+	}
+	const double kw = p->retardation ? (2 * PI * f / C0) : 0;
+	const double coef = MU0 / (4 * PI);
 
 	// MSVC の OpenMP 2.0 は for 文内でのインデックス宣言を許さない (C3015) ため
 	// ループ変数は事前に宣言する
@@ -179,9 +237,16 @@ void lp_fill(peec_t *p, FILE *fp_log)
 #pragma omp parallel for schedule(dynamic)
 #endif
 	for (i = 0; i < n; i++) {
-		p->lp[(size_t)i * n + i] = lp_self(p->seg[i].len, p->seg[i].radius);
+		p->lp[(size_t)i * n + i] = d_rmul(coef, neumann_self_k(&p->seg[i], p->seg[i].aL, kw));
 		for (int j = i + 1; j < n; j++) {
-			p->lp[(size_t)i * n + j] = lp_pair(&p->seg[i], &p->seg[j]);
+			double t1[3], t2[3];
+			for (int c = 0; c < 3; c++) {
+				t1[c] = (p->seg[i].x2[c] - p->seg[i].x1[c]) / p->seg[i].len;
+				t2[c] = (p->seg[j].x2[c] - p->seg[j].x1[c]) / p->seg[j].len;
+			}
+			const double tdot = dot3(t1, t2);
+			p->lp[(size_t)i * n + j] = d_rmul(coef * tdot,
+				neumann_pair_k(&p->seg[i], &p->seg[j], p->seg[i].aL, p->seg[j].aL, kw));
 		}
 	}
 	// 下三角へミラー
@@ -191,12 +256,14 @@ void lp_fill(peec_t *p, FILE *fp_log)
 		}
 	}
 
-	// 非物理的結合の検出 (|k| > 1 : 導体の重なり等)
+	// 非物理的結合の検出 (|k| > 1 : 導体の重なり等) は静的な初回のみ報告する
+	if (p->lpwarn) return;
+	p->lpwarn = 1;
 	int nwarn = 0;
 	for (i = 0; i < n; i++) {
 		for (int j = i + 1; j < n; j++) {
-			const double m = fabs(p->lp[(size_t)i * n + j]);
-			const double s = sqrt(p->lp[(size_t)i * n + i] * p->lp[(size_t)j * n + j]);
+			const double m = fabs(p->lp[(size_t)i * n + j].r);
+			const double s = sqrt(fabs(p->lp[(size_t)i * n + i].r * p->lp[(size_t)j * n + j].r));
 			if ((m > s) && (nwarn < 10)) {
 				fprintf(fp_log, "*** warning : |k| > 1 between segment %d and %d (overlapping conductors?)\n", i, j);
 				nwarn++;

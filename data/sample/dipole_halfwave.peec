@@ -1,0 +1,20 @@
+# 検証 (j) : 遅延あり (フルウェーブ PEEC) — 半波長ダイポール
+#   全長 1 m, a = 1 mm (l/a = 1000), 各アーム 16 分割
+#   教科書値 (細線半波長ダイポール、l/a ~ 1000) :
+#     共振長  l = 0.475 〜 0.48 lambda  (Xin = 0 となる点)
+#     共振時の入力抵抗 Rin = 73.1 ohm   (放射抵抗)
+#   遅延を入れない (retardation = 0) と共振は 15〜20% 高い周波数に出る。
+#
+#   検証スクリプトは Xin の零交差を線形補間して l/lambda と Rin を求め、
+#   それぞれ 0.478 (±5%) と 73.1 ohm (±10%) と比較する。
+OpenPEEC 1 0
+title = half-wave dipole (retarded PEEC)
+capacitance = 1
+retardation = 1
+node = 1 0 0 -0.0005
+node = 2 0 0 0.0005
+wire = 0 0 -0.5 0 0 -0.0005 1e-3 5.8e7 16
+wire = 0 0 0.0005 0 0 0.5 1e-3 5.8e7 16
+port = 1 2 50
+frequency = 1.30e8 1.60e8 12
+end

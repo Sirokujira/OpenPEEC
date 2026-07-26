@@ -1,0 +1,15 @@
+# 検証 (n) : 角線の表皮効果 (高周波極限)
+#   l = 1 m, w = 10 mm, t = 1 mm, sigma = 5.8e7 S/m, f = 100 MHz
+#   delta = 6.6085e-6 m << w, t なので電流は周長 P = 2(w+t) の表皮層を流れる :
+#     Rin -> l / (sigma delta P) = 0.118589 ohm
+#   (角線は丸線のような閉形式が無いため、両極限が厳密な合成式で近似している。
+#    低周波側は bar_single.peec が R_dc = 1.724138e-3 ohm を確認している。)
+OpenPEEC 1 0
+title = rectangular bar skin effect (high frequency)
+skineffect = 1
+node = 1 0 0 0
+node = 2 0 0 1
+bar = 0 0 0 0 0 1 1e-2 1e-3 5.8e7 1
+port = 1 2 50
+frequency = 1e8 1e8 0
+end
