@@ -29,6 +29,7 @@ add_executable(peec
     src/input_data.c
     src/wire.c
     src/partial.c
+    src/surface.c
     src/potential.c
     src/skin.c
     src/mna.c

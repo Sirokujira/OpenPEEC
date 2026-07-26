@@ -43,6 +43,7 @@ int input_data(FILE *fp, peec_t *p)
 	const char sep[] = " \t";
 	const char errfmt2[] = "*** invalid %s data\n";
 	int    cres = 0, ccap = 0, cind = 0, cmut = 0, csrc = 0, cport = 0, cwire = 0, cnode = 0;
+	int    cplate = 0;
 
 	// initialize (既定値 : キー省略時は従来動作)
 	memset(p, 0, sizeof(peec_t));
@@ -247,6 +248,39 @@ int input_data(FILE *fp, peec_t *p)
 				return 1;
 			}
 		}
+		else if (!strcmp(strkey, "plate")) {
+			// plate = ox oy oz  ax ay az  bx by bz  厚さ 導電率 ndiv_a ndiv_b
+			if (ntoken < 15) err = 1;
+			else {
+				APPEND(p->plate, p->nplate, cplate, plate_t);
+				plate_t *e = &p->plate[p->nplate];
+				memset(e, 0, sizeof(plate_t));
+				for (int k = 0; k < 3; k++) {
+					e->org[k] = atof(token[2 + k]);
+					e->ea[k] = atof(token[5 + k]);
+					e->eb[k] = atof(token[8 + k]);
+				}
+				e->thick = atof(token[11]);
+				e->sigma = atof(token[12]);
+				e->ndiva = atoi(token[13]);
+				e->ndivb = atoi(token[14]);
+				const double la = sqrt((e->ea[0] * e->ea[0]) + (e->ea[1] * e->ea[1]) + (e->ea[2] * e->ea[2]));
+				const double lb = sqrt((e->eb[0] * e->eb[0]) + (e->eb[1] * e->eb[1]) + (e->eb[2] * e->eb[2]));
+				const double ab = (e->ea[0] * e->eb[0]) + (e->ea[1] * e->eb[1]) + (e->ea[2] * e->eb[2]);
+				if ((la <= 0) || (lb <= 0) || (e->thick <= 0) || (e->sigma < 0)
+				 || (e->ndiva < 1) || (e->ndivb < 1)) err = 1;
+				// 2 辺は直交していること (矩形セルを前提にしている)
+				if (!err && (fabs(ab) > 1e-9 * la * lb)) {
+					printf("%s\n", "*** plate : the two edge vectors must be perpendicular");
+					return 1;
+				}
+				if (!err) p->nplate++;
+			}
+			if (err) {
+				printf(errfmt2, "plate");
+				return 1;
+			}
+		}
 		else if (!strcmp(strkey, "port")) {
 			if (ntoken < 5) err = 1;
 			else {
@@ -329,8 +363,8 @@ int input_data(FILE *fp, peec_t *p)
 		printf("%s\n", "*** no frequency data");
 		return 1;
 	}
-	if ((p->nres + p->ncap + p->nind + p->nwire) <= 0) {
-		printf("%s\n", "*** no element data (resistor/capacitor/inductor/wire)");
+	if ((p->nres + p->ncap + p->nind + p->nwire + p->nplate) <= 0) {
+		printf("%s\n", "*** no element data (resistor/capacitor/inductor/wire/bar/plate)");
 		return 1;
 	}
 

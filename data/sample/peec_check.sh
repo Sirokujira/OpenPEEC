@@ -159,6 +159,22 @@ cp "$SRC/bar_skin.peec" "$WORK/"
 run bar_skin.peec
 chk "bar skin HF Rin" "$(getR)" 0.118589 0.01
 
+echo "--- surface (plate) conductors"
+# (o) 正方形平板の対無限遠容量 : 8 分割と 16 分割から Richardson 補外
+#     C_inf = 2 C_16 - C_8 を文献値 0.3667892 * 4 pi eps0 a = 4.08100e-11 F と比較
+cp "$SRC/plate_cap.peec" "$WORK/"
+run plate_cap.peec
+c8=$(getC)
+sed 's/5.8e7 8 8/5.8e7 16 16/' "$SRC/plate_cap.peec" > "$WORK/plate_cap16.peec"
+run plate_cap16.peec
+c16=$(getC)
+chk "plate C (extrapolated)" "$(awk -v a="$c8" -v b="$c16" 'BEGIN{printf "%.9e", 2*b-a}')" 4.08100e-11 0.01
+
+# (p) 帯のインダクタンス : 面積分 (plate) と GMD 近似 (bar) の相互検証
+cp "$SRC/plate_strip.peec" "$WORK/"
+run plate_strip.peec
+chk "strip L (surface)" "$(getL)" 1.159664e-6 0.01
+
 if [ "$status" -ne 0 ]; then
 	echo "*** PEEC validation FAILED" >&2
 else

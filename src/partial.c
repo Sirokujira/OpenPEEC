@@ -183,6 +183,35 @@ static int is_parallel(const seg_t *s1, const seg_t *s2)
 	return (sqrt((cx * cx) + (cy * cy) + (cz * cz)) < 1e-9);
 }
 
+// 面導体セル (リボン) が絡むか
+static int is_ribbon(const seg_t *s1, const seg_t *s2)
+{
+	return ((s1->wid > 0) || (s2->wid > 0));
+}
+
+// リボン用の分割数 : 近接ほど、また位相変化が大きいほど細かくする
+static int ribbon_nsub(const seg_t *s1, const seg_t *s2, double kw)
+{
+	double c1[3], c2[3];
+	for (int i = 0; i < 3; i++) {
+		c1[i] = 0.5 * (s1->x1[i] + s1->x2[i]);
+		c2[i] = 0.5 * (s2->x1[i] + s2->x2[i]);
+	}
+	const double dx = c2[0] - c1[0];
+	const double dy = c2[1] - c1[1];
+	const double dz = c2[2] - c1[2];
+	const double rc = sqrt((dx * dx) + (dy * dy) + (dz * dz));
+	double lmax = (s1->len > s2->len) ? s1->len : s2->len;
+	if (s1->wid > lmax) lmax = s1->wid;
+	if (s2->wid > lmax) lmax = s2->wid;
+
+	int nsub = (rc > 2 * lmax) ? 1 : 2;
+	nsub += (int)(kw * lmax);
+	if (nsub > 4) nsub = 4;
+
+	return nsub;
+}
+
 // 遅延を含む幾何二重積分 (kw = 0 なら静的値がそのまま返る)
 //
 // 放射抵抗は L 項と P 項の大きな値どうしの差として現れるため、静的部と
@@ -190,6 +219,13 @@ static int is_parallel(const seg_t *s1, const seg_t *s2)
 // 平行区間以外では、静的部も補正部と同じ求積で評価する。
 d_complex_t neumann_pair_k(const seg_t *s1, const seg_t *s2, double a1, double a2, double kw)
 {
+	if (is_ribbon(s1, s2)) {
+		const int nsub = ribbon_nsub(s1, s2, kw);
+		const d_complex_t is = d_complex(ribbon_static(s1, s2, nsub), 0);
+		if (kw <= 0) return is;
+		return d_add(is, ribbon_corr(s1, s2, kw, nsub));
+	}
+
 	if (kw <= 0) return d_complex(neumann_pair(s1, s2, a1, a2), 0);
 
 	const double aeff = 0.5 * (a1 + a2);
@@ -205,6 +241,8 @@ d_complex_t neumann_pair_k(const seg_t *s1, const seg_t *s2, double a1, double a
 // 遅延を含む自己二重積分
 d_complex_t neumann_self_k(const seg_t *s, double a, double kw)
 {
+	if (s->wid > 0) return neumann_pair_k(s, s, a, a, kw);
+
 	const d_complex_t is = d_complex(neumann_self(s->len, a), 0);
 	if (kw <= 0) return is;
 

@@ -38,9 +38,13 @@ typedef struct {char name[NAMELEN]; int n1, n2; double val;} ind_t;           //
 typedef struct {char name1[NAMELEN], name2[NAMELEN]; int l1, l2; double k;} mut_t;  // M = k*sqrt(L1*L2)
 typedef struct {int n1, n2, isvsrc, ibr; double amp, phase;} src_t;           // phase [deg]
 typedef struct {int n1, n2; double z0;} port_t;
-// 導体断面 : SHAPE_ROUND = 丸線 (半径 a)、SHAPE_BAR = 角線 (幅 w x 厚さ t)
+// 導体断面
+//   SHAPE_ROUND = 丸線 (半径 a)
+//   SHAPE_BAR   = 角線 (幅 w x 厚さ t)  — 細線 (等価半径) として扱う
+//   SHAPE_PLATE = 面導体のセル (幅 wid の帯 = リボン) — 面積分で扱う
 #define SHAPE_ROUND 0
 #define SHAPE_BAR   1
+#define SHAPE_PLATE 2
 
 typedef struct {
 	double x1[3], x2[3];
@@ -49,14 +53,24 @@ typedef struct {
 	int    ndiv;
 } wire_t;
 
-// ワイヤ分割後の 1 区間 = PEEC の 1 枝 (向き n1 -> n2)
+// 平面矩形導体 : o + s*ea + t*eb (s, t は 0..1)
+typedef struct {
+	double org[3], ea[3], eb[3];
+	double thick, sigma;
+	int    ndiva, ndivb;
+} plate_t;
+
+// 分割後の 1 セル。導体電流 (枝) にも電荷セルにも使う。
+// wid = 0 なら細線フィラメント、wid > 0 なら幅 wid の帯 (リボン)。
+// リボンは x1->x2 を軸、wv を面内の横方向単位ベクトルとする矩形。
 typedef struct {
 	int    n1, n2;
 	double x1[3], x2[3];
 	double len;
 	int    shape;
 	double radius, width, thick;
-	double aL, aP;                // 等価半径 : インダクタンス用 (GMD) / 容量用
+	double wid, wv[3];            // リボンの幅と横方向単位ベクトル
+	double aL, aP;                // 細線の等価半径 : インダクタンス用 (GMD) / 容量用
 	double area, perim;           // 断面積・周長 (DC 抵抗・表皮効果)
 	double sigma;
 	double res;                   // DC 抵抗 = len / (sigma * area)
@@ -66,7 +80,8 @@ typedef struct {
 	char   title[BUFSIZ];
 
 	// ネットリスト
-	int    nres, ncap, nind, nmut, nsrc, nport, nwire, nnodexyz;
+	int    nres, ncap, nind, nmut, nsrc, nport, nwire, nplate, nnodexyz;
+	plate_t *plate;
 	rc_t   *res, *cap;
 	ind_t  *ind;
 	mut_t  *mut;
@@ -83,11 +98,14 @@ typedef struct {
 	int    lpwarn;                // |k| > 1 警告を出したか
 
 	// 容量性 PEEC (capacitance = 1 のときのみ)
+	// 電荷セル (幾何段で作る : ワイヤは半区間、面導体は節点の双対矩形)
+	int    nchg;                  // 電荷セルの個数
+	seg_t  *chg;                  // [nchg] 電荷セル
+	int    *chgnode;              // [nchg] 電荷セルが属するノード id
 	int    ncell;                 // 容量セル (= 幾何ノード) 数
 	int    *cellid;               // [ncell] セルのノード id
-	seg_t  *half;                 // [2*nseg] 半区間
-	int    *cellof;               // [2*nseg] 半区間 -> セル index
-	double *clen;                 // [ncell] セル長
+	int    *cellof;               // [nchg] 電荷セル -> セル index
+	double *carea;                // [ncell] セルの長さ (細線) / 面積 (面導体)
 	d_complex_t *cmat;            // [ncell*ncell] 節点容量行列 C = P^-1
 	int    clogged;               // 総容量をログ出力したか
 
@@ -131,6 +149,11 @@ int  input_data(FILE *fp, peec_t *p);
 
 // wire.c
 int  wire_build(peec_t *p, FILE *fp_log);
+
+// surface.c
+double rect_potential(const seg_t *s, const double *pt);
+double ribbon_static(const seg_t *s1, const seg_t *s2, int nsub);
+d_complex_t ribbon_corr(const seg_t *s1, const seg_t *s2, double kw, int nsub);
 
 // partial.c
 double neumann_self(double l, double a);
