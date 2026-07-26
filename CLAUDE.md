@@ -1,10 +1,15 @@
 # OpenPEEC
 
-準静的 PEEC (部分要素等価回路法) 電気回路ソルバー (C)。OpenFDTD の
-姉妹プロジェクトで、ビルド規約・移植性規則を共有する。
+準静的〜フルウェーブ PEEC (部分要素等価回路法) 電気回路ソルバー (C11)。
+OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を共有する。
+
 集中定数 MNA + 導体形状からの部分要素抽出 (インダクタンス L / 電位係数 P /
-抵抗 R) → Zin(f)。導体は丸線 (`wire`) / 角線 (`bar`) / 面導体 (`plate`)。
-`capacitance` / `skineffect` / `retardation` は既定で無効 (キー省略時は従来動作)。
+抵抗 R) → 入力インピーダンス Zin(f)。
+導体は丸線 (`wire`) / 角線 (`bar`) / 面導体 (`plate`)。
+`capacitance` / `skineffect` / `retardation` は既定で無効
+(キー省略時は従来動作と完全一致)。
+
+外部ライブラリに依存しない (C11 + CMake、OpenMP のみ任意)。
 
 ## ビルド / テスト
 
@@ -12,77 +17,50 @@
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 回帰 : 解析解の全ケース (MNA / 部分 L / 表皮効果 / 容量 / 遅延 / 角線 / 面導体)
-sh data/sample/peec_check.sh bin/peec /tmp/peec-check
+# 回帰 : 解析解・文献値との比較 (MNA / 部分 L / 表皮効果 / 容量 / 遅延 / 角線 / 面導体)
+sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 ```
 
-## 移植性の絶対規則 (OpenFDTD の Windows CI で実際に踏んだもの)
+`/check` (ビルド+検証)、`/preflight` (push 前の一括点検)、
+`/add-feature` (検証ケース込みの機能追加) のスラッシュコマンドがある。
 
-- **C99 VLA 禁止** (MSVC C2057/C2466)。`malloc` + 明示インデックスの
-  フラット配列を使う。
-- **float\*/double\* の取り違え禁止**: 配列の実型と読み出しポインタ型の
-  不一致は Windows で 0xC0000005 クラッシュ (glibc は偶然耐える)。
-- **OpenMP for のインデックスは事前宣言する** (MSVC C3015)。MSVC の OpenMP は
-  2.0 相当で、`#pragma omp parallel for` の直後に `for (int i = ...)` と
-  書けない。`int i;` を前置して `for (i = ...)` にする (実際に踏んだ)。
-- libm リンクは CMake の `MATH_LIB` 変数経由 (Windows には m.lib が無い)。
-- MSVC フラグは CMakeLists の既存ブロックに従う
-  (`/utf-8`, `_USE_MATH_DEFINES`, `_CRT_SECURE_NO_WARNINGS`)。
-- 数学定数は `PI` / `EPS0` / `MU0` 等の peec.h の自前マクロを使う。
-- C99 `<complex.h>` は使わない (MSVC 非準拠)。include/complex.h の
-  `d_complex_t` を使う。
+## ソース構成
+
+| ファイル | 役割 |
+|---|---|
+| `src/input_data.c` | `.peec` パーサ (key = value) |
+| `src/wire.c` | 幾何段 : 電流セル (`p->seg`) と電荷セル (`p->chg`) を作る |
+| `src/partial.c` | 幾何二重積分と部分インダクタンス (細線) |
+| `src/surface.c` | 面セル (リボン) の幾何二重積分 |
+| `src/potential.c` | 電位係数 P と節点容量行列 C = P⁻¹ |
+| `src/skin.c` | 表皮効果 (丸線は Bessel、角線は合成式) |
+| `src/mna.c` | MNA 番号付けとスタンプ |
+| `src/lu.c` | 複素 LU 分解 (部分ピボット) |
+| `src/solve.c` | 周波数掃引 |
+| `src/output.c` | `peec.log` の表と `zin.csv` |
+
+## 詳細な規則
+
+作業対象のファイルに応じて `.claude/rules/` が自動で読み込まれる。
+先に目を通しておくべきもの:
+
+- `.claude/rules/portability.md` — MSVC で実際に踏んだ落とし穴
+  (VLA 禁止 / OpenMP インデックス事前宣言 / `<complex.h>` 不可 など)。
+  編集のたびに `.claude/hooks/check-portability.sh` が自動検査する。
+- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 5 つの
+  不変条件**と、その番人になっている検証判定の対応。幾何積分・セル構成・
+  MNA に触る前に必読。
+- `.claude/rules/validation.md` — 入力キーの後方互換規則と、検証ケースの
+  作り方 (期待値はコードと独立な出所にすること)。
 
 ## 設計の規則
 
 - グローバル変数は使わない。状態は `peec_t` コンテキスト構造体 1 個を
   main で確保して関数に渡す。
-- 電流セル (`p->seg`) と電荷セル (`p->chg`) は幾何段 (`wire.c`) が作る。
-  線導体の電荷セルは区間の半分、面導体は格子ノードの双対矩形。
-  面導体で「電流セルの半分」を電荷セルにすると 2 方向ぶん二重計上に
-  なるので、電荷セルは電流セルから導出せず幾何段で明示的に作ること。
-- 入力キー追加は `src/input_data.c` に、既定値は「キー省略時に従来動作と
-  完全一致」になるよう初期化する (後方互換)。未知キーは無視 (前方互換)。
 - 新機能には data/sample/ の解析解付き検証ケースを追加し、
   `peec_check.sh` に判定を足す (CI 3 OS で自動実行される)。
-- OpenMP は任意依存。`#ifdef _OPENMP` でガードし、スレッド数によらず
-  出力がビット一致することを確認する (現状 lp_fill / pot_fill が並列)。
-  並列ループ内で共有配列に `+=` しない (pot_fill は積分結果を一時配列に
-  出してから直列で集約している)。
-- 外部ライブラリ (LAPACK/BLAS/HDF5 等) を追加しない。
-
-### 壊してはいけない 2 つの不変条件
-
-**(1) 幾何カーネルの統一**
-
-`neumann_pair()` / `neumann_self()` は同一の細線縮約カーネル
-`R = sqrt(|dr|^2 + a^2)` を使う。この統一により
-`Σᵢⱼ Iᵢⱼ = I_self(全長)` が厳密に成立し、
-
-- 直線導体の合計インダクタンスが分割数に依存しない
-- 対無限遠容量が平均電位法の解析解と厳密に一致する
-
-という 2 つの性質が保証される。`peec_check.sh` の
-"wire L (ndiv=1)/(ndiv=8)" と "wire Ctotal" が許容 0.1% でこれを守っている。
-片方の項だけ正則化を変えると両方が静かに劣化するので注意。
-
-また、遅延ありのときは静的部と遅延補正部で評価法を揃えること
-(`neumann_pair_k()`)。放射抵抗は L 項と P 項の大きな値どうしの差として
-現れるので、片方だけ中点近似などに切り替えるとその差が汚染される。
-
-面導体のセル (リボン) も同じ枠組みに載っている。幅で規格化した
-`Ihat = (1/(w1 w2)) ∬∬ dS dS'/R` を返すことで w -> 0 が細線の
-`∬ dl dl'/R` に一致し、Lp / P の式を細線と共有できる。この規格化を
-崩すと細線と面導体で式を分岐させる羽目になるので変えないこと。
-
-**(2) 容量ありのときは実ノードを接地しない**
-
-容量の電位基準は無限遠。実ノードを接地するとそこから無限遠へ電荷が逃げる
-経路ができ、構造の総電荷が保存しなくなる。準静的では影響は無視できるが、
-遅延ありでは放射抵抗の打ち消し (`sum q = 0`) が壊れ、**Rin が負になる**
-(実際に踏んだ : 微小ダイポールで Rin = -23 ohm)。
-`mna_numbering()` は `capacitance = 1` のとき基準を必ずノード 0
-(= 無限遠) にし、ノード 0 が未使用ならどの実ノードも消去しない。
-`peec_check.sh` の "short dipole R_rad" がこれを守っている。
+- 新たに踏んだ移植性の落とし穴は `.claude/rules/portability.md` に、
+  新たな不変条件は `.claude/rules/physics-invariants.md` に追記する。
 
 ## CI
 

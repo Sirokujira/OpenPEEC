@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(cmake:*)",
+      "Bash(make:*)",
+      "Bash(ninja:*)",
+      "Bash(gcc:*)",
+      "Bash(cc:*)",
+      "Bash(./bin/peec:*)",
+      "Bash(bin/peec:*)",
+      "Bash(sh data/sample/peec_check.sh:*)",
+      "Bash(sh .claude/hooks/check-portability.sh:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git ls-files:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(ls:*)",
+      "Bash(awk:*)",
+      "Bash(sed:*)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(rm -rf /*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh .claude/hooks/check-portability.sh"
+          }
+        ]
+      }
+    ]
+  },
+  "includeCoAuthoredBy": true
+}
