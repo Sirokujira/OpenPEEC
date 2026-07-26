@@ -138,10 +138,13 @@ void lp_fill(peec_t *p, FILE *fp_log)
 
 	p->lp = (double *)malloc((size_t)n * n * sizeof(double));
 
+	// MSVC の OpenMP 2.0 は for 文内でのインデックス宣言を許さない (C3015) ため
+	// ループ変数は事前に宣言する
+	int i;
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
-	for (int i = 0; i < n; i++) {
+	for (i = 0; i < n; i++) {
 		p->lp[(size_t)i * n + i] = lp_self(p->seg[i].len, p->seg[i].radius);
 		for (int j = i + 1; j < n; j++) {
 			p->lp[(size_t)i * n + j] = lp_pair(&p->seg[i], &p->seg[j]);

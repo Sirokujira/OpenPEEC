@@ -20,6 +20,9 @@ sh data/sample/peec_check.sh bin/peec /tmp/peec-check
   フラット配列を使う。
 - **float\*/double\* の取り違え禁止**: 配列の実型と読み出しポインタ型の
   不一致は Windows で 0xC0000005 クラッシュ (glibc は偶然耐える)。
+- **OpenMP for のインデックスは事前宣言する** (MSVC C3015)。MSVC の OpenMP は
+  2.0 相当で、`#pragma omp parallel for` の直後に `for (int i = ...)` と
+  書けない。`int i;` を前置して `for (i = ...)` にする (実際に踏んだ)。
 - libm リンクは CMake の `MATH_LIB` 変数経由 (Windows には m.lib が無い)。
 - MSVC フラグは CMakeLists の既存ブロックに従う
   (`/utf-8`, `_USE_MATH_DEFINES`, `_CRT_SECURE_NO_WARNINGS`)。
