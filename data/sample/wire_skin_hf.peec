@@ -1,0 +1,14 @@
+# 検証 (e) : 表皮効果 — 高周波側 (古典的な表皮抵抗の漸近値)
+#   l = 0.1 m, a = 1 mm, sigma = 5.8e7 S/m, f = 100 MHz (l = lambda/30)
+#   delta = 6.60855e-6 m, a/delta = 151.3 >> 1 なので
+#     Rin -> l / (2 pi a delta sigma) = 0.0415230 ohm
+#   (厳密値は曲率補正 1 + delta/(2a) 分だけ約 +0.33% 大きい -> 許容 1%)
+OpenPEEC 1 0
+title = single wire with skin effect (high frequency)
+skineffect = 1
+node = 1 0 0 0
+node = 2 0 0 0.1
+wire = 0 0 0 0 0 0.1 1e-3 5.8e7 1
+port = 1 2 50
+frequency = 1e8 1e8 0
+end

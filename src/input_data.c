@@ -270,6 +270,12 @@ int input_data(FILE *fp, peec_t *p)
 				return 1;
 			}
 		}
+		else if (!strcmp(strkey, "skineffect")) {
+			p->skin = atoi(token[2]);
+		}
+		else if (!strcmp(strkey, "capacitance")) {
+			p->capacitance = atoi(token[2]);
+		}
 		else if (!strcmp(strkey, "gmin")) {
 			p->gmin = atof(token[2]);
 			if (p->gmin < 0) {

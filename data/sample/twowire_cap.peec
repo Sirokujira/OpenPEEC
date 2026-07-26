@@ -1,0 +1,21 @@
+# 検証 (g) : 容量性 PEEC — 平行 2 線の対無限遠容量 (電位係数の相互項)
+#   各線 l = 1 m, a = 1 mm, 線間 D = 1 cm, ndiv = 1 (計 4 セル)
+#   鏡映対称性から P・1 が一様ベクトルになるので解析解が閉形式で得られる :
+#     Ctotal = 8 pi eps0 l^2 / (I_self + I_par)
+#     I_self = 2[l asinh(l/a)   - sqrt(l^2+a^2) + a] = 13.2038044
+#     I_par  = 2[l asinh(l/D)   - sqrt(l^2+D^2) + D] =  8.6165848
+#     Ctotal = 2.22530011e-10 / 21.8203892 = 1.01982e-11 F
+#   (相互項を無視すると 2 x 8.42673 = 16.85 pF になるので相互項の検証になる)
+#   2 本目はポートと直流的に絶縁されているが、容量行列を介して接続される。
+OpenPEEC 1 0
+title = two parallel wires capacitance to infinity
+capacitance = 1
+node = 1 0 0 0
+node = 2 0 0 1
+node = 3 0.01 0 0
+node = 4 0.01 0 1
+wire = 0 0 0 0 0 1 1e-3 5.8e7 1
+wire = 0.01 0 0 0.01 0 1 1e-3 5.8e7 1
+port = 1 2 50
+frequency = 1e6 1e6 0
+end

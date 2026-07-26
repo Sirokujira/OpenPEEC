@@ -2,7 +2,8 @@
 
 準静的 PEEC (部分要素等価回路法) 電気回路ソルバー (C)。OpenFDTD の
 姉妹プロジェクトで、ビルド規約・移植性規則を共有する。
-集中定数 MNA + ワイヤ形状からの部分インダクタンス/抵抗抽出 → Zin(f)。
+集中定数 MNA + ワイヤ形状からの部分要素抽出 (インダクタンス L / 電位係数 P /
+抵抗 R) → Zin(f)。P (`capacitance`) と表皮効果 (`skineffect`) は既定で無効。
 
 ## ビルド / テスト
 
@@ -10,7 +11,7 @@
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 回帰 : 解析解 3 ケース (直列 RLC / 単線ワイヤ / 正方ループ) と比較
+# 回帰 : 解析解の全ケース (MNA / 部分 L / 表皮効果 / 容量性 PEEC) と比較
 sh data/sample/peec_check.sh bin/peec /tmp/peec-check
 ```
 
@@ -39,8 +40,23 @@ sh data/sample/peec_check.sh bin/peec /tmp/peec-check
 - 新機能には data/sample/ の解析解付き検証ケースを追加し、
   `peec_check.sh` に判定を足す (CI 3 OS で自動実行される)。
 - OpenMP は任意依存。`#ifdef _OPENMP` でガードし、スレッド数によらず
-  出力がビット一致することを確認する (現状 lp_fill のみ並列)。
+  出力がビット一致することを確認する (現状 lp_fill / pot_fill が並列)。
+  並列ループ内で共有配列に `+=` しない (pot_fill は積分結果を一時配列に
+  出してから直列で集約している)。
 - 外部ライブラリ (LAPACK/BLAS/HDF5 等) を追加しない。
+
+### 幾何カーネルの不変条件 (壊さないこと)
+
+`neumann_pair()` / `neumann_self()` は同一の細線カーネル
+(距離を導体半径 a で下限打ち切り) を使う。この統一により
+`Σᵢⱼ Iᵢⱼ = I_self(全長)` が厳密に成立し、
+
+- 直線ワイヤの合計インダクタンスが分割数に依存しない
+- 対無限遠容量が平均電位法の解析解と厳密に一致する
+
+という 2 つの性質が保証される。`peec_check.sh` の
+"wire L (ndiv=1)/(ndiv=8)" と "wire Ctotal" が許容 0.1% でこれを守っている。
+片方の項だけ正則化を変えると両方が静かに劣化するので注意。
 
 ## CI
 

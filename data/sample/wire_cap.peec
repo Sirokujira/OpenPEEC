@@ -1,0 +1,15 @@
+# 検証 (f) : 容量性 PEEC — 単線の対無限遠容量 (電位係数の自己項 + 同一直線相互項)
+#   l = 1 m, a = 1 mm, ndiv = 1 -> 容量セルは両端ノードの 2 個 (各 l/2)
+#   対称性から 2 セルの電荷は等しくなるので、平均電位法の解析解と厳密に一致する :
+#     Ctotal = 4 pi eps0 l^2 / I_self,  I_self = 2[l asinh(l/a) - sqrt(l^2+a^2) + a]
+#            = 1.11265006e-10 / 13.2038044 = 8.42673e-12 F
+#   (l >> a では 2 pi eps0 l / [ln(2l/a) - 1] に一致する)
+OpenPEEC 1 0
+title = single wire capacitance to infinity
+capacitance = 1
+node = 1 0 0 0
+node = 2 0 0 1
+wire = 0 0 0 0 0 1 1e-3 5.8e7 1
+port = 1 2 50
+frequency = 1e6 1e6 0
+end

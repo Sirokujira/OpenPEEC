@@ -92,6 +92,7 @@ int wire_build(peec_t *p, FILE *fp_log)
 				}
 				s->len = dist3(s->x1, s->x2);
 				s->radius = w->radius;
+				s->sigma = w->sigma;
 				s->res = (w->sigma > 0) ? s->len / (w->sigma * PI * w->radius * w->radius) : 0;
 				p->nseg++;
 			}

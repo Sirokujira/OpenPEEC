@@ -70,12 +70,16 @@ int main(int argc, char *argv[])
 		peec.nres, peec.ncap, peec.nind, peec.nmut, peec.nsrc, peec.nwire, peec.nport, peec.nfreq);
 	monitor(fp_log, str);
 
-	// setup : ワイヤ分割 -> 部分インダクタンス -> MNA 番号付け
+	// setup : ワイヤ分割 -> 部分インダクタンス -> 電位係数 -> MNA 番号付け
 	if (wire_build(&peec, fp_log)) {
 		fclose(fp_log);
 		exit(1);
 	}
 	lp_fill(&peec, fp_log);
+	if (pot_fill(&peec, fp_log)) {
+		fclose(fp_log);
+		exit(1);
+	}
 	if (mna_numbering(&peec, fp_log)) {
 		fclose(fp_log);
 		exit(1);

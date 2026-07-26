@@ -169,9 +169,25 @@ void mna_assemble(const peec_t *p, double f, d_complex_t *a)
 		stamp(a, n, rk, i1, d_complex(1, 0));
 		stamp(a, n, i2, rk, d_complex(-1, 0));
 		stamp(a, n, rk, i2, d_complex(-1, 0));
-		stamp(a, n, rk, rk, d_complex(-p->seg[k].res, 0));
+		// 内部インピーダンス : 既定は DC 抵抗、skineffect = 1 で表皮効果 + 内部 L
+		const d_complex_t zint = p->skin
+			? zint_round(p->seg[k].len, p->seg[k].radius, p->seg[k].sigma, f)
+			: d_complex(p->seg[k].res, 0);
+		stamp(a, n, rk, rk, d_rmul(-1, zint));
 		for (int m = 0; m < p->nseg; m++) {
 			stamp(a, n, rk, p->offS + m, d_complex(0, -omega * p->lp[(size_t)k * p->nseg + m]));
+		}
+	}
+
+	// 容量性 PEEC : 節点ブロックに j omega C を加える
+	// (基準ノードは電位 0 なので stamp() 側で行・列とも落ちる)
+	if (p->capacitance && (p->ncell > 0)) {
+		for (int i = 0; i < p->ncell; i++) {
+			const int mi = map[p->cellid[i]];
+			for (int j = 0; j < p->ncell; j++) {
+				const int mj = map[p->cellid[j]];
+				stamp(a, n, mi, mj, d_complex(0, omega * p->cmat[(size_t)i * p->ncell + j]));
+			}
 		}
 	}
 }

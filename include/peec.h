@@ -44,7 +44,8 @@ typedef struct {double x1[3], x2[3], radius, sigma; int ndiv;} wire_t;
 typedef struct {
 	int    n1, n2;
 	double x1[3], x2[3];
-	double len, radius, res;      // res : DC 抵抗 = len / (sigma * pi * radius^2)
+	double len, radius, sigma;
+	double res;                   // res : DC 抵抗 = len / (sigma * pi * radius^2)
 } seg_t;
 
 typedef struct {
@@ -66,6 +67,12 @@ typedef struct {
 	seg_t  *seg;
 	double *lp;                   // 部分インダクタンス密行列 (フラット [i*nseg+j])
 
+	// 容量性 PEEC (capacitance = 1 のときのみ)
+	int    ncell;                 // 容量セル (= 幾何ノード) 数
+	int    *cellid;               // [ncell] セルのノード id
+	double *cmat;                 // [ncell*ncell] 節点容量行列 C = P^-1
+	double ctotal;                // 対無限遠の総容量 = sum C(i,j)
+
 	// 形状ノード表 (座標マージ用)
 	int    ngnode;
 	int    *gid;
@@ -83,6 +90,8 @@ typedef struct {
 	double f0, f1;
 	int    nfreq;
 	double nodetol, gmin;
+	int    skin;                  // skineffect = 1 : 表皮効果 + 内部インダクタンス
+	int    capacitance;           // capacitance = 1 : 容量性 PEEC (電位係数)
 
 	// 結果
 	d_complex_t *zin;             // [nport * nfreq]
@@ -105,9 +114,17 @@ int  input_data(FILE *fp, peec_t *p);
 int  wire_build(peec_t *p, FILE *fp_log);
 
 // partial.c
+double neumann_self(double l, double a);
+double neumann_pair(const seg_t *s1, const seg_t *s2);
 double lp_self(double l, double a);
 double lp_pair(const seg_t *s1, const seg_t *s2);
 void lp_fill(peec_t *p, FILE *fp_log);
+
+// potential.c
+int  pot_fill(peec_t *p, FILE *fp_log);
+
+// skin.c
+d_complex_t zint_round(double len, double a, double sigma, double freq);
 
 // mna.c
 int  mna_numbering(peec_t *p, FILE *fp_log);

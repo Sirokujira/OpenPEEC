@@ -1,0 +1,16 @@
+# 検証 (d) : 表皮効果 — 低周波側 (内部インダクタンスの極限値)
+#   l = 1 m, a = 1 mm, sigma = 5.8e7 S/m (銅), f = 1 kHz
+#   delta = sqrt(2/(w mu0 sigma)) = 2.089907e-3 m, q = a/delta = 0.478490
+#   低周波展開 Z_int = R_dc [1 + q^4/48 + j (q^2/4 - q^6/384)] より
+#     Rin   = R_dc (1 + q^4/48) = 5.488094e-3 * 1.0010921 = 5.494087e-3 ohm
+#     L_int = 4.99686e-8 H          (q -> 0 の極限は mu0 l/(8 pi) = 5.0e-8 H)
+#     L_tot = Lp_ext + L_int = 1.320380e-6 + 4.99686e-8 = 1.370349e-6 H
+OpenPEEC 1 0
+title = single wire with skin effect (low frequency)
+skineffect = 1
+node = 1 0 0 0
+node = 2 0 0 1
+wire = 0 0 0 0 0 1 1e-3 5.8e7 1
+port = 1 2 50
+frequency = 1e3 1e3 0
+end
