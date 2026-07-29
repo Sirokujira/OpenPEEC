@@ -140,3 +140,39 @@ jobs:
           name: check-logs-windows
           path: /tmp/peec-check/*.log
           if-no-files-found: ignore
+
+  # メモリ健全性の検証 (AddressSanitizer + UndefinedBehaviorSanitizer)。
+  # 解析解のチェックだけでは「値は合っているがメモリが壊れている / 漏れている」
+  # 状態を見逃す。密行列 (部分インダクタンス・電位係数) は規模に比例して
+  # 大きくなるので、リークの有無は実用上も効く。
+  # -fno-sanitize-recover=all で UBSan の検出も致命エラーにする。
+  sanitize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (ASan + UBSan)
+        run: >
+          cmake -B build-san -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_FLAGS="-g -fsanitize=address,undefined -fno-sanitize-recover=all"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build
+        run: cmake --build build-san -j"$(nproc)"
+
+      # LeakSanitizer を有効にして全検証ケースを流す。
+      # 解析解の判定もそのまま効くので、値の正しさとメモリ健全性を同時に見る。
+      - name: Validation tests under sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: sh data/sample/peec_check.sh "$GITHUB_WORKSPACE/bin/peec" /tmp/peec-san
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-logs-sanitize
+          path: /tmp/peec-san/*.log
+          if-no-files-found: ignore

@@ -64,7 +64,12 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 ## CI
 
-`.github/workflows/ci.yml`: Linux / macOS / Windows (MSVC + Ninja)。
-検証スクリプトは 3 OS とも同一の `data/sample/peec_check.sh` を
-`shell: bash` (Windows は Git Bash) で実行する。タグ `v*` push で
-Release にバイナリ添付。
+`.github/workflows/ci.yml`: Linux / macOS / Windows (MSVC + Ninja) の 3 OS +
+`sanitize` (Linux, ASan + UBSan)。検証スクリプトは全ジョブとも同一の
+`data/sample/peec_check.sh` を `shell: bash` (Windows は Git Bash) で実行する。
+タグ `v*` push で Release にバイナリ添付。
+
+`sanitize` ジョブは LeakSanitizer を有効にして同じ検証を流す。**確保した
+メモリは `peec_free()` (src/input_data.c) で必ず解放すること** — `peec_t` に
+新しい動的配列メンバを足したらここにも足す。忘れるとこのジョブが落ちる。
+密行列 (`lp` / `cmat`) が規模に比例して増えるので実用上も効く。

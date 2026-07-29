@@ -88,9 +88,18 @@ cmake --build build -j"$(nproc)"
 
 # 検証 (解析解と比較、許容誤差は各ケース 0.5〜2%)
 sh data/sample/peec_check.sh bin/peec /tmp/peec-check
+
+# メモリ健全性の検証 (AddressSanitizer + UndefinedBehaviorSanitizer)
+cmake -B build-san -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_FLAGS="-g -fsanitize=address,undefined -fno-sanitize-recover=all" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+cmake --build build-san -j"$(nproc)"
+ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh bin/peec /tmp/peec-san
 ```
 
 - Linux / macOS / Windows (MSVC + Ninja) の 3 OS を CI で検証しています。
+  あわせて Linux で ASan + UBSan (LeakSanitizer 有効) を掛けた `sanitize`
+  ジョブを実行し、値の正しさとメモリ健全性を同時に判定しています。
 - OpenMP は任意です (見つかれば部分インダクタンス・電位係数行列の充填を
   並列化。無くてもビルド・実行可能)。スレッド数によらず出力は一致します。
 

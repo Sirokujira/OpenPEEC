@@ -146,6 +146,7 @@ int  tokenize(char *str, const char *tokensep, char *token[], int maxtoken);
 
 // input_data.c
 int  input_data(FILE *fp, peec_t *p);
+void peec_free(peec_t *p);   // peec_t の動的配列を一括解放する
 
 // wire.c
 int  wire_build(peec_t *p, FILE *fp_log);

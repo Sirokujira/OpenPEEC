@@ -59,6 +59,7 @@ int main(int argc, char *argv[])
 	// input
 	if (input_data(fp_in, &peec)) {
 		fprintf(fp_log, "%s\n", "*** input data error");
+		peec_free(&peec);
 		fclose(fp_log);
 		fclose(fp_in);
 		exit(1);
@@ -73,6 +74,7 @@ int main(int argc, char *argv[])
 
 	// setup : ワイヤ分割 -> 部分インダクタンス -> 電位係数 -> MNA 番号付け
 	if (wire_build(&peec, fp_log)) {
+		peec_free(&peec);
 		fclose(fp_log);
 		exit(1);
 	}
@@ -80,10 +82,12 @@ int main(int argc, char *argv[])
 	// 遅延ありのときは solve() が周波数ごとに作り直す。
 	lp_fill(&peec, 0, fp_log);
 	if (pot_fill(&peec, 0, fp_log)) {
+		peec_free(&peec);
 		fclose(fp_log);
 		exit(1);
 	}
 	if (mna_numbering(&peec, fp_log)) {
+		peec_free(&peec);
 		fclose(fp_log);
 		exit(1);
 	}
@@ -92,6 +96,7 @@ int main(int argc, char *argv[])
 
 	// solve
 	if (solve(&peec, fp_log)) {
+		peec_free(&peec);
 		fclose(fp_log);
 		exit(1);
 	}
@@ -101,6 +106,7 @@ int main(int argc, char *argv[])
 	// output
 	output_zin(&peec, fp_log);
 	if (output_csv(&peec, FN_CSV)) {
+		peec_free(&peec);
 		fclose(fp_log);
 		exit(1);
 	}
@@ -113,6 +119,7 @@ int main(int argc, char *argv[])
 
 	monitor(fp_log, "=== normal end ===");
 
+	peec_free(&peec);
 	fclose(fp_log);
 
 	return 0;

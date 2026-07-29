@@ -370,3 +370,51 @@ int input_data(FILE *fp, peec_t *p)
 
 	return 0;
 }
+
+
+// peec_t が抱える動的配列をまとめて解放する
+//
+// 確保箇所はファイルをまたぐ (input_data / wire_build / lp_fill / pot_fill /
+// mna_numbering / solve) が、いずれも peec_t のメンバとして最後まで保持される
+// ので解放も 1 箇所にまとめる。input_data() 冒頭の memset で全ポインタが NULL
+// から始まるため、途中で失敗した状態から呼んでも安全 (free(NULL) は無害)。
+//
+// バッチ実行ではプロセス終了時にまとめて回収されるが、密行列 (lp / cmat) が
+// 支配的で規模に比例して増えるため、LeakSanitizer を CI に掛けられるように
+// 明示的に解放する。
+void peec_free(peec_t *p)
+{
+	if (p == NULL) return;
+
+	// ネットリスト (input_data.c)
+	free(p->plate);
+	free(p->res);
+	free(p->cap);
+	free(p->ind);
+	free(p->mut);
+	free(p->src);
+	free(p->port);
+	free(p->wire);
+	free(p->ncid);
+	free(p->ncxyz);
+
+	// 形状・分割 (wire.c)
+	free(p->seg);
+	free(p->chg);
+	free(p->chgnode);
+	free(p->gid);
+	free(p->gxyz);
+
+	// 部分要素 (partial.c / potential.c)
+	free(p->lp);
+	free(p->cellid);
+	free(p->cellof);
+	free(p->carea);
+	free(p->cmat);
+
+	// MNA と結果 (mna.c / solve.c)
+	free(p->nodemap);
+	free(p->zin);
+
+	memset(p, 0, sizeof(peec_t));
+}
