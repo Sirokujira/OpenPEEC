@@ -73,3 +73,11 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 メモリは `peec_free()` (src/input_data.c) で必ず解放すること** — `peec_t` に
 新しい動的配列メンバを足したらここにも足す。忘れるとこのジョブが落ちる。
 密行列 (`lp` / `cmat`) が規模に比例して増えるので実用上も効く。
+
+## 多ポート解析
+
+`port` を複数書くと Z 行列 (ポート j に 1A 注入、他ポート開放) と S 行列
+(電力波の定義、`solve.c` の `z_to_s()`) を求め、`peec.log` の表と
+Touchstone `peec.sNp` に出力する。基準抵抗はポートごとに指定できるが、
+Touchstone 1.1 は 1 個しか記録できないので port#1 の値を書いて注記する。
+2 ポートだけ Touchstone の列順が S11 S21 S12 S22 と転置になる (仕様)。

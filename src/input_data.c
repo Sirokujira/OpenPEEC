@@ -415,6 +415,8 @@ void peec_free(peec_t *p)
 	// MNA と結果 (mna.c / solve.c)
 	free(p->nodemap);
 	free(p->zin);
+	free(p->zmat);
+	free(p->smat);
 
 	memset(p, 0, sizeof(peec_t));
 }

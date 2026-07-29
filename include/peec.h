@@ -131,8 +131,16 @@ typedef struct {
 	int    retardation;           // retardation = 1 : 遅延 (フルウェーブ PEEC)
 
 	// 結果
-	d_complex_t *zin;             // [nport * nfreq]
+	d_complex_t *zin;             // [nport * nfreq] 各ポートの入力インピーダンス
+	// 多ポートの Z 行列と S 行列 (どちらも [ifreq][i][j] = [(ifreq*nport + i)*nport + j])
+	// Z はポート j に 1A を注入し (他ポートは開放) ポート i の電圧を読んで得る。
+	// S は電力波の定義 (Kurokawa) でポートごとの実数基準抵抗 z0 から変換する。
+	d_complex_t *zmat;            // [nfreq * nport * nport]
+	d_complex_t *smat;            // [nfreq * nport * nport]
 } peec_t;
+
+// Z / S 行列の添字 (周波数 ifreq、行 i、列 j)
+#define ZIDX(p, ifreq, i, j) ((size_t)((ifreq) * (p)->nport + (i)) * (p)->nport + (j))
 
 // 掃引周波数 (ifreq = 0 ... nfreq-1)
 static inline double freq_at(const peec_t *p, int ifreq)
@@ -188,5 +196,7 @@ int  solve(peec_t *p, FILE *fp_log);
 // output.c
 void output_zin(const peec_t *p, FILE *fp_log);
 int  output_csv(const peec_t *p, const char *fn);
+void output_spara(const peec_t *p, FILE *fp_log);
+int  output_touchstone(const peec_t *p);
 
 #endif		// _PEEC_H_

@@ -109,8 +109,26 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh bin/peec /tmp/peec-san
 peec [-n <threads>] input.peec
 ```
 
-出力 : `peec.log` (入力インピーダンス表 + `=== normal end ===`)、
-`zin.csv` (機械読み取り用)。
+出力 :
+
+| ファイル | 内容 |
+|---|---|
+| `peec.log` | 入力インピーダンス表、S パラメータ表、`=== normal end ===` |
+| `zin.csv` | 各ポートの Zin (機械読み取り用) |
+| `peec.sNp` | S パラメータの Touchstone 1.1 形式 (N = ポート数) |
+
+**多ポート解析** : `port` を複数書くと、ポート j に 1A を注入し (他ポートは
+開放) 全ポートの端子電圧を読むことで Z 行列を求め、電力波の定義 (Kurokawa)
+
+```
+S = F (Z − Z0) (Z + Z0)⁻¹ F⁻¹,   F = diag(1 / (2√z0ᵢ))
+  → Sᵢⱼ = √(z0ⱼ / z0ᵢ) · [(Z − Z0)(Z + Z0)⁻¹]ᵢⱼ
+```
+
+で S 行列に変換します。基準抵抗 `z0` は `port` キーでポートごとに指定でき、
+全ポートで等しいときは教科書どおりの `(Z − Z0)(Z + Z0)⁻¹` に一致します。
+Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポートごとに異なる
+`z0` を与えた場合は port#1 の値を書き、その旨をコメント行に残します。
 
 ## Input format / 入力形式
 
@@ -130,7 +148,7 @@ peec [-n <threads>] input.peec
 | `wire` | `wire = x1 y1 z1 x2 y2 z2 半径 導電率 分割数` | 丸線 (PEEC 抽出対象) |
 | `bar` | `bar = x1 y1 z1 x2 y2 z2 幅 厚さ 導電率 分割数` | 角線 (矩形断面) |
 | `plate` | `plate = ox oy oz ax ay az bx by bz 厚さ 導電率 分割数a 分割数b` | 平面矩形の面導体 (2 辺ベクトルは直交) |
-| `port` | `port = n1 n2 Z0` | Zin 計算ポート |
+| `port` | `port = n1 n2 Z0` | ポート (Zin / S パラメータの基準抵抗 Z0 [Ω])。複数書くと多ポート解析になる |
 | `frequency` | `frequency = f開始 f終了 分割数` | 周波数掃引 (分割数+1 点) |
 | `nodetol` | `nodetol = 1e-8` | 座標マージ許容 [m] (省略時 1e-8) |
 | `gmin` | `gmin = 0` | 全ノード対地コンダクタンス [S] (省略時 0) |
@@ -173,6 +191,8 @@ peec [-n <threads>] input.peec
 | `bar_strip_cap.peec` 薄板の容量 | 半径 w/4 の丸線と等価 → C = 9.78221 pF | 0.5% |
 | `bar_skin.peec` 角線の表皮効果 | R → l/(σδP) = 0.118589 Ω (P = 2(w+t)) | 1% |
 | `plate_cap.peec` 正方形平板の容量 | 8/16 分割から Richardson 補外 → 0.3667892·4πε0a = 40.810 pF | 1% |
+| `tnetwork_spara.peec` 抵抗性 T 型 2 ポート | Z = [[75,50],[50,75]], Z0 = 50 → S11 = 1/21、S21 = 8/21 (実数)。相反性 S12 = S21、対称性 S11 = S22 | 0.1% |
+| `tnetwork_l_spara.peec` 直列 L 入り T 型 2 ポート | ωL = 50 Ω で S11 = 0.101124+j0.561798、S21 = 0.359551−j0.224719、S22 = 0.056180+j0.089888。非対称だが相反 | 0.1% |
 | `plate_strip.peec` 帯のインダクタンス | 面積分 vs GMD 近似 → (μ0l/2π)[ln(2l/w)+0.5] = 1.15966 µH | 1% |
 
 ## License
