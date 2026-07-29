@@ -44,6 +44,9 @@ getR() { awk -F, 'NR==2{print $3}' "$csv"; }
 # "PEEC: capacitive cells = N, total capacitance = C F" から C を取り出す
 getC() { grep "total capacitance" "$log" | tail -1 | awk '{print $(NF-1)}'; }
 
+# peec.log の "S<i><j>" 表の 1 行目から実部 / 虚部を取り出す
+getS() { awk -v k="$1" -v c="$2" '$0 == k {found = 1; next} found && (++n == 2) {print $(c + 1); exit}' "$log"; }
+
 echo "--- MNA (lumped elements)"
 # (a) 直列 RLC : Rin(f0)=50, Xin(f0)~0, Xin(2f0)=47.43416
 cp "$SRC/rlc_series.peec" "$WORK/"
@@ -174,6 +177,38 @@ chk "plate C (extrapolated)" "$(awk -v a="$c8" -v b="$c16" 'BEGIN{printf "%.9e",
 cp "$SRC/plate_strip.peec" "$WORK/"
 run plate_strip.peec
 chk "strip L (surface)" "$(getL)" 1.159664e-6 0.01
+
+echo "--- multi-port S parameters"
+# (q) 抵抗性 T 型 2 ポート : Z=[[75,50],[50,75]], Z0=50 -> S11=1/21, S21=8/21 (実数)
+cp "$SRC/tnetwork_spara.peec" "$WORK/"
+run tnetwork_spara.peec
+chk "T-net S11 (real)" "$(getS S11 1)" 0.047619048 0.001
+chk "T-net S21 (real)" "$(getS S21 1)" 0.380952381 0.001
+# 相反性 S12 = S21 と対称性 S11 = S22 (この回路では厳密に成り立つ)
+chk "T-net S12 = S21"  "$(getS S12 1)" "$(getS S21 1)" 0.001
+chk "T-net S22 = S11"  "$(getS S22 1)" "$(getS S11 1)" 0.001
+
+# (r) 直列 L 入り T 型 2 ポート (wL = 50 ohm) : S が複素数になる非対称・相反回路
+cp "$SRC/tnetwork_l_spara.peec" "$WORK/"
+run tnetwork_l_spara.peec
+chk "T-net(L) Re S11" "$(getS S11 1)"  0.101123595 0.001
+chk "T-net(L) Im S11" "$(getS S11 2)"  0.561797753 0.001
+chk "T-net(L) Re S21" "$(getS S21 1)"  0.359550562 0.001
+chk "T-net(L) Im S21" "$(getS S21 2)" -0.224719101 0.001
+chk "T-net(L) Re S22" "$(getS S22 1)"  0.056179775 0.001
+chk "T-net(L) Im S22" "$(getS S22 2)"  0.089887640 0.001
+# 相反性 (非対称回路でも S12 = S21)
+chk "T-net(L) S12=S21 Re" "$(getS S12 1)" "$(getS S21 1)" 0.001
+chk "T-net(L) S12=S21 Im" "$(getS S12 2)" "$(getS S21 2)" 0.001
+
+# Touchstone 出力の体裁 (2 ポートは 1 行 = 周波数 + 4 成分 x 実虚 = 9 列)
+if [ ! -s "$WORK/peec.s2p" ]; then
+	echo "*** peec.s2p not generated" >&2
+	status=1
+else
+	awk '/^[^!#]/ {if (NF != 9) {printf "%-24s -> NG (columns=%d)\n", "Touchstone s2p format", NF; exit 1}}
+	     END {printf "%-24s -> OK\n", "Touchstone s2p format"}' "$WORK/peec.s2p" || status=1
+fi
 
 if [ "$status" -ne 0 ]; then
 	echo "*** PEEC validation FAILED" >&2
