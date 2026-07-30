@@ -38,9 +38,22 @@ int lu_decomp(int n, d_complex_t *a, int *piv)
 			}
 		}
 
-		// 消去
+		// 消去 (残余部分行列の更新)
+		//
+		// 行 i の更新は行 k しか読まないので行ごとに独立 = 並列化できる。
+		// 各要素は「元の値 - lik * a[k][j]」を 1 回計算するだけで、順序に依存
+		// する加算 (リダクション) が無いため、**スレッド数を変えても結果は
+		// ビット単位で同一**になる (peec_check.sh が -n 1 と -n 4 の一致を判定)。
+		//
+		// 小さい行列ではスレッド生成のほうが高くつくので if 節で切り替える。
+		// MSVC の OpenMP 2.0 は for 文内でのインデックス宣言を許さない (C3015)
+		// ため、ループ変数は事前に宣言する。
 		const d_complex_t pinv = d_inv(a[(size_t)k * n + k]);
-		for (int i = k + 1; i < n; i++) {
+		int i;
+#ifdef _OPENMP
+#pragma omp parallel for if ((n - k) > 64)
+#endif
+		for (i = k + 1; i < n; i++) {
 			const d_complex_t lik = d_mul(a[(size_t)i * n + k], pinv);
 			a[(size_t)i * n + k] = lik;
 			for (int j = k + 1; j < n; j++) {

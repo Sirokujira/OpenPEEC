@@ -159,3 +159,71 @@ int output_touchstone(const peec_t *p)
 	fclose(fp);
 	return 0;
 }
+
+
+/*
+電流・電荷分布 (dist.csv) — distribution = 1 のときのみ
+
+port #1 を 1A で励振したときの
+  - 各導体区間の電流 [A] (区間中点の座標つき)
+  - 各容量セルの電荷 [C] (capacitance = 1 のときのみ)
+を 1 ファイルにまとめる。type 列で行を区別する。
+
+区間電流は MNA 未知数ベクトルの [offS, offS + nseg) がそのまま枝電流なので
+追加計算は不要。セル電荷は q = C v (v は各セルのノード電位) で求める。
+*/
+int output_dist(const peec_t *p, const char *fn)
+{
+	if (!p->dist) return 0;
+	if ((p->segi == NULL) && (p->cellq == NULL)) return 0;
+
+	FILE *fp = fopen(fn, "w");
+	if (fp == NULL) {
+		printf("*** file %s open error.\n", fn);
+		return 1;
+	}
+
+	fprintf(fp, "type,index,frequency[Hz],x[m],y[m],z[m],real,imag,abs\n");
+
+	for (int ifreq = 0; ifreq < p->nfreq; ifreq++) {
+		const double f = freq_at(p, ifreq);
+
+		// 区間電流 [A] : 座標は区間の中点
+		if (p->segi != NULL) {
+			for (int m = 0; m < p->nseg; m++) {
+				const seg_t *s = &p->seg[m];
+				const d_complex_t v = p->segi[(size_t)ifreq * p->nseg + m];
+				fprintf(fp, "I,%d,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e\n",
+					m, f,
+					0.5 * (s->x1[0] + s->x2[0]),
+					0.5 * (s->x1[1] + s->x2[1]),
+					0.5 * (s->x1[2] + s->x2[2]),
+					v.r, v.i, d_abs(v));
+			}
+		}
+
+		// セル電荷 [C] : 座標はそのセルに属する電荷セルの中点の平均
+		if (p->cellq != NULL) {
+			for (int m = 0; m < p->ncell; m++) {
+				double xc[3] = {0, 0, 0};
+				int cnt = 0;
+				for (int h = 0; h < p->nchg; h++) {
+					if (p->cellof[h] != m) continue;
+					for (int d = 0; d < 3; d++) {
+						xc[d] += 0.5 * (p->chg[h].x1[d] + p->chg[h].x2[d]);
+					}
+					cnt++;
+				}
+				if (cnt > 0) {
+					for (int d = 0; d < 3; d++) xc[d] /= cnt;
+				}
+				const d_complex_t v = p->cellq[(size_t)ifreq * p->ncell + m];
+				fprintf(fp, "Q,%d,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e\n",
+					m, f, xc[0], xc[1], xc[2], v.r, v.i, d_abs(v));
+			}
+		}
+	}
+
+	fclose(fp);
+	return 0;
+}

@@ -96,6 +96,16 @@ int solve(peec_t *p, FILE *fp_log)
 	d_complex_t *scol = (d_complex_t *)malloc((size_t)np * sizeof(d_complex_t));
 	int *spiv = (int *)malloc((size_t)np * sizeof(int));
 
+	// 電流・電荷分布 (distribution = 1 のときのみ)
+	if (p->dist) {
+		if (p->nseg > 0) {
+			p->segi = (d_complex_t *)malloc((size_t)p->nfreq * p->nseg * sizeof(d_complex_t));
+		}
+		if (p->capacitance && (p->ncell > 0)) {
+			p->cellq = (d_complex_t *)malloc((size_t)p->nfreq * p->ncell * sizeof(d_complex_t));
+		}
+	}
+
 	if ((a == NULL) || (b == NULL) || (piv == NULL) || (p->zin == NULL) ||
 	    (p->zmat == NULL) || (p->smat == NULL) ||
 	    (sm == NULL) || (sinv == NULL) || (scol == NULL) || (spiv == NULL)) {
@@ -143,6 +153,28 @@ int solve(peec_t *p, FILE *fp_log)
 				p->zmat[ZIDX(p, ifreq, i, j)] = d_sub(v1, v2);
 			}
 			p->zin[(size_t)j * p->nfreq + ifreq] = p->zmat[ZIDX(p, ifreq, j, j)];
+
+			// 分布は port #1 を 1A で励振したときの解から取る
+			if (p->dist && (j == 0)) {
+				// 区間電流 : 未知数ベクトルの [offS, offS + nseg) がそのまま枝電流
+				if (p->segi != NULL) {
+					for (int m = 0; m < p->nseg; m++) {
+						p->segi[(size_t)ifreq * p->nseg + m] = b[p->offS + m];
+					}
+				}
+				// セル電荷 : q = C v (v は各セルのノード電位、基準ノードは 0V)
+				if (p->cellq != NULL) {
+					for (int m = 0; m < p->ncell; m++) {
+						d_complex_t q = d_complex(0, 0);
+						for (int l = 0; l < p->ncell; l++) {
+							const int im = p->nodemap[p->cellid[l]];
+							const d_complex_t v = (im < 0) ? d_complex(0, 0) : b[im];
+							q = d_add(q, d_mul(p->cmat[(size_t)m * p->ncell + l], v));
+						}
+						p->cellq[(size_t)ifreq * p->ncell + m] = q;
+					}
+				}
+			}
 		}
 
 		// Z -> S (基準抵抗はポートごとの z0)

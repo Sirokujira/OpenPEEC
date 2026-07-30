@@ -100,8 +100,12 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh bin/peec /tmp/peec-san
 - Linux / macOS / Windows (MSVC + Ninja) の 3 OS を CI で検証しています。
   あわせて Linux で ASan + UBSan (LeakSanitizer 有効) を掛けた `sanitize`
   ジョブを実行し、値の正しさとメモリ健全性を同時に判定しています。
-- OpenMP は任意です (見つかれば部分インダクタンス・電位係数行列の充填を
-  並列化。無くてもビルド・実行可能)。スレッド数によらず出力は一致します。
+- OpenMP は任意です (無くてもビルド・実行可能)。並列化しているのは
+  **部分インダクタンス行列の充填・電位係数行列の充填・LU 分解の残余行列更新**
+  の 3 箇所で、いずれも要素ごとに独立 (順序依存の加算が無い) なため
+  **スレッド数によらず出力はビット単位で一致します**
+  (`peec_check.sh` が `-n 1` と `-n 4` の完全一致を判定)。
+  LU 支配的なケース (未知数 645、21 周波数掃引) で 4 スレッド 3.6 倍。
 
 ## Usage / 実行
 
@@ -116,6 +120,7 @@ peec [-n <threads>] input.peec
 | `peec.log` | 入力インピーダンス表、S パラメータ表、`=== normal end ===` |
 | `zin.csv` | 各ポートの Zin (機械読み取り用) |
 | `peec.sNp` | S パラメータの Touchstone 1.1 形式 (N = ポート数) |
+| `dist.csv` | 電流・電荷分布 (`distribution = 1` のときのみ) |
 
 **多ポート解析** : `port` を複数書くと、ポート j に 1A を注入し (他ポートは
 開放) 全ポートの端子電圧を読むことで Z 行列を求め、電力波の定義 (Kurokawa)
@@ -155,6 +160,7 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `skineffect` | `skineffect = 1` | 1 で表皮効果 + 内部インダクタンス (省略時 0 = DC 抵抗) |
 | `capacitance` | `capacitance = 1` | 1 で容量性 PEEC (電位係数) を有効化 (省略時 0) |
 | `retardation` | `retardation = 1` | 1 で遅延 (フルウェーブ PEEC) を有効化 (省略時 0) |
+| `distribution` | `distribution = 1` | 1 で電流・電荷分布を `dist.csv` に出力 (省略時 0) |
 
 - 導体と回路素子の接続は `node` キーで行います。導体端点 (面導体は格子点)
   の座標が `nodetol` 以内で一致するとそのノード id に接続されます。
@@ -193,6 +199,9 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `plate_cap.peec` 正方形平板の容量 | 8/16 分割から Richardson 補外 → 0.3667892·4πε0a = 40.810 pF | 1% |
 | `tnetwork_spara.peec` 抵抗性 T 型 2 ポート | Z = [[75,50],[50,75]], Z0 = 50 → S11 = 1/21、S21 = 8/21 (実数)。相反性 S12 = S21、対称性 S11 = S22 | 0.1% |
 | `tnetwork_l_spara.peec` 直列 L 入り T 型 2 ポート | ωL = 50 Ω で S11 = 0.101124+j0.561798、S21 = 0.359551−j0.224719、S22 = 0.056180+j0.089888。非対称だが相反 | 0.1% |
+| `wire_dist.peec` 電流分布 (容量なし) | 電荷が溜まらないので全 8 区間に同じ 1 A (キルヒホッフの電流則、厳密) | 1e-9 |
+| `wire_dist.peec` + `capacitance=1` | ポートは 1 A を入れて 1 A を出すので構造の総電荷は 0 | max\|q\| 比 1e-6 |
+| `plate_cap.peec` スレッド数不変性 | `-n 1` と `-n 4` の `zin.csv` が完全一致 (未知数 225 で LU 並列経路も通る) | 完全一致 |
 | `plate_strip.peec` 帯のインダクタンス | 面積分 vs GMD 近似 → (μ0l/2π)[ln(2l/w)+0.5] = 1.15966 µH | 1% |
 
 ## License

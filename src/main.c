@@ -106,12 +106,19 @@ int main(int argc, char *argv[])
 	// output
 	output_zin(&peec, fp_log);
 	output_spara(&peec, fp_log);
-	if (output_csv(&peec, FN_CSV) || output_touchstone(&peec)) {
+	if (output_csv(&peec, FN_CSV) || output_touchstone(&peec) ||
+	    output_dist(&peec, FN_DIST)) {
 		peec_free(&peec);
 		fclose(fp_log);
 		exit(1);
 	}
-	sprintf(str, "output filename : %s, %s, peec.s%dp", FN_LOG, FN_CSV, peec.nport);
+	if (peec.dist) {
+		sprintf(str, "output filename : %s, %s, peec.s%dp, %s",
+			FN_LOG, FN_CSV, peec.nport, FN_DIST);
+	}
+	else {
+		sprintf(str, "output filename : %s, %s, peec.s%dp", FN_LOG, FN_CSV, peec.nport);
+	}
 	monitor(fp_log, str);
 
 	// cpu time
