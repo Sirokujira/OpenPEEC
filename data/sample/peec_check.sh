@@ -210,6 +210,54 @@ else
 	     END {printf "%-24s -> OK\n", "Touchstone s2p format"}' "$WORK/peec.s2p" || status=1
 fi
 
+echo "--- current / charge distribution"
+# (s) 単線 8 分割、容量なし : 電荷が溜まらないので全区間に同じ 1A が流れる
+#     (キルヒホッフの電流則。分割数・周波数・材料に依らず厳密)
+cp "$SRC/wire_dist.peec" "$WORK/"
+run wire_dist.peec
+awk -F, '$1 == "I" {
+	n++; d = $9 - 1.0; ad = (d < 0) ? -d : d; if (ad > mx) mx = ad;
+	ai = ($8 < 0) ? -$8 : $8; if (ai > mi) mi = ai;
+}
+END {
+	ok = (n == 8) && (mx <= 1e-9) && (mi <= 1e-9);
+	printf "%-24s segments=%d max||I|-1|=%.3e max|Im|=%.3e -> %s\n",
+		"wire I continuity", n, mx, mi, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/dist.csv" || status=1
+
+# (t) 同じ構成に capacitance = 1 : ポートは 1A を入れて 1A を出すので
+#     構造の総電荷は 0 のまま (max|q| に対する相対値で判定)
+sed 's/^distribution = 1/capacitance = 1\ndistribution = 1/' "$SRC/wire_dist.peec" > "$WORK/wire_dist_cap.peec"
+run wire_dist_cap.peec
+awk -F, '$1 == "Q" {
+	n++; sr += $7; si += $8; if ($9 > mx) mx = $9;
+}
+END {
+	rel = (mx > 0) ? sqrt(sr * sr + si * si) / mx : 1;
+	ok = (n > 0) && (rel <= 1e-6);
+	printf "%-24s cells=%d |sum q|/max|q|=%.3e -> %s\n",
+		"wire charge neutrality", n, rel, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/dist.csv" || status=1
+
+echo "--- thread invariance (OpenMP)"
+# (u) スレッド数を変えても出力が一致すること。
+#     並列化しているのは部分インダクタンス充填・電位係数充填・LU 分解の
+#     残余行列更新で、いずれも要素ごとに独立 (順序依存の加算が無い) なので
+#     結果はビット単位で一致する。
+#     plate_cap は未知数 225 で LU の並列経路 (n-k > 64) も通る。
+cp "$SRC/plate_cap.peec" "$WORK/"
+(cd "$WORK" && "$PEEC" -n 1 plate_cap.peec > /dev/null)
+cp "$csv" "$WORK/zin_n1.csv"
+(cd "$WORK" && "$PEEC" -n 4 plate_cap.peec > /dev/null)
+if cmp -s "$WORK/zin_n1.csv" "$csv"; then
+	printf "%-24s -> OK (-n 1 と -n 4 が完全一致)\n" "thread invariance"
+else
+	printf "%-24s -> NG (-n 1 と -n 4 が不一致)\n" "thread invariance" >&2
+	status=1
+fi
+
 if [ "$status" -ne 0 ]; then
 	echo "*** PEEC validation FAILED" >&2
 else

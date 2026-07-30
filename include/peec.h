@@ -22,6 +22,7 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 
 #define FN_LOG "peec.log"
 #define FN_CSV "zin.csv"
+#define FN_DIST "dist.csv"
 
 // 数学・物理定数 (自前マクロ : <math.h> の M_PI には依存しない)
 #define PI   (4.0 * atan(1.0))
@@ -129,6 +130,7 @@ typedef struct {
 	int    skin;                  // skineffect = 1 : 表皮効果 + 内部インダクタンス
 	int    capacitance;           // capacitance = 1 : 容量性 PEEC (電位係数)
 	int    retardation;           // retardation = 1 : 遅延 (フルウェーブ PEEC)
+	int    dist;                  // distribution = 1 : 電流・電荷分布を出力
 
 	// 結果
 	d_complex_t *zin;             // [nport * nfreq] 各ポートの入力インピーダンス
@@ -137,6 +139,9 @@ typedef struct {
 	// S は電力波の定義 (Kurokawa) でポートごとの実数基準抵抗 z0 から変換する。
 	d_complex_t *zmat;            // [nfreq * nport * nport]
 	d_complex_t *smat;            // [nfreq * nport * nport]
+	// 分布 (distribution = 1 のときのみ)。port #1 を 1A で励振したときの値。
+	d_complex_t *segi;            // [nfreq * nseg]  区間電流 [A]
+	d_complex_t *cellq;           // [nfreq * ncell] セル電荷 [C] (capacitance = 1 のときのみ)
 } peec_t;
 
 // Z / S 行列の添字 (周波数 ifreq、行 i、列 j)
@@ -198,5 +203,6 @@ void output_zin(const peec_t *p, FILE *fp_log);
 int  output_csv(const peec_t *p, const char *fn);
 void output_spara(const peec_t *p, FILE *fp_log);
 int  output_touchstone(const peec_t *p);
+int  output_dist(const peec_t *p, const char *fn);
 
 #endif		// _PEEC_H_

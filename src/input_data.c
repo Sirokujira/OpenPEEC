@@ -326,6 +326,9 @@ int input_data(FILE *fp, peec_t *p)
 		else if (!strcmp(strkey, "capacitance")) {
 			p->capacitance = atoi(token[2]);
 		}
+		else if (!strcmp(strkey, "distribution")) {
+			p->dist = atoi(token[2]);
+		}
 		else if (!strcmp(strkey, "retardation")) {
 			p->retardation = atoi(token[2]);
 		}
@@ -417,6 +420,8 @@ void peec_free(peec_t *p)
 	free(p->zin);
 	free(p->zmat);
 	free(p->smat);
+	free(p->segi);
+	free(p->cellq);
 
 	memset(p, 0, sizeof(peec_t));
 }
