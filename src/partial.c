@@ -219,6 +219,18 @@ static int ribbon_nsub(const seg_t *s1, const seg_t *s2, double kw)
 // 平行区間以外では、静的部も補正部と同じ求積で評価する。
 d_complex_t neumann_pair_k(const seg_t *s1, const seg_t *s2, double a1, double a2, double kw)
 {
+	// 体積セルどうし (軸・断面がそろった近接対) : Hoer-Love の閉形式。
+	// 自己項 (s1 == s2) もこの式で厳密に求まる。遅延補正は薄板 (厚み << 波長)
+	// なので中立面リボンの求積で評価する (静的部が解析的に厳密な点は
+	// 平行区間の解析式と同じ扱い)。
+	// 閉形式が使えない対 (遠方・非平行) は従来のリボン経路に落ちる :
+	// セルの中立面がそのまま x1/x2/wv に入っているので追加の変換は不要。
+	if (s1->vol && s2->vol && bar_use_hl(s1, s2)) {
+		const d_complex_t is = d_complex(bar_pair(s1, s2), 0);
+		if (kw <= 0) return is;
+		return d_add(is, ribbon_corr(s1, s2, kw, ribbon_nsub(s1, s2, kw)));
+	}
+
 	if (is_ribbon(s1, s2)) {
 		const int nsub = ribbon_nsub(s1, s2, kw);
 		const d_complex_t is = d_complex(ribbon_static(s1, s2, nsub), 0);

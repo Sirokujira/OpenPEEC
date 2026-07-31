@@ -55,10 +55,12 @@ typedef struct {
 } wire_t;
 
 // 平面矩形導体 : o + s*ea + t*eb (s, t は 0..1)
+// ndivt >= 2 で厚み方向にも分割し、セルを体積バー (Hoer-Love) として扱う。
+// ndivt = 1 (既定) は従来どおりリボン (面積分) 1 層。
 typedef struct {
 	double org[3], ea[3], eb[3];
 	double thick, sigma;
-	int    ndiva, ndivb;
+	int    ndiva, ndivb, ndivt;
 } plate_t;
 
 // 分割後の 1 セル。導体電流 (枝) にも電荷セルにも使う。
@@ -71,6 +73,7 @@ typedef struct {
 	int    shape;
 	double radius, width, thick;
 	double wid, wv[3];            // リボンの幅と横方向単位ベクトル
+	int    vol;                   // 1 = 体積セル (断面 wid x thick の矩形バー)
 	double aL, aP;                // 細線の等価半径 : インダクタンス用 (GMD) / 容量用
 	double area, perim;           // 断面積・周長 (DC 抵抗・表皮効果)
 	double sigma;
@@ -168,6 +171,10 @@ int  wire_build(peec_t *p, FILE *fp_log);
 double rect_potential(const seg_t *s, const double *pt);
 double ribbon_static(const seg_t *s1, const seg_t *s2, int nsub);
 d_complex_t ribbon_corr(const seg_t *s1, const seg_t *s2, double kw, int nsub);
+
+// volume.c
+int    bar_use_hl(const seg_t *s1, const seg_t *s2);
+double bar_pair(const seg_t *s1, const seg_t *s2);
 
 // partial.c
 double neumann_self(double l, double a);

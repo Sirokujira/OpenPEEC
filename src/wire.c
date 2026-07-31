@@ -88,8 +88,9 @@ int wire_build(peec_t *p, FILE *fp_log)
 	for (int i = 0; i < p->nplate; i++) {
 		const int na = p->plate[i].ndiva;
 		const int nb = p->plate[i].ndivb;
+		const int nt = (p->plate[i].ndivt > 1) ? p->plate[i].ndivt : 1;
 		npoint += (na + 1) * (nb + 1);
-		nseg += (na * (nb + 1)) + ((na + 1) * nb);
+		nseg += nt * ((na * (nb + 1)) + ((na + 1) * nb));
 		nchg += (na + 1) * (nb + 1);
 	}
 	p->gid = (int *)malloc((size_t)npoint * sizeof(int));
@@ -216,8 +217,22 @@ int wire_build(peec_t *p, FILE *fp_log)
 		proto.thick = pl->thick;
 		proto.sigma = pl->sigma;
 
+		// 厚み方向の分割 (ndivt >= 2 で体積セル化)。
+		// 各層は同じ格子ノードを共有する (層間は各格子点で並列接続)。
+		// ノードは元の平面に留まるので node = の束縛はそのまま届く。
+		// 層のスタックは元の平面を中心に対称に置く : 板の占有体積が
+		// ndivt = 1 のリボン (中立面 = 元の平面) と幾何的に一致する。
+		const int nt = (pl->ndivt > 1) ? pl->ndivt : 1;
+		const double tl = pl->thick / nt;
+		double nv[3];                             // 板の法線 = ta x tb
+		nv[0] = (ta[1] * tb[2]) - (ta[2] * tb[1]);
+		nv[1] = (ta[2] * tb[0]) - (ta[0] * tb[2]);
+		nv[2] = (ta[0] * tb[1]) - (ta[1] * tb[0]);
+
 		// 電流セル : 格子線に沿って隣接ノードを結ぶ。幅は双対格子の横幅
 		// (内部の行/列は h、端は h/2)。
+		for (int it = 0; it < nt; it++) {
+			const double zoff = (it - (0.5 * (nt - 1))) * tl;   // nt = 1 なら 0
 		for (int dir = 0; dir < 2; dir++) {
 			const int n1 = dir ? nb : na;             // 進行方向の分割数
 			const int n2 = dir ? na : nb;             // 横方向の分割数
@@ -241,21 +256,25 @@ int wire_build(peec_t *p, FILE *fp_log)
 					s->n1 = nid[(ia1 * (nb + 1)) + ib1];
 					s->n2 = nid[(ia2 * (nb + 1)) + ib2];
 					for (int c = 0; c < 3; c++) {
-						const double base = pl->org[c] + (j * h2 * t2[c]) + (off * t2[c]);
+						const double base = pl->org[c] + (j * h2 * t2[c]) + (off * t2[c])
+						                  + (zoff * nv[c]);
 						s->x1[c] = base + (k * h1 * t1[c]);
 						s->x2[c] = base + ((k + 1) * h1 * t1[c]);
 						s->wv[c] = t2[c];
 					}
 					s->len = h1;
-					s->area = wid * pl->thick;
-					s->perim = 2 * (wid + pl->thick);
+					s->vol = (nt > 1);
+					s->thick = (nt > 1) ? tl : pl->thick;
+					s->area = wid * s->thick;
+					s->perim = 2 * (wid + s->thick);
 					s->width = wid;
-					s->aL = 0.2235 * (wid + pl->thick);
-					s->aP = 0.25 * (wid + pl->thick);
+					s->aL = 0.2235 * (wid + s->thick);
+					s->aP = 0.25 * (wid + s->thick);
 					s->res = (pl->sigma > 0) ? s->len / (pl->sigma * s->area) : 0;
 					p->nseg++;
 				}
 			}
+		}
 		}
 
 		// 電荷セル : 各格子点の双対矩形 (端は半分、隅は 1/4)

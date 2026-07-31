@@ -178,6 +178,42 @@ cp "$SRC/plate_strip.peec" "$WORK/"
 run plate_strip.peec
 chk "strip L (surface)" "$(getL)" 1.159664e-6 0.01
 
+echo "--- volume conductor (plate ndivt)"
+# (v) 厚板の帯 : 体積セル (Hoer-Love) の自己 L が Grover の角線式と一致し、
+#     DC 抵抗が解析値かつ厚み層数に厳密に依存しないこと
+cp "$SRC/plate_thick.peec" "$WORK/"
+run plate_thick.peec
+chk "thick plate L (Grover)" "$(getL)" 1.1237356e-6 0.005
+chk "thick plate Rin (DC)" "$(getR)" 8.6206897e-4 0.001
+rnt4=$(getR)
+for nt in 1 2; do
+	sed "s/16 1 4\$/16 1 $nt/" "$SRC/plate_thick.peec" > "$WORK/plate_thick_nt$nt.peec"
+	run plate_thick_nt$nt.peec
+	chk "thick plate R (ndivt=$nt)" "$(getR)" "$rnt4" 1e-6
+done
+
+# (w) 厚み方向の表皮効果 : 対称サンドイッチの R_ac/R_dc が層数を増やすと
+#     1D スラブ解 Re[(1+j)X coth((1+j)X)] (X = t/2delta = 2) = 1.897806 に収束
+cp "$SRC/plate_skin_layers.peec" "$WORK/"
+run plate_skin_layers.peec
+r12=$(awk -F, 'NR==2{rdc=$3} NR==3{printf "%.9e", $3/rdc}' "$csv")
+chk "slab Rdc (sandwich)" "$(getR)" 1.724138e-4 0.001
+for nt in 6 3; do
+	sed "s/5.8e7 4 4 12\$/5.8e7 4 4 $nt/" "$SRC/plate_skin_layers.peec" > "$WORK/plate_skin_nt$nt.peec"
+	run plate_skin_nt$nt.peec
+	rat=$(awk -F, 'NR==2{rdc=$3} NR==3{printf "%.9e", $3/rdc}' "$csv")
+	if [ "$nt" = 6 ]; then r6=$rat; else r3=$rat; fi
+done
+# Richardson 補外 (O(層厚^2)) を解析値と比較。許容 3.5% の根拠は .peec を参照
+chk "slab skin ratio (extr.)" "$(awk -v a="$r12" -v b="$r6" 'BEGIN{printf "%.9e", a + (a-b)/3}')" 1.897806 0.035
+awk -v r3="$r3" -v r6="$r6" -v r12="$r12" 'BEGIN {
+	d1 = r6 - r3; if (d1 < 0) d1 = -d1;
+	d2 = r12 - r6; if (d2 < 0) d2 = -d2;
+	ok = (d2 <= 0.35 * d1);
+	printf "%-24s |r12-r6|=%.4f |r6-r3|=%.4f -> %s (<= 0.35)\n", "slab skin convergence", d2, d1, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+
 echo "--- multi-port S parameters"
 # (q) 抵抗性 T 型 2 ポート : Z=[[75,50],[50,75]], Z0=50 -> S11=1/21, S21=8/21 (実数)
 cp "$SRC/tnetwork_spara.peec" "$WORK/"
