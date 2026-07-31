@@ -254,6 +254,36 @@ awk -v r3="$r3" -v r6="$r6" -v r12="$r12" 'BEGIN {
 	exit ok ? 0 : 1
 }' || status=1
 
+echo "--- panel conductors (quad / disk)"
+# (x) 一般四辺形 : 正方形シートの DC 抵抗 (1 スクエアの解析値) と、
+#     L の plate (矩形リボン閉形式 = 別経路の実装) との相互検証
+cp "$SRC/quad_square.peec" "$WORK/"
+run quad_square.peec
+chk "quad sheet Rin (DC)" "$(getR)" 1.724138e-4 0.001
+lq=$(getL)
+cp "$SRC/quad_square_ref.peec" "$WORK/"
+run quad_square_ref.peec
+chk "quad sheet L vs plate" "$lq" "$(getL)" 0.005
+
+# (y) 台形シート : R = l ln(W2/W1)/(sigma t (W2-W1)) (1 次元 + くさび補正)
+cp "$SRC/quad_taper.peec" "$WORK/"
+run quad_taper.peec
+chk "taper Rin (DC)" "$(getR)" 4.780325e-4 0.015
+
+# (z) 円板の対無限遠容量 : 4/8 リングから Richardson 補外 -> 8 eps0 a
+cp "$SRC/disk_cap.peec" "$WORK/"
+run disk_cap.peec
+cd4=$(getC)
+sed 's/5.8e7 4 32/5.8e7 8 32/' "$SRC/disk_cap.peec" > "$WORK/disk_cap8.peec"
+run disk_cap8.peec
+cd8=$(getC)
+chk "disk C (extrapolated)" "$(awk -v a="$cd4" -v b="$cd8" 'BEGIN{printf "%.9e", 2*b-a}')" 7.08335e-12 0.01
+
+# (aa) 円環の広がり抵抗 : ln(2)/(2 pi sigma t)
+cp "$SRC/disk_annulus.peec" "$WORK/"
+run disk_annulus.peec
+chk "annulus Rin (DC)" "$(getR)" 1.902031e-5 0.03
+
 echo "--- multi-port S parameters"
 # (q) 抵抗性 T 型 2 ポート : Z=[[75,50],[50,75]], Z0=50 -> S11=1/21, S21=8/21 (実数)
 cp "$SRC/tnetwork_spara.peec" "$WORK/"

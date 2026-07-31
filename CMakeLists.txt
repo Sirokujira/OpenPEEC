@@ -31,6 +31,7 @@ add_executable(peec
     src/partial.c
     src/surface.c
     src/volume.c
+    src/polygon.c
     src/potential.c
     src/skin.c
     src/mna.c

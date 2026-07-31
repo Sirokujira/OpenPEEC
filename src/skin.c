@@ -116,7 +116,15 @@ d_complex_t zint_seg(const seg_t *s, double freq)
 	// (内部インダクタンスも体積自己項に含まれている)。
 	if (s->vol) return d_complex(s->res, 0);
 
-	return (s->shape == SHAPE_BAR)
-		? zint_bar(s->len, s->area, s->perim, s->sigma, freq)
-		: zint_round(s->len, s->radius, s->sigma, freq);
+	// 多角形セル (三角形メッシュ) : DC 抵抗は cotangent 重み (FEM) で決まる。
+	// 合成式は幾何断面を仮定していて DC 極限が cotangent 抵抗とずれるので
+	// 適用しない (面内の電流再配分はメッシュが解く。厚み方向は未分解)。
+	if (s->shape == SHAPE_POLY) return d_complex(s->res, 0);
+
+	// 丸線のみ Bessel 閉形式。角線・面セル (plate) は断面 (幅 x 厚さ) の
+	// 合成式を使う。以前は SHAPE_BAR 以外がすべて丸線式に落ち、面セルは
+	// radius = 0 のため内部インピーダンスが 0 になっていた。
+	return (s->shape == SHAPE_ROUND)
+		? zint_round(s->len, s->radius, s->sigma, freq)
+		: zint_bar(s->len, s->area, s->perim, s->sigma, freq);
 }

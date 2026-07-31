@@ -5,7 +5,8 @@ OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を�
 
 集中定数 MNA + 導体形状からの部分要素抽出 (インダクタンス L / 電位係数 P /
 抵抗 R) → 入力インピーダンス Zin(f)。
-導体は丸線 (`wire`) / 角線 (`bar`) / 面導体 (`plate`)。
+導体は丸線 (`wire`) / 角線 (`bar`) / 面導体 (`plate` = 矩形、
+`quad` = 凸四辺形、`disk` = 円板)。
 `capacitance` / `skineffect` / `retardation` は既定で無効
 (キー省略時は従来動作と完全一致)。
 
@@ -21,7 +22,7 @@ OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 回帰 : 解析解・文献値との比較 (MNA / 部分 L / 表皮効果 / 容量 / 遅延 / 角線 / 面導体 / 体積セル)
+# 回帰 : 解析解・文献値との比較 (MNA / 部分 L / 表皮効果 / 容量 / 遅延 / 角線 / 面導体 / 体積セル / パネル)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 ```
 
@@ -37,6 +38,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 | `src/partial.c` | 幾何二重積分と部分インダクタンス (細線) |
 | `src/surface.c` | 面セル (リボン) の幾何二重積分 |
 | `src/volume.c` | 体積セル (矩形バー) の Hoer–Love 閉形式 (plate の厚み分割) |
+| `src/polygon.c` | 多角形セル (quad/disk パネル) の幾何二重積分 (多角形閉形式) |
 | `src/potential.c` | 電位係数 P と節点容量行列 C = P⁻¹ |
 | `src/skin.c` | 表皮効果 (丸線は Bessel、角線は合成式) |
 | `src/mna.c` | MNA 番号付けとスタンプ |
@@ -53,7 +55,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 - `.claude/rules/portability.md` — MSVC で実際に踏んだ落とし穴
   (VLA 禁止 / OpenMP インデックス事前宣言 / `<complex.h>` 不可 など)。
   編集のたびに `.claude/hooks/check-portability.sh` が自動検査する。
-- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 6 つの
+- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 7 つの
   不変条件**と、その番人になっている検証判定の対応。幾何積分・セル構成・
   MNA に触る前に必読。
 - `.claude/rules/validation.md` — 入力キーの後方互換規則と、検証ケースの

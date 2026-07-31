@@ -219,6 +219,34 @@ static int ribbon_nsub(const seg_t *s1, const seg_t *s2, double kw)
 // 平行区間以外では、静的部も補正部と同じ求積で評価する。
 d_complex_t neumann_pair_k(const seg_t *s1, const seg_t *s2, double a1, double a2, double kw)
 {
+	// 多角形セル (三角形メッシュ由来) が絡む対 : 内側解析 (多角形閉形式) x
+	// 外側三角形 Gauss。近接 (中心間距離 < 寸法の 2 倍) は各三角形を 4 分割、
+	// 遠方は中点近似 (細線・リボンの遠方式と同じ形で規格化が揃っている)。
+	if ((s1->npv > 0) || (s2->npv > 0)) {
+		double c1[3], c2[3];
+		for (int i = 0; i < 3; i++) {
+			c1[i] = 0.5 * (s1->x1[i] + s1->x2[i]);
+			c2[i] = 0.5 * (s2->x1[i] + s2->x2[i]);
+		}
+		const double dx = c2[0] - c1[0];
+		const double dy = c2[1] - c1[1];
+		const double dz = c2[2] - c1[2];
+		const double rc = sqrt((dx * dx) + (dy * dy) + (dz * dz));
+		double lmax = (s1->len > s2->len) ? s1->len : s2->len;
+		if (s1->wid > lmax) lmax = s1->wid;
+		if (s2->wid > lmax) lmax = s2->wid;
+
+		d_complex_t is;
+		if ((rc > 20 * lmax) && (s1 != s2)) {
+			is = d_complex(s1->len * s2->len / rc, 0);
+		}
+		else {
+			is = d_complex(poly_static(s1, s2, (rc < 2 * lmax) ? 2 : 1), 0);
+		}
+		if (kw <= 0) return is;
+		return d_add(is, poly_corr(s1, s2, kw));
+	}
+
 	// 体積セルどうし (軸・断面がそろった近接対) : Hoer-Love の閉形式。
 	// 自己項 (s1 == s2) もこの式で厳密に求まる。遅延補正は薄板 (厚み << 波長)
 	// なので中立面リボンの求積で評価する (静的部が解析的に厳密な点は
