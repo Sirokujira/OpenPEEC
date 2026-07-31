@@ -43,6 +43,7 @@ paths:
 
 ## CI
 
-`.github/workflows/ci.yml` は Linux / macOS / Windows (MSVC + Ninja) の 3 本。
-検証は 3 OS とも同一の `peec_check.sh` を実行する。依存ライブラリが無いので
-vcpkg 等の手順は不要。タグ `v*` push で Release にバイナリを添付する。
+`.github/workflows/ci.yml` は Linux / macOS / Windows (MSVC + Ninja) の 3 本 +
+`sanitize` (Linux, ASan + UBSan + LeakSanitizer) の計 4 本。検証は全ジョブとも
+同一の `peec_check.sh` を実行する。依存ライブラリが無いので vcpkg 等の手順は
+不要。タグ `v*` push で Release にバイナリを添付する。
