@@ -52,7 +52,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 - `.claude/rules/portability.md` — MSVC で実際に踏んだ落とし穴
   (VLA 禁止 / OpenMP インデックス事前宣言 / `<complex.h>` 不可 など)。
   編集のたびに `.claude/hooks/check-portability.sh` が自動検査する。
-- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 5 つの
+- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 6 つの
   不変条件**と、その番人になっている検証判定の対応。幾何積分・セル構成・
   MNA に触る前に必読。
 - `.claude/rules/validation.md` — 入力キーの後方互換規則と、検証ケースの
