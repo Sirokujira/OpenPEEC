@@ -41,6 +41,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 | `src/skin.c` | 表皮効果 (丸線は Bessel、角線は合成式) |
 | `src/mna.c` | MNA 番号付けとスタンプ |
 | `src/lu.c` | 複素 LU 分解 (部分ピボット) |
+| `src/iterative.c` | 掃引 LU 再利用の GMRES (acceleration = 1) |
 | `src/solve.c` | 周波数掃引 |
 | `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、`dist.csv` |
 
@@ -90,10 +91,11 @@ Touchstone 1.1 は 1 個しか記録できないので port#1 の値を書いて
 ## 並列化とスレッド数不変性
 
 OpenMP で並列化しているのは `lp_fill` (partial.c)、`pot_fill` (potential.c)、
-`lu_decomp` の残余行列更新 (lu.c) の 3 箇所。**いずれも要素ごとに独立で、
-順序依存の加算 (リダクション) を持たない**ため、スレッド数を変えても結果は
-ビット単位で一致する。`peec_check.sh` が `-n 1` と `-n 4` の `zin.csv` 完全
-一致を判定しているので、リダクションを持つ並列化を足すとここが落ちる。
+`lu_decomp` の残余行列更新 (lu.c)、GMRES の行列ベクトル積 (iterative.c) の
+4 箇所。**いずれも要素・行ごとに独立で、順序依存の加算 (リダクション) を
+持たない** (GMRES の内積・Gram-Schmidt は直列) ため、スレッド数を変えても
+結果はビット単位で一致する。`peec_check.sh` が `-n 1` と `-n 4` の `zin.csv`
+完全一致を判定しているので、リダクションを持つ並列化を足すとここが落ちる。
 その場合は「一致する」という README の主張ごと見直すこと。
 
 MSVC の OpenMP 2.0 はループ内でのインデックス宣言を許さない (C3015) ので、

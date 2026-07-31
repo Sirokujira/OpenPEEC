@@ -113,11 +113,19 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh bin/peec /tmp/peec-san
   あわせて Linux で ASan + UBSan (LeakSanitizer 有効) を掛けた `sanitize`
   ジョブを実行し、値の正しさとメモリ健全性を同時に判定しています。
 - OpenMP は任意です (無くてもビルド・実行可能)。並列化しているのは
-  **部分インダクタンス行列の充填・電位係数行列の充填・LU 分解の残余行列更新**
-  の 3 箇所で、いずれも要素ごとに独立 (順序依存の加算が無い) なため
+  **部分インダクタンス行列の充填・電位係数行列の充填・LU 分解の残余行列更新・
+  GMRES の行列ベクトル積** の 4 箇所で、いずれも要素・行ごとに独立
+  (順序依存の加算が無い。GMRES の内積・Gram-Schmidt は直列) なため
   **スレッド数によらず出力はビット単位で一致します**
   (`peec_check.sh` が `-n 1` と `-n 4` の完全一致を判定)。
   LU 支配的なケース (未知数 645、21 周波数掃引) で 4 スレッド 3.6 倍。
+- **周波数掃引の加速 (`acceleration = 1`)** : 直近に LU 分解した行列を
+  右前処理に使う GMRES で各周波数を解き、収束しないときだけ LU を取り
+  直します。掃引点が密なほど O(N³) の LU の回数が減り、**最悪でも従来の
+  毎周波数 LU と同等**です (自動フォールバック)。結果は密 LU と実質同一
+  (収束判定 1e-10、実測差 ~1e-10 以下)。未知数 1825・50 周波数の掃引で
+  solve 62.9 s → 6.2 s (LU 1 回、平均 5.8 反復)。遅延あり (行列が毎周波数
+  変わる場合) でも使えます。既定 (省略時 0) は従来どおりです。
 
 ## Usage / 実行
 
@@ -172,6 +180,7 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `skineffect` | `skineffect = 1` | 1 で表皮効果 + 内部インダクタンス (省略時 0 = DC 抵抗) |
 | `capacitance` | `capacitance = 1` | 1 で容量性 PEEC (電位係数) を有効化 (省略時 0) |
 | `retardation` | `retardation = 1` | 1 で遅延 (フルウェーブ PEEC) を有効化 (省略時 0) |
+| `acceleration` | `acceleration = 1` | 1 で掃引 LU 再利用の GMRES (省略時 0 = 毎周波数 LU)。結果は密 LU と実質同一 |
 | `distribution` | `distribution = 1` | 1 で電流・電荷分布を `dist.csv` に出力 (省略時 0) |
 
 - 導体と回路素子の接続は `node` キーで行います。導体端点 (面導体は格子点)
@@ -214,6 +223,9 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `wire_dist.peec` 電流分布 (容量なし) | 電荷が溜まらないので全 8 区間に同じ 1 A (キルヒホッフの電流則、厳密) | 1e-9 |
 | `wire_dist.peec` + `capacitance=1` | ポートは 1 A を入れて 1 A を出すので構造の総電荷は 0 | max\|q\| 比 1e-6 |
 | `plate_cap.peec` スレッド数不変性 | `-n 1` と `-n 4` の `zin.csv` が完全一致 (未知数 225 で LU 並列経路も通る) | 完全一致 |
+| `dipole_full.peec` + `acceleration=1` | 掃引 LU 再利用 GMRES が密 LU と一致 (フル PEEC 掃引) | 1e-8 |
+| `dipole_halfwave.peec` + `acceleration=1` | 遅延あり (行列が毎周波数変わる) でも密 LU と一致 | 1e-8 |
+| `dipole_full.peec` + `acceleration=1` スレッド数不変性 | GMRES でも `-n 1` と `-n 4` が完全一致 | 完全一致 |
 | `plate_strip.peec` 帯のインダクタンス | 面積分 vs GMD 近似 → (μ0l/2π)[ln(2l/w)+0.5] = 1.15966 µH | 1% |
 | `plate_thick.peec` 厚板の帯 (体積セル) | Hoer–Love 閉形式 vs Grover 角線式 → 1.12374 µH、R_dc = l/(σwt) = 0.862069 mΩ (層数 1/2/4 で厳密に不変) | 0.5% / 0.1% |
 | `plate_skin_layers.peec` 厚み方向の表皮効果 | 対称サンドイッチの R_ac/R_dc → 1D スラブ解 Re[(1+j)X coth((1+j)X)] = 1.897806 (X = t/2δ = 2)。層数 3/6/12 で O(層厚²) 収束 | 3.5% |

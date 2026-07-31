@@ -21,7 +21,7 @@
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、47 件)
+# 検証 (解析解・文献値との比較、50 件)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -32,7 +32,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 47 件すべて OK でなければ
+**変更したら必ず `peec_check.sh` を通すこと。** 50 件すべて OK でなければ
 完了ではない。「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
 計測時の注意 : ソルバーが失敗すると `zin.csv` / `peec.log` は**前回の実行結果が
@@ -52,6 +52,7 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/pe
 | `src/skin.c` | 表皮効果 (丸線は Bessel、角線は合成式) |
 | `src/mna.c` | MNA 番号付けとスタンプ |
 | `src/lu.c` | 複素 LU 分解 (部分ピボット) |
+| `src/iterative.c` | 掃引 LU 再利用の GMRES (acceleration = 1) |
 | `src/solve.c` | 周波数掃引、Z → S 変換 |
 | `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、`dist.csv` |
 
@@ -120,8 +121,9 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
 ## 並列化とスレッド数不変性
 
 OpenMP で並列化しているのは `lp_fill` (partial.c)、`pot_fill` (potential.c)、
-`lu_decomp` の残余行列更新 (lu.c) の 3 箇所。**いずれも要素ごとに独立で、
-順序依存の加算 (リダクション) を持たない**ため、スレッド数を変えても結果は
+`lu_decomp` の残余行列更新 (lu.c)、GMRES の行列ベクトル積 (iterative.c) の
+4 箇所。**いずれも要素・行ごとに独立で、順序依存の加算 (リダクション) を
+持たない** (GMRES の内積・Gram-Schmidt は直列)。スレッド数を変えても結果は
 ビット単位で一致する。
 
 - 並列ループ内で共有配列に `+=` しない (`pot_fill` は一時配列に出してから直列で集約)。
@@ -189,3 +191,6 @@ OpenMP で並列化しているのは `lp_fill` (partial.c)、`pot_fill` (potent
 - 曲面・非矩形面は未対応 (矩形/折れ線の集合で近似)。
 - 電流は区間ごと一定、電荷はセルごと一定の低次基底。共振近傍の精度は分割数依存。
 - 行列は密。O(N²+M²) の積分と O((N+M)³) の LU (LU は並列化済みだがオーダーは不変)。
+  `acceleration = 1` で掃引の LU 回数を減らせる (前処理 GMRES、密 LU と実質同一の
+  結果、収束しなければ自動で LU に戻る)。fill の O(N²) と行列の密メモリは不変
+  (ACA 圧縮が次の段階)。
