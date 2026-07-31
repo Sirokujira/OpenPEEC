@@ -43,7 +43,7 @@ int input_data(FILE *fp, peec_t *p)
 	const char sep[] = " \t";
 	const char errfmt2[] = "*** invalid %s data\n";
 	int    cres = 0, ccap = 0, cind = 0, cmut = 0, csrc = 0, cport = 0, cwire = 0, cnode = 0;
-	int    cplate = 0;
+	int    cplate = 0, cpanel = 0;
 
 	// initialize (既定値 : キー省略時は従来動作)
 	memset(p, 0, sizeof(peec_t));
@@ -283,6 +283,103 @@ int input_data(FILE *fp, peec_t *p)
 				return 1;
 			}
 		}
+		else if (!strcmp(strkey, "quad")) {
+			// quad = x1 y1 z1  x2 y2 z2  x3 y3 z3  x4 y4 z4  厚さ 導電率 分割a 分割b
+			// 凸な一般四辺形 (頂点は一周順)。双一次写像の構造格子で分割する。
+			// 分割 a は辺 1-2 (と 4-3)、分割 b は辺 1-4 (と 2-3) の方向。
+			if (ntoken < 18) err = 1;
+			else {
+				APPEND(p->panel, p->npanel, cpanel, panel_t);
+				panel_t *e = &p->panel[p->npanel];
+				memset(e, 0, sizeof(panel_t));
+				e->kind = PANEL_QUAD;
+				for (int k = 0; k < 12; k++) {
+					e->v[k] = atof(token[2 + k]);
+				}
+				e->thick = atof(token[14]);
+				e->sigma = atof(token[15]);
+				e->ndiva = atoi(token[16]);
+				e->ndivb = atoi(token[17]);
+				if ((e->thick <= 0) || (e->sigma < 0)
+				 || (e->ndiva < 1) || (e->ndivb < 1)) err = 1;
+				// 平面性と凸性 (双一次格子と双対セルの前提)
+				if (!err) {
+					double nrm[3] = {0, 0, 0};
+					double size = 0;
+					for (int k = 0; k < 4; k++) {
+						const double *a = &e->v[3 * k];
+						const double *b = &e->v[3 * ((k + 1) % 4)];
+						nrm[0] += (a[1] * b[2]) - (a[2] * b[1]);
+						nrm[1] += (a[2] * b[0]) - (a[0] * b[2]);
+						nrm[2] += (a[0] * b[1]) - (a[1] * b[0]);
+					}
+					const double nl = sqrt((nrm[0] * nrm[0]) + (nrm[1] * nrm[1]) + (nrm[2] * nrm[2]));
+					if (nl <= 0) err = 1;
+					for (int k = 0; !err && (k < 4); k++) {
+						const double *a = &e->v[3 * k];
+						const double *b = &e->v[3 * ((k + 1) % 4)];
+						const double *c = &e->v[3 * ((k + 2) % 4)];
+						double u[3], w[3], x[3];
+						for (int i = 0; i < 3; i++) {
+							u[i] = b[i] - a[i];
+							w[i] = c[i] - b[i];
+						}
+						const double ul = sqrt((u[0] * u[0]) + (u[1] * u[1]) + (u[2] * u[2]));
+						if (ul > size) size = ul;
+						double d0 = 0;
+						for (int i = 0; i < 3; i++) {
+							d0 += (b[i] - e->v[i]) * nrm[i] / nl;
+						}
+						if (fabs(d0) > 1e-9 * (size + fabs(d0))) {
+							printf("%s\n", "*** quad : vertices must be coplanar");
+							return 1;
+						}
+						x[0] = (u[1] * w[2]) - (u[2] * w[1]);
+						x[1] = (u[2] * w[0]) - (u[0] * w[2]);
+						x[2] = (u[0] * w[1]) - (u[1] * w[0]);
+						if (((x[0] * nrm[0]) + (x[1] * nrm[1]) + (x[2] * nrm[2])) <= 0) {
+							printf("%s\n", "*** quad : must be convex (vertices in cyclic order)");
+							return 1;
+						}
+					}
+				}
+				if (!err) p->npanel++;
+			}
+			if (err) {
+				printf(errfmt2, "quad");
+				return 1;
+			}
+		}
+		else if (!strcmp(strkey, "disk")) {
+			// disk = cx cy cz  nx ny nz  半径 厚さ 導電率 nring nsec
+			// 円板。中心 + nring リング x nsec セクタの極格子で分割する。
+			if (ntoken < 13) err = 1;
+			else {
+				APPEND(p->panel, p->npanel, cpanel, panel_t);
+				panel_t *e = &p->panel[p->npanel];
+				memset(e, 0, sizeof(panel_t));
+				e->kind = PANEL_DISK;
+				for (int k = 0; k < 3; k++) {
+					e->org[k] = atof(token[2 + k]);
+					e->nrm[k] = atof(token[5 + k]);
+				}
+				e->radius = atof(token[8]);
+				e->thick = atof(token[9]);
+				e->sigma = atof(token[10]);
+				e->ndiva = atoi(token[11]);       // nring
+				e->ndivb = atoi(token[12]);       // nsec
+				const double nl = sqrt((e->nrm[0] * e->nrm[0])
+					+ (e->nrm[1] * e->nrm[1]) + (e->nrm[2] * e->nrm[2]));
+				// 中心の双対環は 2 x nsec 頂点なので nsec <= POLY_MAX/2
+				if ((nl <= 0) || (e->radius <= 0) || (e->thick <= 0) || (e->sigma < 0)
+				 || (e->ndiva < 1) || (e->ndivb < 3) || (e->ndivb > POLY_MAX / 2)) err = 1;
+				if (!err) p->npanel++;
+			}
+			if (err) {
+				printf(errfmt2, "disk");
+				return 1;
+			}
+		}
 		else if (!strcmp(strkey, "port")) {
 			if (ntoken < 5) err = 1;
 			else {
@@ -368,8 +465,8 @@ int input_data(FILE *fp, peec_t *p)
 		printf("%s\n", "*** no frequency data");
 		return 1;
 	}
-	if ((p->nres + p->ncap + p->nind + p->nwire + p->nplate) <= 0) {
-		printf("%s\n", "*** no element data (resistor/capacitor/inductor/wire/bar/plate)");
+	if ((p->nres + p->ncap + p->nind + p->nwire + p->nplate + p->npanel) <= 0) {
+		printf("%s\n", "*** no element data (resistor/capacitor/inductor/wire/bar/plate/polygon/disk)");
 		return 1;
 	}
 
@@ -393,6 +490,7 @@ void peec_free(peec_t *p)
 
 	// ネットリスト (input_data.c)
 	free(p->plate);
+	free(p->panel);
 	free(p->res);
 	free(p->cap);
 	free(p->ind);

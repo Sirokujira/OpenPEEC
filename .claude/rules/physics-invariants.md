@@ -3,6 +3,7 @@ paths:
   - "src/partial.c"
   - "src/surface.c"
   - "src/volume.c"
+  - "src/polygon.c"
   - "src/potential.c"
   - "src/mna.c"
   - "src/wire.c"
@@ -83,6 +84,27 @@ Hoer-Love の原始関数 `hl_F(x,y,z)` (volume.c) では、引数が 0 のと�
 
 **番人**: `thick plate L (Grover)` / `thick plate R (ndivt=1/2)` /
 `slab skin ratio (extr.)` / `slab skin convergence`
+
+## (7) 多角形セルの規格化と桁落ちフリーの対数項
+
+パネル (quad/disk) のセルは一般四辺形・双対多角形になる。
+
+- 規格化は `w̄ = 面積/len` で不変条件 (4) の一般化。`len·w̄ = 面積` なので
+  `P = Î/(4πε0 L₁L₂) = ∬∬/(4πε0 A₁A₂)` が細線・リボンと同じ式のまま
+  成り立つ。矩形格子では plate のセル・値に一致する (`quad sheet L vs
+  plate` が 1e-5 レベルで一致することを確認済み)。
+- `poly_potential()` (polygon.c) の対数項 `ln((R⁺+l⁺)/(R⁻+l⁻))` は、
+  l < 0 の側を恒等式 `R + l = R0²/(R − l)` で計算する。素朴に和を取ると
+  隣接セルの求積点が共有辺の延長線近傍に乗ったとき R と |l| が倍精度で
+  一致して 0 になり、log が ±inf → MNA の 0 × inf で **NaN** になる
+  (実際に踏んだ : 極格子の半径方向セルと周方向セルは辺を共有する)。
+- パネルセルの DC 抵抗は格子の双対幅 (幾何) から取る。重なりのない
+  三角形辺基底に変えると一様シート流の散逸を約 2 倍に過大評価する
+  (構造直角三角形格子で厳密に 2 倍。試して棄却済み)。構造四辺形格子
+  では幾何幅で厳密。
+
+**番人**: `quad sheet Rin (DC)` / `quad sheet L vs plate` /
+`disk C (extrapolated)` / `annulus Rin (DC)`
 
 ## 並列化
 
