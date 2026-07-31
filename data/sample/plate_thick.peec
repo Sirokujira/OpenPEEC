@@ -1,0 +1,25 @@
+# 検証 (v) : 体積セル (plate ndivt) — 厚板の自己インダクタンスと DC 抵抗
+#   l = 1 m, w = 10 mm, t = 2 mm の帯を 16 x 1 x 4 (長さ x 幅 x 厚み) に分割。
+#   厚み分割セルは Hoer-Love の閉形式 (体積二重積分, J. Res. NBS 69C, 1965)
+#   で結合する。f = 1 Hz では表皮効果が無視でき (delta = 66 mm >> t)、
+#   電流は断面内で一様になるので、Grover の角線自己インダクタンス式
+#     L = (mu0 l/2pi)[ln(2l/(w+t)) + 0.5 + 0.2235(w+t)/l] = 1.1237356e-6 H
+#   と一致するはずである (Hoer-Love 閉形式の厳密値は 1.1233997e-6 H で
+#   Grover 式との差は -0.03%。許容 0.5% は近似式比較の規準)。
+#   DC 抵抗は R = l/(sigma w t) = 8.6206897e-4 ohm (許容 0.1%)。
+#   さらに DC 抵抗は厚み層数に厳密に依存しない : 層は同じ格子ノードを
+#   共有し、各層の抵抗 (ndivt 倍) を ndivt 本並列するので恒等になる。
+#   peec_check.sh は ndivt = 1 (従来のリボン経路) / 2 / 4 の Rin 一致を判定する。
+#   両端の 2 ノードは微小抵抗で短絡して給電する (plate_strip と同じ)。
+OpenPEEC 1 0
+title = thick strip (volume cells)
+node = 1 0 0 0
+node = 2 0 0.01 0
+node = 3 1 0 0
+node = 4 1 0.01 0
+plate = 0 0 0  1 0 0  0 0.01 0  2e-3 5.8e7 16 1 4
+resistor = 1 2 1e-9
+resistor = 3 4 1e-9
+port = 1 3 50
+frequency = 1 1 0
+end

@@ -249,7 +249,8 @@ int input_data(FILE *fp, peec_t *p)
 			}
 		}
 		else if (!strcmp(strkey, "plate")) {
-			// plate = ox oy oz  ax ay az  bx by bz  厚さ 導電率 ndiv_a ndiv_b
+			// plate = ox oy oz  ax ay az  bx by bz  厚さ 導電率 ndiv_a ndiv_b [ndiv_t]
+			// ndiv_t (省略時 1) >= 2 で厚み方向にも分割する (体積セル)
 			if (ntoken < 15) err = 1;
 			else {
 				APPEND(p->plate, p->nplate, cplate, plate_t);
@@ -264,11 +265,12 @@ int input_data(FILE *fp, peec_t *p)
 				e->sigma = atof(token[12]);
 				e->ndiva = atoi(token[13]);
 				e->ndivb = atoi(token[14]);
+				e->ndivt = (ntoken >= 16) ? atoi(token[15]) : 1;
 				const double la = sqrt((e->ea[0] * e->ea[0]) + (e->ea[1] * e->ea[1]) + (e->ea[2] * e->ea[2]));
 				const double lb = sqrt((e->eb[0] * e->eb[0]) + (e->eb[1] * e->eb[1]) + (e->eb[2] * e->eb[2]));
 				const double ab = (e->ea[0] * e->eb[0]) + (e->ea[1] * e->eb[1]) + (e->ea[2] * e->eb[2]);
 				if ((la <= 0) || (lb <= 0) || (e->thick <= 0) || (e->sigma < 0)
-				 || (e->ndiva < 1) || (e->ndivb < 1)) err = 1;
+				 || (e->ndiva < 1) || (e->ndivb < 1) || (e->ndivt < 1)) err = 1;
 				// 2 辺は直交していること (矩形セルを前提にしている)
 				if (!err && (fabs(ab) > 1e-9 * la * lb)) {
 					printf("%s\n", "*** plate : the two edge vectors must be perpendicular");

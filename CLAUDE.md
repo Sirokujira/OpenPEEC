@@ -17,7 +17,7 @@ OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 回帰 : 解析解・文献値との比較 (MNA / 部分 L / 表皮効果 / 容量 / 遅延 / 角線 / 面導体)
+# 回帰 : 解析解・文献値との比較 (MNA / 部分 L / 表皮効果 / 容量 / 遅延 / 角線 / 面導体 / 体積セル)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 ```
 
@@ -32,6 +32,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 | `src/wire.c` | 幾何段 : 電流セル (`p->seg`) と電荷セル (`p->chg`) を作る |
 | `src/partial.c` | 幾何二重積分と部分インダクタンス (細線) |
 | `src/surface.c` | 面セル (リボン) の幾何二重積分 |
+| `src/volume.c` | 体積セル (矩形バー) の Hoer–Love 閉形式 (plate の厚み分割) |
 | `src/potential.c` | 電位係数 P と節点容量行列 C = P⁻¹ |
 | `src/skin.c` | 表皮効果 (丸線は Bessel、角線は合成式) |
 | `src/mna.c` | MNA 番号付けとスタンプ |
