@@ -145,6 +145,46 @@ awk '{print} /^title = /{print "retardation = 1"}' "$SRC/loop_square.peec" > "$W
 run loop_ret.peec
 chk "loop L (retarded)" "$(getL)" 7.24689e-7 0.02
 
+echo "--- acceleration (sweep-reuse GMRES)"
+# 掃引 LU 再利用 GMRES (acceleration = 1) が密 LU と同じ結果になること。
+# 収束判定 1e-10 なので Zin の差は ~1e-9 以下になるはず (判定は 1e-8)。
+accel_cmp() {
+	paste -d, "$WORK/zin_ref.csv" "$csv" | awk -F, -v lb="$1" 'NR > 1 {
+		dr = $3 - $10; di = $4 - $11;
+		e = sqrt((dr * dr) + (di * di)) / (sqrt(($3 * $3) + ($4 * $4)) + 1);
+		if (e > mx) mx = e; n++
+	} END {
+		ok = (n > 0) && (mx <= 1e-8);
+		printf "%-24s rows=%d max|dZ|/(|Z|+1)=%.3e -> %s\n", lb, n, mx, ok ? "OK" : "NG";
+		exit ok ? 0 : 1
+	}' || status=1
+}
+# (v2) フル PEEC (L+P+R) の掃引
+cp "$SRC/dipole_full.peec" "$WORK/"
+run dipole_full.peec
+cp "$csv" "$WORK/zin_ref.csv"
+awk '{print} /^title = /{print "acceleration = 1"}' "$SRC/dipole_full.peec" > "$WORK/dipole_full_ac.peec"
+run dipole_full_ac.peec
+accel_cmp "accel full PEEC sweep"
+# (w2) 遅延あり (行列が毎周波数変わる) でも一致すること
+cp "$SRC/dipole_halfwave.peec" "$WORK/"
+run dipole_halfwave.peec
+cp "$csv" "$WORK/zin_ref.csv"
+awk '{print} /^title = /{print "acceleration = 1"}' "$SRC/dipole_halfwave.peec" > "$WORK/dipole_hw_ac.peec"
+run dipole_hw_ac.peec
+accel_cmp "accel retarded sweep"
+# (x2) スレッド数不変性 : GMRES の内積・Gram-Schmidt は直列、
+#      行列ベクトル積は行ごとに独立なのでビット単位で一致する
+(cd "$WORK" && "$PEEC" -n 1 dipole_full_ac.peec > /dev/null)
+cp "$csv" "$WORK/zin_ac_n1.csv"
+(cd "$WORK" && "$PEEC" -n 4 dipole_full_ac.peec > /dev/null)
+if cmp -s "$WORK/zin_ac_n1.csv" "$csv"; then
+	printf "%-24s -> OK (-n 1 と -n 4 が完全一致)\n" "accel thread invariance"
+else
+	printf "%-24s -> NG (-n 1 と -n 4 が不一致)\n" "accel thread invariance" >&2
+	status=1
+fi
+
 echo "--- rectangular bar conductors"
 # (l) 角線の自己インダクタンス (Grover) と DC 抵抗
 cp "$SRC/bar_single.peec" "$WORK/"

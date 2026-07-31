@@ -160,6 +160,7 @@ typedef struct {
 	int    skin;                  // skineffect = 1 : 表皮効果 + 内部インダクタンス
 	int    capacitance;           // capacitance = 1 : 容量性 PEEC (電位係数)
 	int    retardation;           // retardation = 1 : 遅延 (フルウェーブ PEEC)
+	int    accel;                 // acceleration = 1 : 掃引で LU を再利用する GMRES
 	int    dist;                  // distribution = 1 : 電流・電荷分布を出力
 
 	// 結果
@@ -234,6 +235,10 @@ void mna_rhs_sources(const peec_t *p, d_complex_t *b);
 // lu.c
 int  lu_decomp(int n, d_complex_t *a, int *piv);
 void lu_solve(int n, const d_complex_t *a, const int *piv, d_complex_t *b);
+
+// iterative.c
+int  gmres_solve(int n, const d_complex_t *a, const d_complex_t *alu, const int *piv,
+	d_complex_t *b, double tol);
 
 // solve.c
 int  solve(peec_t *p, FILE *fp_log);

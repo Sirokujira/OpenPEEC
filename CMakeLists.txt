@@ -36,6 +36,7 @@ add_executable(peec
     src/skin.c
     src/mna.c
     src/lu.c
+    src/iterative.c
     src/solve.c
     src/output.c
     src/utils.c
