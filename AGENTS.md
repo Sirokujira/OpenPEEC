@@ -21,7 +21,7 @@
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、47 件)
+# 検証 (解析解・文献値との比較、52 件)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -32,7 +32,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 47 件すべて OK でなければ
+**変更したら必ず `peec_check.sh` を通すこと。** 52 件すべて OK でなければ
 完了ではない。「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
 計測時の注意 : ソルバーが失敗すると `zin.csv` / `peec.log` は**前回の実行結果が
@@ -48,6 +48,7 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/pe
 | `src/partial.c` | 幾何二重積分と部分インダクタンス (細線) |
 | `src/surface.c` | 面セル (リボン) の幾何二重積分 |
 | `src/volume.c` | 体積セル (矩形バー) の Hoer–Love 閉形式 (plate の厚み分割) |
+| `src/polygon.c` | 多角形セル (quad/disk パネル) の幾何二重積分 (多角形閉形式) |
 | `src/potential.c` | 電位係数 P と節点容量行列 C = P⁻¹ |
 | `src/skin.c` | 表皮効果 (丸線は Bessel、角線は合成式) |
 | `src/mna.c` | MNA 番号付けとスタンプ |
@@ -110,6 +111,15 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
    成り立つ。また体積セルの厚み方向再配分は Lp 行列が陽に解くので、`zint_seg()`
    は体積セルに表皮効果の合成式を適用しない (二重計上)。
    (`thick plate L (Grover)` / `thick plate R (ndivt=1/2)` / `slab skin ratio (extr.)`)
+7. **多角形セルの規格化と桁落ちフリーの対数項** — パネル (quad/disk) のセルは
+   `w̄ = 面積/len` で規格化する ((4) の一般化。`len·w̄ = 面積` なので P の式は
+   共通のまま)。`poly_potential()` の対数項は l < 0 の側を恒等式
+   `R + l = R0²/(R − l)` で計算する。素朴な和は隣接セルの求積点が共有辺の
+   延長線近傍に乗ると 0 になり、log が inf → MNA で NaN になる (実際に踏んだ)。
+   DC 抵抗は構造四辺形格子の双対幅から取る (重なりのない三角形辺基底は一様流の
+   散逸を約 2 倍に過大評価するので使わない)。
+   (`quad sheet Rin (DC)` / `quad sheet L vs plate` / `disk C (extrapolated)` /
+   `annulus Rin (DC)`)
 
 ## メモリ
 
@@ -186,6 +196,10 @@ OpenMP で並列化しているのは `lp_fill` (partial.c)、`pot_fill` (potent
   (遠方・非平行) は中立面リボンの面積分に落ちる。`wire` / `bar` の断面分割は
   未対応。層間は各格子点で並列接続 (共有ノード、VFI 近似) であり、厚み方向の
   伝導は陽には解かない。
-- 曲面・非矩形面は未対応 (矩形/折れ線の集合で近似)。
+- 面導体は平面パネル (矩形 `plate` / 凸四辺形 `quad` / 円板 `disk`) のみ。
+  3 次元曲面 (円筒など) は平面パネルのファセット化で近似する。
+  `quad` / `disk` は厚さ 1 層 (厚み方向分割は plate のみ)。パネルの
+  DC 抵抗は格子の双対幅で決まり、矩形格子では厳密、歪んだ格子・極格子
+  では O(格子幅²) の系統誤差を含む (弦近似)。
 - 電流は区間ごと一定、電荷はセルごと一定の低次基底。共振近傍の精度は分割数依存。
 - 行列は密。O(N²+M²) の積分と O((N+M)³) の LU (LU は並列化済みだがオーダーは不変)。

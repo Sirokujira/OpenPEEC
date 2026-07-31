@@ -6,8 +6,15 @@ wire.c
 - 面導体 (plate)      : 格子点にノードを置き、隣接ノード間を電流セル
                         (幅 = 双対格子の横幅をもつリボン)、各ノードの
                         双対矩形を電荷セルとする (標準的な面 PEEC)。
-- node = で束縛された座標を種として、端点/格子点を nodetol 以内で照合し、
-  一致しない点には maxid+1 から決定的に自動採番する (ファイル記載順)。
+- パネル (quad / disk) : 構造格子 (双一次四辺形 / 極座標) で分割する。
+                        plate と同じ双対構成の一般化 : 格子点にノードを
+                        置き、格子線に沿う枝の電流セルは隣の格子中線まで
+                        の帯 (一般四辺形)、電荷セルは格子点まわりの双対
+                        多角形 (辺中点とセル中心を巡る環)。どちらも面を
+                        重複なく張り、矩形格子では plate のセルに一致する。
+- node = で束縛された座標を種として、端点/格子点/メッシュ頂点を nodetol
+  以内で照合し、一致しない点には maxid+1 から決定的に自動採番する
+  (ファイル記載順)。
 */
 
 #include "peec.h"
@@ -72,9 +79,215 @@ static void add_chg(peec_t *p, int node, const double *x1, const double *x2,
 	p->nchg++;
 }
 
+// ── パネル (quad / disk) : 構造格子のヘルパ ─────────────────────
+// 格子点座標。quad は双一次写像、disk は極格子 (i = 0 は中心の 1 点)。
+static void panel_node(const panel_t *pa, int i, int j, double *x)
+{
+	if (pa->kind == PANEL_QUAD) {
+		const double u = (double)i / pa->ndiva;
+		const double v = (double)j / pa->ndivb;
+		for (int c = 0; c < 3; c++) {
+			x[c] = ((1 - u) * (1 - v) * pa->v[c])
+			     + (u * (1 - v) * pa->v[3 + c])
+			     + (u * v * pa->v[6 + c])
+			     + ((1 - u) * v * pa->v[9 + c]);
+		}
+		return;
+	}
+
+	// disk : i = リング (0 = 中心)、j = セクタ (mod nsec)
+	if (i == 0) {
+		for (int c = 0; c < 3; c++) {
+			x[c] = pa->org[c];
+		}
+		return;
+	}
+	// 面内直交軸 : 法線と最も遠い座標軸から作る (決定的)
+	double nn[3], ax[3] = {0, 0, 0}, u[3], v[3];
+	const double nl = norm3(pa->nrm);
+	for (int c = 0; c < 3; c++) {
+		nn[c] = pa->nrm[c] / nl;
+	}
+	int imin = 0;
+	if (fabs(nn[1]) < fabs(nn[imin])) imin = 1;
+	if (fabs(nn[2]) < fabs(nn[imin])) imin = 2;
+	ax[imin] = 1;
+	u[0] = (ax[1] * nn[2]) - (ax[2] * nn[1]);
+	u[1] = (ax[2] * nn[0]) - (ax[0] * nn[2]);
+	u[2] = (ax[0] * nn[1]) - (ax[1] * nn[0]);
+	const double ul = norm3(u);
+	v[0] = ((nn[1] * u[2]) - (nn[2] * u[1])) / ul;
+	v[1] = ((nn[2] * u[0]) - (nn[0] * u[2])) / ul;
+	v[2] = ((nn[0] * u[1]) - (nn[1] * u[0])) / ul;
+	const double r = pa->radius * i / pa->ndiva;
+	const int jm = ((j % pa->ndivb) + pa->ndivb) % pa->ndivb;
+	const double th = 2 * PI * jm / pa->ndivb;
+	for (int c = 0; c < 3; c++) {
+		x[c] = pa->org[c] + (r * cos(th) * u[c] / ul) + (r * sin(th) * v[c]);
+	}
+}
+
+// 格子点 (i,j) が存在するか (disk の j は周期的)
+static int panel_has(const panel_t *pa, int i, int j)
+{
+	if (i < 0) return 0;
+	if (pa->kind == PANEL_QUAD) {
+		return (i <= pa->ndiva) && (j >= 0) && (j <= pa->ndivb);
+	}
+	return (i <= pa->ndiva);                  // j は mod nsec で常に存在
+}
+
+// 格子セル (i+1/2, j+1/2) の中心 (4 隅の平均。disk の i = 0 は中心が重複)
+static void panel_cellcen(const panel_t *pa, int i, int j, double *x)
+{
+	double a[3], b[3], c[3], d[3];
+	panel_node(pa, i, j, a);
+	panel_node(pa, i + 1, j, b);
+	panel_node(pa, i + 1, j + 1, c);
+	panel_node(pa, i, j + 1, d);
+	for (int k = 0; k < 3; k++) {
+		x[k] = 0.25 * (a[k] + b[k] + c[k] + d[k]);
+	}
+}
+
+static void midp(const double *a, const double *b, double *m)
+{
+	for (int k = 0; k < 3; k++) {
+		m[k] = 0.5 * (a[k] + b[k]);
+	}
+}
+
+// 電流セル (格子線 (i1,j1)-(i2,j2) の枝) を追加する。
+// 帯は隣の格子中線まで : 4 隅は隣接ノードとの中点 (境界はノード自身)。
+static void panel_seg(peec_t *p, const panel_t *pa, int n1, int n2,
+	int i1, int j1, int i2, int j2)
+{
+	seg_t *s = &p->seg[p->nseg];
+	memset(s, 0, sizeof(seg_t));
+	s->shape = SHAPE_POLY;
+	s->n1 = n1;
+	s->n2 = n2;
+	panel_node(pa, i1, j1, s->x1);
+	panel_node(pa, i2, j2, s->x2);
+	s->len = dist3(s->x1, s->x2);
+
+	// 横方向の隣接格子点 (進行方向と直交する側)
+	const int di = j2 - j1;                   // 横方向 = (dj, di) を入れ替えた向き
+	const int dj = i2 - i1;
+	double q[3];
+	int n = 0;
+	// マイナス側 : [mid(x1,横-), mid(x2,横-)]、無ければ [x1, x2]
+	if (panel_has(pa, i1 - di, j1 - dj) && panel_has(pa, i2 - di, j2 - dj)) {
+		panel_node(pa, i1 - di, j1 - dj, q);
+		midp(s->x1, q, &s->pv[3 * n]);
+		n++;
+		panel_node(pa, i2 - di, j2 - dj, q);
+		midp(s->x2, q, &s->pv[3 * n]);
+		n++;
+	}
+	else {
+		memcpy(&s->pv[3 * n], s->x1, 3 * sizeof(double));
+		n++;
+		memcpy(&s->pv[3 * n], s->x2, 3 * sizeof(double));
+		n++;
+	}
+	// プラス側 (逆順で環を閉じる)
+	if (panel_has(pa, i2 + di, j2 + dj) && panel_has(pa, i1 + di, j1 + dj)) {
+		panel_node(pa, i2 + di, j2 + dj, q);
+		midp(s->x2, q, &s->pv[3 * n]);
+		n++;
+		panel_node(pa, i1 + di, j1 + dj, q);
+		midp(s->x1, q, &s->pv[3 * n]);
+		n++;
+	}
+	else {
+		memcpy(&s->pv[3 * n], s->x2, 3 * sizeof(double));
+		n++;
+		memcpy(&s->pv[3 * n], s->x1, 3 * sizeof(double));
+		n++;
+	}
+	s->npv = n;
+	memcpy(s->papex, &s->pv[0], 3 * sizeof(double));
+
+	const double area = poly_area(s);
+	s->wid = area / s->len;                   // 平均幅 (面積/長さ)
+	s->thick = pa->thick;
+	s->sigma = pa->sigma;
+	s->area = s->wid * pa->thick;
+	s->perim = 2 * (s->wid + pa->thick);
+	s->width = s->wid;
+	s->aL = 0.2235 * (s->wid + pa->thick);
+	s->aP = 0.25 * (s->wid + pa->thick);
+	s->res = (pa->sigma > 0) ? s->len / (pa->sigma * s->area) : 0;
+	p->nseg++;
+}
+
+// 電荷セル (格子点 (i,j) の双対多角形) を追加する。
+// 環は E -> NE -> N -> NW -> W -> SW -> S -> SE (辺中点とセル中心が交互)。
+// 境界で欠ける区間には格子点自身を 1 度だけ挿入する (plate の端/隅の
+// 半分/1/4 双対矩形と同じ扱い)。
+static void panel_chg(peec_t *p, const panel_t *pa, int node, int i, int j)
+{
+	seg_t *c = &p->chg[p->nchg];
+	memset(c, 0, sizeof(seg_t));
+	c->shape = SHAPE_POLY;
+	double v0[3], q[3];
+	panel_node(pa, i, j, v0);
+
+	// 巡回順の 8 要素 : (向き, セルか中点か)
+	const int dirs[8][2] = {
+		{0, 1}, {1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}, {-1, 0}, {-1, 1}};
+	int n = 0;
+	int gap = 0;
+	for (int k = 0; k < 8; k++) {
+		const int di = dirs[k][0];
+		const int dj = dirs[k][1];
+		int ok;
+		if ((di != 0) && (dj != 0)) {
+			// 斜め = 格子セル (i..i+1, j..j+1) の中心
+			const int ci = (di > 0) ? i : (i - 1);
+			const int cj = (dj > 0) ? j : (j - 1);
+			ok = panel_has(pa, ci, cj) && panel_has(pa, ci + 1, cj + 1);
+			if (ok) {
+				panel_cellcen(pa, ci, cj, q);
+			}
+		}
+		else {
+			ok = panel_has(pa, i + di, j + dj);
+			if (ok) {
+				panel_node(pa, i + di, j + dj, q);
+				midp(v0, q, q);
+			}
+		}
+		if (ok) {
+			memcpy(&c->pv[3 * n], q, 3 * sizeof(double));
+			n++;
+		}
+		else if (!gap) {
+			// 欠けた区間 (境界) : 格子点自身を挿入
+			memcpy(&c->pv[3 * n], v0, 3 * sizeof(double));
+			n++;
+			gap = 1;
+		}
+	}
+	c->npv = n;
+	memcpy(c->papex, v0, 3 * sizeof(double));
+	memcpy(c->x1, v0, 3 * sizeof(double));
+	memcpy(c->x2, v0, 3 * sizeof(double));
+
+	const double area = poly_area(c);
+	c->len = sqrt(area);                      // len x wid = 面積
+	c->wid = sqrt(area);
+	c->thick = pa->thick;
+	c->sigma = pa->sigma;
+	c->aP = 0.25 * (c->wid + pa->thick);
+	p->chgnode[p->nchg] = node;
+	p->nchg++;
+}
+
 int wire_build(peec_t *p, FILE *fp_log)
 {
-	if ((p->nwire <= 0) && (p->nplate <= 0)) return 0;
+	if ((p->nwire <= 0) && (p->nplate <= 0) && (p->npanel <= 0)) return 0;
 
 	// 上限の見積り
 	int npoint = p->nnodexyz;
@@ -92,6 +305,20 @@ int wire_build(peec_t *p, FILE *fp_log)
 		npoint += (na + 1) * (nb + 1);
 		nseg += nt * ((na * (nb + 1)) + ((na + 1) * nb));
 		nchg += (na + 1) * (nb + 1);
+	}
+	for (int i = 0; i < p->npanel; i++) {
+		const int na = p->panel[i].ndiva;
+		const int nb = p->panel[i].ndivb;
+		if (p->panel[i].kind == PANEL_QUAD) {
+			npoint += (na + 1) * (nb + 1);
+			nseg += (na * (nb + 1)) + ((na + 1) * nb);
+			nchg += (na + 1) * (nb + 1);
+		}
+		else {
+			npoint += 1 + (na * nb);          // 中心 + nring x nsec
+			nseg += 2 * na * nb;              // 半径方向 + 周方向
+			nchg += 1 + (na * nb);
+		}
 	}
 	p->gid = (int *)malloc((size_t)npoint * sizeof(int));
 	p->gxyz = (double *)malloc((size_t)npoint * 3 * sizeof(double));
@@ -298,6 +525,117 @@ int wire_build(peec_t *p, FILE *fp_log)
 		free(nid);
 	}
 
+	// ── パネル (quad / disk) : 構造格子の双対セル ─────────────────
+	for (int ip = 0; ip < p->npanel; ip++) {
+		const panel_t *pa = &p->panel[ip];
+		const int na = pa->ndiva;
+		const int nb = pa->ndivb;
+
+		if (pa->kind == PANEL_QUAD) {
+			int *nid = (int *)malloc((size_t)(na + 1) * (nb + 1) * sizeof(int));
+			if (nid == NULL) {
+				printf("%s\n", "*** memory allocation error (panel)");
+				return 1;
+			}
+			for (int i = 0; i <= na; i++) {
+				for (int j = 0; j <= nb; j++) {
+					double x[3];
+					panel_node(pa, i, j, x);
+					nid[(i * (nb + 1)) + j] = node_at(p, x, &autoid);
+				}
+			}
+			// 電流セル : 格子線に沿う枝 (a 方向 / b 方向)
+			for (int j = 0; j <= nb; j++) {
+				for (int i = 0; i < na; i++) {
+					panel_seg(p, pa, nid[(i * (nb + 1)) + j],
+						nid[((i + 1) * (nb + 1)) + j], i, j, i + 1, j);
+				}
+			}
+			for (int i = 0; i <= na; i++) {
+				for (int j = 0; j < nb; j++) {
+					panel_seg(p, pa, nid[(i * (nb + 1)) + j],
+						nid[(i * (nb + 1)) + j + 1], i, j, i, j + 1);
+				}
+			}
+			// 電荷セル : 各格子点の双対多角形
+			for (int i = 0; i <= na; i++) {
+				for (int j = 0; j <= nb; j++) {
+					panel_chg(p, pa, nid[(i * (nb + 1)) + j], i, j);
+				}
+			}
+			free(nid);
+		}
+		else {
+			// disk : ノード index は [0] = 中心、[1 + (i-1)*nsec + j]
+			int *nid = (int *)malloc((size_t)(1 + (na * nb)) * sizeof(int));
+			if (nid == NULL) {
+				printf("%s\n", "*** memory allocation error (panel)");
+				return 1;
+			}
+			{
+				double x[3];
+				panel_node(pa, 0, 0, x);
+				nid[0] = node_at(p, x, &autoid);
+			}
+			for (int i = 1; i <= na; i++) {
+				for (int j = 0; j < nb; j++) {
+					double x[3];
+					panel_node(pa, i, j, x);
+					nid[1 + ((i - 1) * nb) + j] = node_at(p, x, &autoid);
+				}
+			}
+			// 電流セル : 半径方向 (中心からのスポークを含む) と周方向
+			for (int j = 0; j < nb; j++) {
+				for (int i = 0; i < na; i++) {
+					const int m1 = (i == 0) ? 0 : (1 + ((i - 1) * nb) + j);
+					const int m2 = 1 + (i * nb) + j;
+					panel_seg(p, pa, nid[m1], nid[m2], i, j, i + 1, j);
+				}
+			}
+			for (int i = 1; i <= na; i++) {
+				for (int j = 0; j < nb; j++) {
+					const int m1 = 1 + ((i - 1) * nb) + j;
+					const int m2 = 1 + ((i - 1) * nb) + ((j + 1) % nb);
+					panel_seg(p, pa, nid[m1], nid[m2], i, j, i, j + 1);
+				}
+			}
+			// 電荷セル : 中心は特別扱い (スポーク中点とセル中心を巡る環)
+			{
+				seg_t *c = &p->chg[p->nchg];
+				memset(c, 0, sizeof(seg_t));
+				c->shape = SHAPE_POLY;
+				double v0[3], q[3];
+				panel_node(pa, 0, 0, v0);
+				int n = 0;
+				for (int j = 0; j < nb; j++) {
+					panel_node(pa, 1, j, q);
+					midp(v0, q, &c->pv[3 * n]);
+					n++;
+					panel_cellcen(pa, 0, j, &c->pv[3 * n]);
+					n++;
+				}
+				c->npv = n;
+				memcpy(c->papex, v0, 3 * sizeof(double));
+				memcpy(c->x1, v0, 3 * sizeof(double));
+				memcpy(c->x2, v0, 3 * sizeof(double));
+				const double area = poly_area(c);
+				c->len = sqrt(area);
+				c->wid = sqrt(area);
+				c->thick = pa->thick;
+				c->sigma = pa->sigma;
+				c->aP = 0.25 * (c->wid + pa->thick);
+				p->chgnode[p->nchg] = nid[0];
+				p->nchg++;
+			}
+			for (int i = 1; i <= na; i++) {
+				for (int j = 0; j < nb; j++) {
+					panel_chg(p, pa, nid[1 + ((i - 1) * nb) + j], i, j);
+				}
+			}
+			free(nid);
+		}
+	}
+
 	p->maxid = autoid;
 
 	// 近接ノード警告 (マージされなかったが nodetol の 10 倍未満 : 意図しない分離の可能性)
@@ -313,8 +651,8 @@ int wire_build(peec_t *p, FILE *fp_log)
 		}
 	}
 
-	fprintf(fp_log, "geometry : %d wires + %d plates -> %d cells, %d charge cells, %d nodes\n",
-		p->nwire, p->nplate, p->nseg, p->nchg, p->ngnode);
+	fprintf(fp_log, "geometry : %d wires + %d plates + %d panels -> %d cells, %d charge cells, %d nodes\n",
+		p->nwire, p->nplate, p->npanel, p->nseg, p->nchg, p->ngnode);
 
 	return 0;
 }

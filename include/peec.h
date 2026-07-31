@@ -43,9 +43,14 @@ typedef struct {int n1, n2; double z0;} port_t;
 //   SHAPE_ROUND = 丸線 (半径 a)
 //   SHAPE_BAR   = 角線 (幅 w x 厚さ t)  — 細線 (等価半径) として扱う
 //   SHAPE_PLATE = 面導体のセル (幅 wid の帯 = リボン) — 面積分で扱う
+//   SHAPE_POLY  = 三角形メッシュ由来の平面多角形セル — 多角形面積分で扱う
 #define SHAPE_ROUND 0
 #define SHAPE_BAR   1
 #define SHAPE_PLATE 2
+#define SHAPE_POLY  3
+
+// 多角形セルの最大頂点数 (disk 中心の双対セルは 2 x nsec なので nsec <= 32)
+#define POLY_MAX 64
 
 typedef struct {
 	double x1[3], x2[3];
@@ -53,6 +58,22 @@ typedef struct {
 	double radius, width, thick, sigma;
 	int    ndiv;
 } wire_t;
+
+// 構造格子でメッシュ化する平面パネル (quad / disk)。
+// plate (直交矩形格子) の一般化 : セルは平面多角形になり、多角形の
+// 幾何二重積分 (polygon.c) で結合する。
+//   PANEL_QUAD : 凸な一般四辺形 (双一次写像の ndiva x ndivb 格子)
+//   PANEL_DISK : 円板 (中心 + nring リング x nsec セクタの極格子)
+#define PANEL_QUAD 0
+#define PANEL_DISK 1
+typedef struct {
+	int    kind;
+	double v[12];                 // quad の 4 頂点 (一周順)
+	double org[3], nrm[3];        // disk の中心と法線
+	double radius;
+	int    ndiva, ndivb;          // quad の分割数 / disk は (nring, nsec)
+	double thick, sigma;
+} panel_t;
 
 // 平面矩形導体 : o + s*ea + t*eb (s, t は 0..1)
 // ndivt >= 2 で厚み方向にも分割し、セルを体積バー (Hoer-Love) として扱う。
@@ -74,6 +95,11 @@ typedef struct {
 	double radius, width, thick;
 	double wid, wv[3];            // リボンの幅と横方向単位ベクトル
 	int    vol;                   // 1 = 体積セル (断面 wid x thick の矩形バー)
+	// 多角形セル (npv > 0 のとき有効) : 平面多角形の頂点リング pv と
+	// 扇分割の基点 papex (セルはこの点から星形)。wid = 面積/len。
+	int    npv;
+	double papex[3];
+	double pv[3 * POLY_MAX];
 	double aL, aP;                // 細線の等価半径 : インダクタンス用 (GMD) / 容量用
 	double area, perim;           // 断面積・周長 (DC 抵抗・表皮効果)
 	double sigma;
@@ -84,8 +110,9 @@ typedef struct {
 	char   title[BUFSIZ];
 
 	// ネットリスト
-	int    nres, ncap, nind, nmut, nsrc, nport, nwire, nplate, nnodexyz;
+	int    nres, ncap, nind, nmut, nsrc, nport, nwire, nplate, npanel, nnodexyz;
 	plate_t *plate;
+	panel_t *panel;
 	rc_t   *res, *cap;
 	ind_t  *ind;
 	mut_t  *mut;
@@ -175,6 +202,12 @@ d_complex_t ribbon_corr(const seg_t *s1, const seg_t *s2, double kw, int nsub);
 // volume.c
 int    bar_use_hl(const seg_t *s1, const seg_t *s2);
 double bar_pair(const seg_t *s1, const seg_t *s2);
+
+// polygon.c
+double poly_area(const seg_t *s);
+double poly_potential(const seg_t *s, const double *pt);
+double poly_static(const seg_t *s1, const seg_t *s2, int nsub);
+d_complex_t poly_corr(const seg_t *s1, const seg_t *s2, double kw);
 
 // partial.c
 double neumann_self(double l, double a);

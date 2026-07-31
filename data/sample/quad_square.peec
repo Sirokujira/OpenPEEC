@@ -1,0 +1,50 @@
+# 検証 (x) : パネル (quad) — 正方形シートの DC 抵抗と L (plate との相互検証)
+#   0.2 m 角、厚さ 0.1 mm、sigma = 5.8e7 のシートを quad の 8x8 格子で分割。
+#   両端の全 9 ノードを微小抵抗のバスで短絡して一様なシート電流を流す。
+#   DC 抵抗は 1 スクエアぶんの解析値
+#     R = l/(sigma w t) = 1/(5.8e7 * 0.1e-3) = 1.724138e-4 ohm  (許容 0.1%)
+#   と一致するはずである (格子の双対幅による抵抗は矩形格子で厳密)。
+#   f = 10 Hz では omega L << R なので電流分布は抵抗で決まり一様になる。
+#   L は同一形状の plate 版 (quad_square_ref.peec、矩形リボンの閉形式 =
+#   別経路の実装) と比較する (許容 0.5%。実測差は 1e-5 のオーダー :
+#   多角形カーネル + 三角形求積と矩形カーネル + Gauss-Legendre の差のみ)。
+OpenPEEC 1 0
+title = square sheet (quad panel)
+node = 1 0 0 0
+node = 2 0 0.025 0
+node = 3 0 0.05 0
+node = 4 0 0.075 0
+node = 5 0 0.1 0
+node = 6 0 0.125 0
+node = 7 0 0.15 0
+node = 8 0 0.175 0
+node = 9 0 0.2 0
+node = 11 0.2 0 0
+node = 12 0.2 0.025 0
+node = 13 0.2 0.05 0
+node = 14 0.2 0.075 0
+node = 15 0.2 0.1 0
+node = 16 0.2 0.125 0
+node = 17 0.2 0.15 0
+node = 18 0.2 0.175 0
+node = 19 0.2 0.2 0
+quad = 0 0 0  0.2 0 0  0.2 0.2 0  0 0.2 0  1e-4 5.8e7 8 8
+resistor = 1 2 1e-9
+resistor = 2 3 1e-9
+resistor = 3 4 1e-9
+resistor = 4 5 1e-9
+resistor = 5 6 1e-9
+resistor = 6 7 1e-9
+resistor = 7 8 1e-9
+resistor = 8 9 1e-9
+resistor = 11 12 1e-9
+resistor = 12 13 1e-9
+resistor = 13 14 1e-9
+resistor = 14 15 1e-9
+resistor = 15 16 1e-9
+resistor = 16 17 1e-9
+resistor = 17 18 1e-9
+resistor = 18 19 1e-9
+port = 5 15 50
+frequency = 10 10 0
+end
