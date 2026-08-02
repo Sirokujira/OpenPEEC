@@ -405,6 +405,8 @@ int input_data(FILE *fp, peec_t *p)
 				p->f1 = atof(token[3]);
 				const int ndiv = atoi(token[4]);
 				p->nfreq = ndiv + 1;
+				// 第 4 引数 "log" で等比 (対数) 掃引 (省略時は従来どおり線形)
+				if ((ntoken > 5) && !strcmp(token[5], "log")) p->flog = 1;
 				if ((p->f0 <= 0) || (p->f1 < p->f0) || (ndiv < 0)) err = 1;
 			}
 			if (err) {

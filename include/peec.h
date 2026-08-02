@@ -156,6 +156,7 @@ typedef struct {
 	// 掃引・オプション
 	double f0, f1;
 	int    nfreq;
+	int    flog;                  // frequency ... log : 対数 (等比) 掃引
 	double nodetol, gmin;
 	int    skin;                  // skineffect = 1 : 表皮効果 + 内部インダクタンス
 	int    capacitance;           // capacitance = 1 : 容量性 PEEC (電位係数)
@@ -180,11 +181,14 @@ typedef struct {
 // Z / S 行列の添字 (周波数 ifreq、行 i、列 j)
 #define ZIDX(p, ifreq, i, j) ((size_t)((ifreq) * (p)->nport + (i)) * (p)->nport + (j))
 
-// 掃引周波数 (ifreq = 0 ... nfreq-1)
+// 掃引周波数 (ifreq = 0 ... nfreq-1)。flog = 1 なら等比 (対数) 掃引。
 static inline double freq_at(const peec_t *p, int ifreq)
 {
-	return (p->nfreq <= 1) ? p->f0
-	     : p->f0 + (p->f1 - p->f0) * ifreq / (p->nfreq - 1);
+	if (p->nfreq <= 1) return p->f0;
+	if (p->flog) {
+		return p->f0 * pow(p->f1 / p->f0, (double)ifreq / (p->nfreq - 1));
+	}
+	return p->f0 + (p->f1 - p->f0) * ifreq / (p->nfreq - 1);
 }
 
 // utils.c

@@ -59,6 +59,20 @@ awk -F, 'NR==2 {
 }' "$csv" || status=1
 chk "RLC Xin(2f0)" "$(awk -F, 'NR==3{print $4}' "$csv")" 47.43416 0.005
 
+# (a2) 対数掃引 : f0/10 .. 10 f0 を 2 分割 -> 幾何中点がちょうど f0 になる。
+#      X(u f0) = sqrt(L/C) (u - 1/u) : X(0.1 f0) = -313.06549, X(10 f0) = +313.06549
+sed 's|^frequency = .*|frequency = 5.0329212e5 5.0329212e7 2 log|' \
+	"$SRC/rlc_series.peec" > "$WORK/rlc_log.peec"
+run rlc_log.peec
+chk "RLC log Xin(f0/10)" "$(awk -F, 'NR==2{print $4}' "$csv")" -313.06549 0.005
+chk "RLC log Rin(mid=f0)" "$(awk -F, 'NR==3{print $3}' "$csv")" 50.0 0.005
+awk -F, 'NR==3 {
+	x = $4; ax = (x < 0) ? -x : x;
+	printf "%-24s actual=%.6g -> %s (|Xin| <= 0.05)\n", "RLC log Xin(mid=f0)", x, (ax <= 0.05) ? "OK" : "NG";
+	exit (ax <= 0.05) ? 0 : 1
+}' "$csv" || status=1
+chk "RLC log Xin(10f0)" "$(awk -F, 'NR==4{print $4}' "$csv")" 313.06549 0.005
+
 echo "--- PEEC partial inductance"
 # (b) 単線ワイヤ : Lp=1.320380e-6 H, Rin(DC)=5.48810e-3 ohm
 cp "$SRC/wire_single.peec" "$WORK/"
