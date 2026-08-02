@@ -39,6 +39,7 @@ add_executable(peec
     src/iterative.c
     src/solve.c
     src/output.c
+    src/farfield.c
     src/utils.c
 )
 

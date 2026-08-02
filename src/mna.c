@@ -176,8 +176,11 @@ void mna_assemble(const peec_t *p, double f, d_complex_t *a)
 		stamp(a, n, rk, i1, d_complex(1, 0));
 		stamp(a, n, i2, rk, d_complex(-1, 0));
 		stamp(a, n, rk, i2, d_complex(-1, 0));
-		// 内部インピーダンス : 既定は DC 抵抗、skineffect = 1 で表皮効果 + 内部 L
-		const d_complex_t zint = p->skin
+		// 内部インピーダンス : 既定は DC 抵抗、skineffect = 1 で表皮効果 + 内部 L。
+		// 誘電体セルは過剰容量の直列インピーダンス 1/(jw C_e) (分極電流の枝)
+		const d_complex_t zint = p->seg[k].diel
+			? d_complex(0, -1 / (omega * p->seg[k].cexc))
+			: p->skin
 			? zint_seg(&p->seg[k], f)
 			: d_complex(p->seg[k].res, 0);
 		stamp(a, n, rk, rk, d_rmul(-1, zint));

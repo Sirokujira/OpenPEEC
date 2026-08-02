@@ -62,6 +62,37 @@ static int node_at(peec_t *p, const double *x, int *autoid)
 	return id;
 }
 
+// 誘電体の体積セル (枝) を追加する。断面 wid x thk、横方向 wv。
+// 枝の直列インピーダンスは過剰容量 1/(jw C_e) (mna.c が diel を見て入れる)。
+static void diel_seg(peec_t *p, const double *x1, const double *x2, int n1, int n2,
+	const double *wv, double wid, double thk, double epsr)
+{
+	seg_t *s = &p->seg[p->nseg];
+	memset(s, 0, sizeof(seg_t));
+	s->shape = SHAPE_PLATE;
+	s->vol = 1;
+	s->diel = 1;
+	s->n1 = n1;
+	s->n2 = n2;
+	for (int c = 0; c < 3; c++) {
+		s->x1[c] = x1[c];
+		s->x2[c] = x2[c];
+		s->wv[c] = wv[c];
+	}
+	s->len = dist3(x1, x2);
+	s->wid = wid;
+	s->thick = thk;
+	s->width = wid;
+	s->area = wid * thk;
+	s->perim = 2 * (wid + thk);
+	s->aL = 0.2235 * (wid + thk);
+	s->aP = 0.25 * (wid + thk);
+	s->sigma = 0;
+	s->res = 0;
+	s->cexc = EPS0 * (epsr - 1) * s->area / s->len;
+	p->nseg++;
+}
+
 // 電荷セルを追加する (軸 x1->x2、幅 wid、横方向 wv)
 static void add_chg(peec_t *p, int node, const double *x1, const double *x2,
 	double wid, const double *wv, const seg_t *proto)
@@ -285,9 +316,20 @@ static void panel_chg(peec_t *p, const panel_t *pa, int node, int i, int j)
 	p->nchg++;
 }
 
+// 双対格子の幅とオフセット (端の行/列は幅が半分で中心が内側へずれる)
+static double dualw(int i, int n, double h)
+{
+	return ((i == 0) || (i == n)) ? (0.5 * h) : h;
+}
+
+static double dualo(int i, int n, double h)
+{
+	return (i == 0) ? (0.25 * h) : (i == n) ? (-0.25 * h) : 0;
+}
+
 int wire_build(peec_t *p, FILE *fp_log)
 {
-	if ((p->nwire <= 0) && (p->nplate <= 0) && (p->npanel <= 0)) return 0;
+	if ((p->nwire <= 0) && (p->nplate <= 0) && (p->npanel <= 0) && (p->ndiel <= 0)) return 0;
 
 	// 上限の見積り
 	int npoint = p->nnodexyz;
@@ -319,6 +361,15 @@ int wire_build(peec_t *p, FILE *fp_log)
 			nseg += 2 * na * nb;              // 半径方向 + 周方向
 			nchg += 1 + (na * nb);
 		}
+	}
+	for (int i = 0; i < p->ndiel; i++) {
+		const int na = p->diel[i].ndiva;
+		const int nb = p->diel[i].ndivb;
+		const int nt = p->diel[i].ndivt;
+		npoint += (na + 1) * (nb + 1) * (nt + 1);
+		nseg += (na * (nb + 1) * (nt + 1)) + ((na + 1) * nb * (nt + 1))
+		      + ((na + 1) * (nb + 1) * nt);
+		nchg += (na + 1) * (nb + 1) * (nt + 1);
 	}
 	p->gid = (int *)malloc((size_t)npoint * sizeof(int));
 	p->gxyz = (double *)malloc((size_t)npoint * 3 * sizeof(double));
@@ -636,7 +687,176 @@ int wire_build(peec_t *p, FILE *fp_log)
 		}
 	}
 
+	// ── 誘電体ブリック (dielectric) : 過剰容量の体積セル ─────────────
+	// ノードは (na+1) x (nb+1) x (nt+1) の 3 次元格子 (導体と接する面は
+	// nodetol マージで導体ノードと共有される)。枝は 3 方向で、それぞれ
+	// 双対格子の断面をもつ体積セル。節点の双対矩形 (a-b 面内、ノードの
+	// t 面上) を束縛電荷セルとして電位係数に参加させる (内部ノードの
+	// 束縛電荷は一様場でほぼ 0 なので、面パネル近似は表面電荷が支配的な
+	// 配置で正確)。
+	for (int idl = 0; idl < p->ndiel; idl++) {
+		const diel_t *dl = &p->diel[idl];
+		const int na = dl->ndiva;
+		const int nb = dl->ndivb;
+		const int nt = dl->ndivt;
+		const double la = norm3(dl->ea);
+		const double lb = norm3(dl->eb);
+		const double ha = la / na;
+		const double hb = lb / nb;
+		const double ht = dl->thick / nt;
+		double ta[3], tb[3], nv[3];
+		for (int c = 0; c < 3; c++) {
+			ta[c] = dl->ea[c] / la;
+			tb[c] = dl->eb[c] / lb;
+		}
+		nv[0] = (ta[1] * tb[2]) - (ta[2] * tb[1]);
+		nv[1] = (ta[2] * tb[0]) - (ta[0] * tb[2]);
+		nv[2] = (ta[0] * tb[1]) - (ta[1] * tb[0]);
+
+		int *nid = (int *)malloc((size_t)(na + 1) * (nb + 1) * (nt + 1) * sizeof(int));
+		if (nid == NULL) {
+			printf("%s\n", "*** memory allocation error (dielectric)");
+			return 1;
+		}
+#define DNID(ia, ib, it) nid[((((ia) * (nb + 1)) + (ib)) * (nt + 1)) + (it)]
+		for (int ia = 0; ia <= na; ia++) {
+		for (int ib = 0; ib <= nb; ib++) {
+			for (int it = 0; it <= nt; it++) {
+				double x[3];
+				for (int c = 0; c < 3; c++) {
+					x[c] = dl->org[c] + (ia * ha * ta[c]) + (ib * hb * tb[c])
+					     + (it * ht * nv[c]);
+				}
+				DNID(ia, ib, it) = node_at(p, x, &autoid);
+			}
+		}
+		}
+
+		// a 方向の枝 (断面 = b, t の双対幅)
+		for (int ib = 0; ib <= nb; ib++) {
+		for (int it = 0; it <= nt; it++) {
+			const double wb = dualw(ib, nb, hb);
+			const double ob = dualo(ib, nb, hb);
+			const double wt = dualw(it, nt, ht);
+			const double ot = dualo(it, nt, ht);
+			for (int k = 0; k < na; k++) {
+				double x1[3], x2[3];
+				for (int c = 0; c < 3; c++) {
+					const double base = dl->org[c] + (((ib * hb) + ob) * tb[c])
+					                  + (((it * ht) + ot) * nv[c]);
+					x1[c] = base + (k * ha * ta[c]);
+					x2[c] = base + ((k + 1) * ha * ta[c]);
+				}
+				diel_seg(p, x1, x2, DNID(k, ib, it), DNID(k + 1, ib, it),
+					tb, wb, wt, dl->epsr);
+			}
+		}
+		}
+		// b 方向の枝 (断面 = a, t)
+		for (int ia = 0; ia <= na; ia++) {
+		for (int it = 0; it <= nt; it++) {
+			const double wa = dualw(ia, na, ha);
+			const double oa = dualo(ia, na, ha);
+			const double wt = dualw(it, nt, ht);
+			const double ot = dualo(it, nt, ht);
+			for (int k = 0; k < nb; k++) {
+				double x1[3], x2[3];
+				for (int c = 0; c < 3; c++) {
+					const double base = dl->org[c] + (((ia * ha) + oa) * ta[c])
+					                  + (((it * ht) + ot) * nv[c]);
+					x1[c] = base + (k * hb * tb[c]);
+					x2[c] = base + ((k + 1) * hb * tb[c]);
+				}
+				diel_seg(p, x1, x2, DNID(ia, k, it), DNID(ia, k + 1, it),
+					ta, wa, wt, dl->epsr);
+			}
+		}
+		}
+		// t 方向の枝 (断面 = a, b)
+		for (int ia = 0; ia <= na; ia++) {
+		for (int ib = 0; ib <= nb; ib++) {
+			const double wa = dualw(ia, na, ha);
+			const double oa = dualo(ia, na, ha);
+			const double wb = dualw(ib, nb, hb);
+			const double ob = dualo(ib, nb, hb);
+			for (int k = 0; k < nt; k++) {
+				double x1[3], x2[3];
+				for (int c = 0; c < 3; c++) {
+					const double base = dl->org[c] + (((ia * ha) + oa) * ta[c])
+					                  + (((ib * hb) + ob) * tb[c]);
+					x1[c] = base + (k * ht * nv[c]);
+					x2[c] = base + ((k + 1) * ht * nv[c]);
+				}
+				diel_seg(p, x1, x2, DNID(ia, ib, k), DNID(ia, ib, k + 1),
+					ta, wa, wb, dl->epsr);
+			}
+		}
+		}
+
+		// 束縛電荷セル : 各ノードの a-b 面内の双対矩形
+		seg_t proto;
+		memset(&proto, 0, sizeof(seg_t));
+		proto.shape = SHAPE_PLATE;
+		proto.thick = ht;
+		for (int ia = 0; ia <= na; ia++) {
+		for (int ib = 0; ib <= nb; ib++) {
+			const double wa = dualw(ia, na, ha);
+			const double oa = dualo(ia, na, ha);
+			const double wb = dualw(ib, nb, hb);
+			const double ob = dualo(ib, nb, hb);
+			for (int it = 0; it <= nt; it++) {
+				double x1[3], x2[3];
+				for (int c = 0; c < 3; c++) {
+					const double c0 = dl->org[c] + (((ia * ha) + oa) * ta[c])
+					                + (((ib * hb) + ob) * tb[c]) + (it * ht * nv[c]);
+					x1[c] = c0 - (0.5 * wa * ta[c]);
+					x2[c] = c0 + (0.5 * wa * ta[c]);
+				}
+				add_chg(p, DNID(ia, ib, it), x1, x2, wb, tb, &proto);
+			}
+		}
+		}
+#undef DNID
+		free(nid);
+	}
+
 	p->maxid = autoid;
+
+	// 地板 (groundplane) : すべてのセルが地板より上 (z >= gpz) にあること。
+	// 鏡像法は上半空間でのみ有効なので、下にはみ出す導体はエラーにする。
+	if (p->gp) {
+		for (int i = 0; i < p->nseg + p->nchg; i++) {
+			const seg_t *s = (i < p->nseg) ? &p->seg[i] : &p->chg[i - p->nseg];
+			double mz;
+			if (s->npv > 0) {
+				mz = s->pv[2];
+				for (int k = 1; k < s->npv; k++) {
+					if (s->pv[(3 * k) + 2] < mz) mz = s->pv[(3 * k) + 2];
+				}
+			}
+			else {
+				mz = (s->x1[2] < s->x2[2]) ? s->x1[2] : s->x2[2];
+				if (s->wid > 0) {
+					// リボンの横方向 (体積セルは厚み方向も) の広がり
+					double lo = fabs(0.5 * s->wid * s->wv[2]);
+					if (s->vol) {
+						double t[3];
+						for (int c = 0; c < 3; c++) {
+							t[c] = (s->x2[c] - s->x1[c]) / s->len;
+						}
+						lo += fabs(0.5 * s->thick * ((t[0] * s->wv[1]) - (t[1] * s->wv[0])));
+					}
+					mz -= lo;
+				}
+			}
+			if (mz < p->gpz - p->nodetol) {
+				printf("*** conductor below ground plane (z = %.3e < %.3e)\n", mz, p->gpz);
+				fprintf(fp_log, "*** conductor below ground plane (z = %.3e < %.3e)\n", mz, p->gpz);
+				return 1;
+			}
+		}
+		fprintf(fp_log, "ground plane : z = %g (image method)\n", p->gpz);
+	}
 
 	// 近接ノード警告 (マージされなかったが nodetol の 10 倍未満 : 意図しない分離の可能性)
 	int nwarn = 0;
@@ -651,8 +871,8 @@ int wire_build(peec_t *p, FILE *fp_log)
 		}
 	}
 
-	fprintf(fp_log, "geometry : %d wires + %d plates + %d panels -> %d cells, %d charge cells, %d nodes\n",
-		p->nwire, p->nplate, p->npanel, p->nseg, p->nchg, p->ngnode);
+	fprintf(fp_log, "geometry : %d wires + %d plates + %d panels + %d dielectric bricks -> %d cells, %d charge cells, %d nodes\n",
+		p->nwire, p->nplate, p->npanel, p->ndiel, p->nseg, p->nchg, p->ngnode);
 
 	return 0;
 }

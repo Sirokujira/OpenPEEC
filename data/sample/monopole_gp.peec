@@ -1,0 +1,22 @@
+# 検証 (ac) : 鏡像地板 + 遅延 — λ/4 モノポール
+#   dipole_halfwave.peec の上半分 (アーム 0.0005..0.5 m, a = 1 mm, 16 分割) を
+#   地板 z = 0 に立て、ポートはアーム基部 (node 1) と地板 (node 0 = 基準) の間。
+#
+#   イメージ理論 : 鏡像セル (幾何鏡像 + 垂直電流保存・電荷 -q) はダイポールの
+#   下アームのセル (電流は対称、電荷は反対称) と厳密に一致するので、
+#     Zin(モノポール) = Zin(ダイポール) / 2
+#   が離散化レベルで全周波数について成り立つ (差は丸め誤差のみ)。
+#   スクリプトは dipole_halfwave.peec の zin.csv と行ごとに比較する。
+#
+#   文献値によるアンカー : 共振 (Xin = 0) で Rin = 73.1/2 = 36.55 ohm (±10%)、
+#   共振周波数はダイポールと同一 (全長 1 m として f/c = 0.478)。
+OpenPEEC 1 0
+title = quarter-wave monopole on ground plane (retarded)
+capacitance = 1
+retardation = 1
+groundplane = 0
+node = 1 0 0 0.0005
+wire = 0 0 0.0005 0 0 0.5 1e-3 5.8e7 16
+port = 1 0 50
+frequency = 1.30e8 1.60e8 12
+end

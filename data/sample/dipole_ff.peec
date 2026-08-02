@@ -1,0 +1,24 @@
+# 検証 (ad) : 遠方界後処理 — 半波長ダイポールの指向性と放射効率
+#   dipole_halfwave.peec と同一構造。共振周波数 f = 1.4376e8 Hz (f l/c = 0.4795)
+#   の 1 点で farfield = 36 24 (theta 5 deg / phi 15 deg 刻み)。
+#
+#   指向性 : 正弦電流分布 (kh = pi f l/c = 1.5065) の解析値
+#     D = 2 max|F|^2 / ∫|F|^2 sin(th) dth,  F = [cos(kh cos th) - cos(kh)]/sin th
+#       = 1.628  (2.117 dBi)   … 数値積分は検証スクリプトのコメント参照
+#   PEEC の電流は厳密には正弦形でないため許容 1.5%。
+#
+#   放射効率 : eff = Prad/Pin。銅損は Rin 換算 ~2.7e-3 ohm (Rin = 73 ohm の
+#   4e-5) なので eff = 1 が 0.5% で成り立つはず。これは遠方界の規格化
+#   (omega mu0/4pi) と球面積分がポインティングの定理と整合していることの判定。
+OpenPEEC 1 0
+title = half-wave dipole far field (D and efficiency)
+capacitance = 1
+retardation = 1
+farfield = 36 24
+node = 1 0 0 -0.0005
+node = 2 0 0 0.0005
+wire = 0 0 -0.5 0 0 -0.0005 1e-3 5.8e7 16
+wire = 0 0 0.0005 0 0 0.5 1e-3 5.8e7 16
+port = 1 2 50
+frequency = 1.4376e8 1.4376e8 0
+end

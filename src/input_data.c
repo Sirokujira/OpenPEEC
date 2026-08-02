@@ -43,7 +43,7 @@ int input_data(FILE *fp, peec_t *p)
 	const char sep[] = " \t";
 	const char errfmt2[] = "*** invalid %s data\n";
 	int    cres = 0, ccap = 0, cind = 0, cmut = 0, csrc = 0, cport = 0, cwire = 0, cnode = 0;
-	int    cplate = 0, cpanel = 0;
+	int    cplate = 0, cpanel = 0, cdiel = 0;
 
 	// initialize (既定値 : キー省略時は従来動作)
 	memset(p, 0, sizeof(peec_t));
@@ -283,6 +283,41 @@ int input_data(FILE *fp, peec_t *p)
 				return 1;
 			}
 		}
+		else if (!strcmp(strkey, "dielectric")) {
+			// dielectric = ox oy oz  ax ay az  bx by bz  厚さ epsr ndiv_a ndiv_b ndiv_t
+			// org を底面として法線 (ea x eb) 方向へ thick 押し出した直方体
+			if (ntoken < 16) err = 1;
+			else {
+				APPEND(p->diel, p->ndiel, cdiel, diel_t);
+				diel_t *e = &p->diel[p->ndiel];
+				memset(e, 0, sizeof(diel_t));
+				for (int k = 0; k < 3; k++) {
+					e->org[k] = atof(token[2 + k]);
+					e->ea[k] = atof(token[5 + k]);
+					e->eb[k] = atof(token[8 + k]);
+				}
+				e->thick = atof(token[11]);
+				e->epsr = atof(token[12]);
+				e->ndiva = atoi(token[13]);
+				e->ndivb = atoi(token[14]);
+				e->ndivt = atoi(token[15]);
+				const double la = sqrt((e->ea[0] * e->ea[0]) + (e->ea[1] * e->ea[1]) + (e->ea[2] * e->ea[2]));
+				const double lb = sqrt((e->eb[0] * e->eb[0]) + (e->eb[1] * e->eb[1]) + (e->eb[2] * e->eb[2]));
+				const double ab = (e->ea[0] * e->eb[0]) + (e->ea[1] * e->eb[1]) + (e->ea[2] * e->eb[2]);
+				if ((la <= 0) || (lb <= 0) || (e->thick <= 0) || (e->epsr < 1)
+				 || (e->ndiva < 1) || (e->ndivb < 1) || (e->ndivt < 1)) err = 1;
+				if (!err && (fabs(ab) > 1e-9 * la * lb)) {
+					printf("%s\n", "*** dielectric : the two edge vectors must be perpendicular");
+					return 1;
+				}
+				// epsr = 1 は真空と同じ : セルを作らない (完全に無効果、空気と bit 一致)
+				if (!err && (e->epsr > 1)) p->ndiel++;
+			}
+			if (err) {
+				printf(errfmt2, "dielectric");
+				return 1;
+			}
+		}
 		else if (!strcmp(strkey, "quad")) {
 			// quad = x1 y1 z1  x2 y2 z2  x3 y3 z3  x4 y4 z4  厚さ 導電率 分割a 分割b
 			// 凸な一般四辺形 (頂点は一周順)。双一次写像の構造格子で分割する。
@@ -405,6 +440,8 @@ int input_data(FILE *fp, peec_t *p)
 				p->f1 = atof(token[3]);
 				const int ndiv = atoi(token[4]);
 				p->nfreq = ndiv + 1;
+				// 第 4 引数 "log" で等比 (対数) 掃引 (省略時は従来どおり線形)
+				if ((ntoken > 5) && !strcmp(token[5], "log")) p->flog = 1;
 				if ((p->f0 <= 0) || (p->f1 < p->f0) || (ndiv < 0)) err = 1;
 			}
 			if (err) {
@@ -433,6 +470,22 @@ int input_data(FILE *fp, peec_t *p)
 		}
 		else if (!strcmp(strkey, "acceleration")) {
 			p->accel = atoi(token[2]);
+		}
+		else if (!strcmp(strkey, "farfield")) {
+			if (ntoken < 4) err = 1;
+			else {
+				p->ffnth = atoi(token[2]);
+				p->ffnph = atoi(token[3]);
+				if ((p->ffnth < 2) || (p->ffnph < 2)) err = 1;
+			}
+			if (err) {
+				printf(errfmt2, "farfield");
+				return 1;
+			}
+		}
+		else if (!strcmp(strkey, "groundplane")) {
+			p->gp = 1;
+			p->gpz = atof(token[2]);
 		}
 		else if (!strcmp(strkey, "gmin")) {
 			p->gmin = atof(token[2]);
@@ -472,6 +525,11 @@ int input_data(FILE *fp, peec_t *p)
 		printf("%s\n", "*** no element data (resistor/capacitor/inductor/wire/bar/plate/polygon/disk)");
 		return 1;
 	}
+	// 誘電体は電位係数 (束縛電荷) が無いと意味を持たない
+	if ((p->ndiel > 0) && !p->capacitance) {
+		printf("%s\n", "*** dielectric requires capacitance = 1");
+		return 1;
+	}
 
 	return 0;
 }
@@ -494,6 +552,7 @@ void peec_free(peec_t *p)
 	// ネットリスト (input_data.c)
 	free(p->plate);
 	free(p->panel);
+	free(p->diel);
 	free(p->res);
 	free(p->cap);
 	free(p->ind);

@@ -6,10 +6,13 @@
 (C11 + CMake、OpenMP のみ任意)。
 
 集中定数 MNA + 導体形状からの部分要素抽出 (インダクタンス L / 電位係数 P /
-抵抗 R) → 入力インピーダンス Zin(f)、Z / S 行列、電流・電荷分布。
-導体は丸線 (`wire`) / 角線 (`bar`) / 面導体 (`plate`)。`plate` は `分割数t`
-(省略時 1) を 2 以上にすると厚み方向にも分割し、体積セル (矩形バー) として
-厚み方向の電流分布 (表皮効果) を解く。
+抵抗 R) → 入力インピーダンス Zin(f)、Z / S 行列、電流・電荷分布、遠方界。
+導体は丸線 (`wire`) / 角線 (`bar`) / 面導体 (`plate` = 矩形、`quad` = 凸四辺形、
+`disk` = 円板)。`plate` は `分割数t` (省略時 1) を 2 以上にすると厚み方向にも
+分割し、体積セル (矩形バー) として厚み方向の電流分布 (表皮効果) を解く。
+ほかに無限 PEC 地板 (`groundplane`、鏡像法)、誘電体ブリック (`dielectric`、
+Ruehli の過剰容量)、遠方界後処理 (`farfield` → `far.csv`)、対数掃引
+(`frequency ... log`)。いずれもキー省略時は無効 (従来動作と完全一致)。
 
 > このファイルは Claude Code 用の `CLAUDE.md` / `.claude/rules/*.md` と同じ内容を
 > 単独で読めるようまとめたもの。**片方だけ直すと食い違うので、規約を変えたら
@@ -21,7 +24,7 @@
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、55 件)
+# 検証 (解析解・文献値との比較、72 件)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -32,7 +35,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 55 件すべて OK でなければ
+**変更したら必ず `peec_check.sh` を通すこと。** 72 件すべて OK でなければ
 完了ではない。「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
 計測時の注意 : ソルバーが失敗すると `zin.csv` / `peec.log` は**前回の実行結果が
@@ -56,6 +59,7 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/pe
 | `src/iterative.c` | 掃引 LU 再利用の GMRES (acceleration = 1) |
 | `src/solve.c` | 周波数掃引、Z → S 変換 |
 | `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、`dist.csv` |
+| `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率) |
 
 状態はグローバル変数ではなく `peec_t` コンテキスト構造体 1 個を main で
 確保して関数に渡す。
@@ -97,7 +101,9 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
    接地すると電荷が無限遠へ逃げる経路ができ、遅延ありで放射抵抗の打ち消し
    (`Σq = 0`) が壊れて **Rin が負になる** (実際に踏んだ: 微小ダイポールで −23 Ω)。
    `mna_numbering()` は `capacitance = 1` のとき基準を必ずノード 0 にする。
-   (`short dipole R_rad`)
+   例外は地板 (`groundplane`) があるとき : 鏡像電荷 −q が総電荷の保存を自動で
+   満たすため、ノード 0 (= 地板電位) にポートを繋いでよい (モノポール給電)。
+   (`short dipole R_rad` / `monopole Rin at res.`)
 4. **面セルの幅による規格化** — 面導体セルは `Î = (1/(w₁w₂))∬∬dS dS′/R` を返す。
    w→0 で細線の式に一致するので `Lp` と `P` の式を細線と共有できる。
    (`strip L (surface)`)
@@ -121,6 +127,23 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
    散逸を約 2 倍に過大評価するので使わない)。
    (`quad sheet Rin (DC)` / `quad sheet L vs plate` / `disk C (extrapolated)` /
    `annulus Rin (DC)`)
+8. **鏡像の符号規約 (groundplane)** — 鏡像セルは幾何鏡像 (`seg_mirror()`,
+   partial.c)。Lp は `(t₁·t₂′) I(s₁, M s₂)` を**減算** (= 鏡像電流の
+   水平反転・垂直保存)、P は鏡像電荷 −q の相互項を減算、**自己項 (対角) も
+   自分の鏡像との相互項を引く**。遠方界の鏡像も同じ規約 (鏡像位置 + t′ +
+   電流 −I)。M は等長変換かつ対合なので行列の対称性は保たれる。
+   (`wire-gp L (images)` / `wire-gp C (to plane)` / `monopole = dipole/2` —
+   モノポール = ダイポール/2 が全符号を同時に判定する)
+9. **誘電体は εr − 1 だけを枝に載せる (二重計上禁止)** — 真空 (ε0) は電位
+   係数 P が受け持ち、誘電体の枝は過剰容量 C_e = ε0(εr−1)A/len の直列
+   インピーダンス 1/(jωC_e) だけを持つ (mna.c が `seg->diel` を見る。skin は
+   適用しない)。εr = 1 のブリックは**セルを作らない** (作ると 1/(jω·0) で
+   NaN。スキップすれば真空と bit 一致)。
+   (`dielectric dC (pp)` / `dielectric epsr=1 noop`)
+10. **遠方界の規格化とポインティング整合** — r E = −j(ωμ0/4π)[N − (N·r̂)r̂]、
+    U = |rE|²/(2η0)。係数を触るとパターン (D) は変わらず**効率だけが静かに
+    狂う**ため、Prad = ∮U dΩ が Pin = Re(Zin)/2 と一致することが番人になる。
+    (`dipole ff efficiency` / `short dipole D` / `monopole D = 2 x dipole`)
 
 ## メモリ
 
@@ -204,6 +227,13 @@ OpenMP で並列化しているのは `lp_fill` (partial.c)、`pot_fill` (potent
   DC 抵抗は格子の双対幅で決まり、矩形格子では厳密、歪んだ格子・極格子
   では O(格子幅²) の系統誤差を含む (弦近似)。
 - 電流は区間ごと一定、電荷はセルごと一定の低次基底。共振近傍の精度は分割数依存。
+- 地板 (`groundplane`) は z = 一定の無限 PEC 面 1 枚のみ。積分回数は 2 倍に
+  なるが未知数は増えない。導体は z ≥ 地板に置く (下はエラー)。
+- 誘電体 (`dielectric`) は直交直方体のみ。損失 (tanδ)・周波数分散は未対応。
+  節点の束縛電荷は a–b 面内の双対矩形パネルで表す近似 (表面電荷が a–b 面に
+  支配的な配置 — 基板・平行平板 — で正確)。`capacitance = 1` 必須。
+- 遠方界 (`farfield`) は port #1 の 1 A 励振に対する値。効率が意味を持つのは
+  `retardation = 1` のとき (準静的電流は放射を含まない)。
 - 行列は密。O(N²+M²) の積分と O((N+M)³) の LU (LU は並列化済みだがオーダーは不変)。
   `acceleration = 1` で掃引の LU 回数を減らせる (前処理 GMRES、密 LU と実質同一の
   結果、収束しなければ自動で LU に戻る)。fill の O(N²) と行列の密メモリは不変

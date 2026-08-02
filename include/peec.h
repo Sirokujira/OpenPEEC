@@ -23,6 +23,7 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 #define FN_LOG "peec.log"
 #define FN_CSV "zin.csv"
 #define FN_DIST "dist.csv"
+#define FN_FAR "far.csv"
 
 // 数学・物理定数 (自前マクロ : <math.h> の M_PI には依存しない)
 #define PI   (4.0 * atan(1.0))
@@ -84,6 +85,18 @@ typedef struct {
 	int    ndiva, ndivb, ndivt;
 } plate_t;
 
+// 誘電体ブリック (Ruehli の過剰容量による誘電体 PEEC)。
+// org を底面の角として o + s*ea + t*eb + u*thick*n (n = ea x eb 方向、
+// s,t,u は 0..1) の直方体を占める (plate と違い法線方向へ片側に押し出す)。
+// 3 方向の枝 (体積セル) に過剰容量 C_e = eps0 (epsr-1) A/len を直列に置き、
+// 節点の束縛電荷が電位係数 P に参加する。導体と接する面のノードは
+// nodetol マージで導体ノードと共有される。
+typedef struct {
+	double org[3], ea[3], eb[3];
+	double thick, epsr;
+	int    ndiva, ndivb, ndivt;
+} diel_t;
+
 // 分割後の 1 セル。導体電流 (枝) にも電荷セルにも使う。
 // wid = 0 なら細線フィラメント、wid > 0 なら幅 wid の帯 (リボン)。
 // リボンは x1->x2 を軸、wv を面内の横方向単位ベクトルとする矩形。
@@ -104,15 +117,18 @@ typedef struct {
 	double area, perim;           // 断面積・周長 (DC 抵抗・表皮効果)
 	double sigma;
 	double res;                   // DC 抵抗 = len / (sigma * area)
+	int    diel;                  // 1 = 誘電体セル (枝の直列インピーダンス = 1/(jw cexc))
+	double cexc;                  // 過剰容量 C_e = eps0 (epsr-1) area / len [F]
 } seg_t;
 
 typedef struct {
 	char   title[BUFSIZ];
 
 	// ネットリスト
-	int    nres, ncap, nind, nmut, nsrc, nport, nwire, nplate, npanel, nnodexyz;
+	int    nres, ncap, nind, nmut, nsrc, nport, nwire, nplate, npanel, ndiel, nnodexyz;
 	plate_t *plate;
 	panel_t *panel;
+	diel_t *diel;
 	rc_t   *res, *cap;
 	ind_t  *ind;
 	mut_t  *mut;
@@ -156,12 +172,16 @@ typedef struct {
 	// 掃引・オプション
 	double f0, f1;
 	int    nfreq;
+	int    flog;                  // frequency ... log : 対数 (等比) 掃引
 	double nodetol, gmin;
 	int    skin;                  // skineffect = 1 : 表皮効果 + 内部インダクタンス
 	int    capacitance;           // capacitance = 1 : 容量性 PEEC (電位係数)
 	int    retardation;           // retardation = 1 : 遅延 (フルウェーブ PEEC)
 	int    accel;                 // acceleration = 1 : 掃引で LU を再利用する GMRES
 	int    dist;                  // distribution = 1 : 電流・電荷分布を出力
+	int    gp;                    // groundplane = z : 無限 PEC 地板 (鏡像法)
+	double gpz;                   // 地板の z 座標 (gp = 1 のとき有効)
+	int    ffnth, ffnph;          // farfield = 分割数theta 分割数phi (0 = 無効)
 
 	// 結果
 	d_complex_t *zin;             // [nport * nfreq] 各ポートの入力インピーダンス
@@ -178,11 +198,14 @@ typedef struct {
 // Z / S 行列の添字 (周波数 ifreq、行 i、列 j)
 #define ZIDX(p, ifreq, i, j) ((size_t)((ifreq) * (p)->nport + (i)) * (p)->nport + (j))
 
-// 掃引周波数 (ifreq = 0 ... nfreq-1)
+// 掃引周波数 (ifreq = 0 ... nfreq-1)。flog = 1 なら等比 (対数) 掃引。
 static inline double freq_at(const peec_t *p, int ifreq)
 {
-	return (p->nfreq <= 1) ? p->f0
-	     : p->f0 + (p->f1 - p->f0) * ifreq / (p->nfreq - 1);
+	if (p->nfreq <= 1) return p->f0;
+	if (p->flog) {
+		return p->f0 * pow(p->f1 / p->f0, (double)ifreq / (p->nfreq - 1));
+	}
+	return p->f0 + (p->f1 - p->f0) * ifreq / (p->nfreq - 1);
 }
 
 // utils.c
@@ -211,6 +234,7 @@ double poly_static(const seg_t *s1, const seg_t *s2, int nsub);
 d_complex_t poly_corr(const seg_t *s1, const seg_t *s2, double kw);
 
 // partial.c
+void seg_mirror(const seg_t *s, double gpz, seg_t *out);
 double neumann_self(double l, double a);
 double neumann_pair(const seg_t *s1, const seg_t *s2, double a1, double a2);
 d_complex_t neumann_self_k(const seg_t *s, double a, double kw);
@@ -249,5 +273,8 @@ int  output_csv(const peec_t *p, const char *fn);
 void output_spara(const peec_t *p, FILE *fp_log);
 int  output_touchstone(const peec_t *p);
 int  output_dist(const peec_t *p, const char *fn);
+
+// farfield.c
+int  output_far(const peec_t *p, const char *fn, FILE *fp_log);
 
 #endif		// _PEEC_H_

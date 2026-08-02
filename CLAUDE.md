@@ -6,9 +6,11 @@ OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を�
 集中定数 MNA + 導体形状からの部分要素抽出 (インダクタンス L / 電位係数 P /
 抵抗 R) → 入力インピーダンス Zin(f)。
 導体は丸線 (`wire`) / 角線 (`bar`) / 面導体 (`plate` = 矩形、
-`quad` = 凸四辺形、`disk` = 円板)。
-`capacitance` / `skineffect` / `retardation` は既定で無効
-(キー省略時は従来動作と完全一致)。
+`quad` = 凸四辺形、`disk` = 円板)。ほかに無限 PEC 地板 (`groundplane`、
+鏡像法)、誘電体ブリック (`dielectric`、Ruehli の過剰容量)、
+遠方界後処理 (`farfield` → `far.csv`)、対数掃引 (`frequency ... log`)。
+`capacitance` / `skineffect` / `retardation` / `groundplane` / `farfield` は
+既定で無効 (キー省略時は従来動作と完全一致)。
 
 外部ライブラリに依存しない (C11 + CMake、OpenMP のみ任意)。
 
@@ -22,7 +24,8 @@ OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 回帰 : 解析解・文献値との比較 (MNA / 部分 L / 表皮効果 / 容量 / 遅延 / 角線 / 面導体 / 体積セル / パネル)
+# 回帰 : 解析解・文献値との比較 (MNA / 部分 L / 表皮効果 / 容量 / 遅延 / 角線 /
+#        面導体 / 体積セル / パネル / 地板 / 遠方界 / 誘電体 / 対数掃引)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 ```
 
@@ -46,6 +49,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 | `src/iterative.c` | 掃引 LU 再利用の GMRES (acceleration = 1) |
 | `src/solve.c` | 周波数掃引 |
 | `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、`dist.csv` |
+| `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率) |
 
 ## 詳細な規則
 

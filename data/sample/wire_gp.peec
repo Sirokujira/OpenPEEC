@@ -1,0 +1,25 @@
+# 検証 (ab) : 鏡像地板 — 地板 (z = 0) 上 h = 10 mm の水平単線
+#   l = 1 m, a = 1 mm, h = 10 mm, 無限 PEC 地板 (groundplane = 0, 鏡像法)
+#   鏡像電流は水平成分が反転するので、平行フィラメントの相互 M を減算 :
+#     L = L_self - M(d = 2h)   (Grover の平行線公式、d = 0.02 m)
+#     L_self = (mu0 l/2pi)[asinh(l/a) - sqrt(1+(a/l)^2) + a/l] = 1.3203804e-6 H
+#     M(d)   = (mu0 l/2pi)[asinh(l/d) - sqrt(1+(d/l)^2) + d/l] = 7.2501404e-7 H
+#     L = 5.953664e-7 H  (f = 1 MHz, L = Xin/2 pi f)
+#   期待値は正則化なし (距離 d) の Grover 式。コードは d~ = sqrt(d^2+a^2) で
+#   正則化するが差は 1e-3% 程度で許容 0.1% に含まれる。
+#   Rin (DC) は鏡像の影響を受けない : 5.48810e-3 ohm (wire_single と同一)。
+#   細線カーネルの区間加法性は鏡像相互項でも成り立つので ndiv = 8 でも L は同じ。
+#
+#   容量の検証 (スクリプトが ndiv = 1 + capacitance = 1 に書き換えて実行) :
+#     鏡像電荷は -q なので C = 4 pi eps0 l^2 / (I_self - I_par(2h))
+#       I_self = 13.203804419, I_par = 7.250140382 (平均電位法、ndiv = 1 で厳密)
+#       C = 1.112650056e-10 / 5.953664037 = 1.868849e-11 F
+OpenPEEC 1 0
+title = horizontal wire above ground plane (h=10mm)
+groundplane = 0
+node = 1 0 0 0.01
+node = 2 1 0 0.01
+wire = 0 0 0.01 1 0 0.01 1e-3 5.8e7 8
+port = 1 2 50
+frequency = 1e6 1e6 0
+end

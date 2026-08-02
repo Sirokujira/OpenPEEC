@@ -295,6 +295,34 @@ double lp_self(double l, double a)
 	return MU0 / (4 * PI) * neumann_self(l, a);
 }
 
+/*
+鏡像セル (groundplane = z の無限 PEC 地板)
+
+幾何鏡像 : x, y はそのまま、z -> 2 gpz - z。リボンの横方向 wv・多角形の
+頂点リング pv・扇の基点 papex も同様に写す (体積セルの厚み方向は中立面に
+対して対称なので追加の変換は不要。多角形の巻き方は反転するが、
+poly_potential は向きに依存しない)。
+
+鏡像電流は「水平成分反転・垂直成分保存」(-Jx, -Jy, +Jz)。これは幾何鏡像
+した区間 (方向 (tx, ty, -tz)) に -1 倍の電流を流すことと同値なので、
+呼び出し側は t1・t2' (t2' は鏡像の幾何方向) を掛けた相互項を「減算」する。
+鏡像電荷は -q なので、電位係数も鏡像との相互項をそのまま減算する。
+
+M は等長変換かつ対合なので I(s1, M s2) = I(M s1, s2) が成り立ち、
+t1・(M t2) = (M t1)・t2 とあわせて行列の対称性は保たれる。
+*/
+void seg_mirror(const seg_t *s, double gpz, seg_t *out)
+{
+	*out = *s;
+	out->x1[2] = (2 * gpz) - s->x1[2];
+	out->x2[2] = (2 * gpz) - s->x2[2];
+	out->wv[2] = -s->wv[2];
+	out->papex[2] = (2 * gpz) - s->papex[2];
+	for (int k = 0; k < s->npv; k++) {
+		out->pv[(3 * k) + 2] = (2 * gpz) - s->pv[(3 * k) + 2];
+	}
+}
+
 // 部分インダクタンス行列 (対称密行列)
 // retardation = 0 なら周波数非依存なので 1 回だけ、1 なら周波数ごとに呼ぶ
 void lp_fill(peec_t *p, double f, FILE *fp_log)
@@ -315,16 +343,37 @@ void lp_fill(peec_t *p, double f, FILE *fp_log)
 #pragma omp parallel for schedule(dynamic)
 #endif
 	for (i = 0; i < n; i++) {
-		p->lp[(size_t)i * n + i] = d_rmul(coef, neumann_self_k(&p->seg[i], p->seg[i].aL, kw));
+		double t1[3];
+		for (int c = 0; c < 3; c++) {
+			t1[c] = (p->seg[i].x2[c] - p->seg[i].x1[c]) / p->seg[i].len;
+		}
+		d_complex_t vii = neumann_self_k(&p->seg[i], p->seg[i].aL, kw);
+		if (p->gp) {
+			// 地板 : 自己項も自分の鏡像との相互項を減算する
+			// (鏡像の幾何方向は (tx, ty, -tz) なので t・t' = tx^2 + ty^2 - tz^2)
+			seg_t mi;
+			seg_mirror(&p->seg[i], p->gpz, &mi);
+			const double tdm = (t1[0] * t1[0]) + (t1[1] * t1[1]) - (t1[2] * t1[2]);
+			vii = d_sub(vii, d_rmul(tdm,
+				neumann_pair_k(&p->seg[i], &mi, p->seg[i].aL, p->seg[i].aL, kw)));
+		}
+		p->lp[(size_t)i * n + i] = d_rmul(coef, vii);
 		for (int j = i + 1; j < n; j++) {
-			double t1[3], t2[3];
+			double t2[3];
 			for (int c = 0; c < 3; c++) {
-				t1[c] = (p->seg[i].x2[c] - p->seg[i].x1[c]) / p->seg[i].len;
 				t2[c] = (p->seg[j].x2[c] - p->seg[j].x1[c]) / p->seg[j].len;
 			}
 			const double tdot = dot3(t1, t2);
-			p->lp[(size_t)i * n + j] = d_rmul(coef * tdot,
+			d_complex_t vij = d_rmul(tdot,
 				neumann_pair_k(&p->seg[i], &p->seg[j], p->seg[i].aL, p->seg[j].aL, kw));
+			if (p->gp) {
+				seg_t mj;
+				seg_mirror(&p->seg[j], p->gpz, &mj);
+				const double tdm = (t1[0] * t2[0]) + (t1[1] * t2[1]) - (t1[2] * t2[2]);
+				vij = d_sub(vij, d_rmul(tdm,
+					neumann_pair_k(&p->seg[i], &mj, p->seg[i].aL, p->seg[j].aL, kw)));
+			}
+			p->lp[(size_t)i * n + j] = d_rmul(coef, vij);
 		}
 	}
 	// 下三角へミラー
