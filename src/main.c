@@ -107,17 +107,19 @@ int main(int argc, char *argv[])
 	output_zin(&peec, fp_log);
 	output_spara(&peec, fp_log);
 	if (output_csv(&peec, FN_CSV) || output_touchstone(&peec) ||
-	    output_dist(&peec, FN_DIST)) {
+	    output_dist(&peec, FN_DIST) || output_far(&peec, FN_FAR, fp_log)) {
 		peec_free(&peec);
 		fclose(fp_log);
 		exit(1);
 	}
+	sprintf(str, "output filename : %s, %s, peec.s%dp", FN_LOG, FN_CSV, peec.nport);
 	if (peec.dist) {
-		sprintf(str, "output filename : %s, %s, peec.s%dp, %s",
-			FN_LOG, FN_CSV, peec.nport, FN_DIST);
+		strcat(str, ", ");
+		strcat(str, FN_DIST);
 	}
-	else {
-		sprintf(str, "output filename : %s, %s, peec.s%dp", FN_LOG, FN_CSV, peec.nport);
+	if (peec.ffnth > 0) {
+		strcat(str, ", ");
+		strcat(str, FN_FAR);
 	}
 	monitor(fp_log, str);
 

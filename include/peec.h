@@ -23,6 +23,7 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 #define FN_LOG "peec.log"
 #define FN_CSV "zin.csv"
 #define FN_DIST "dist.csv"
+#define FN_FAR "far.csv"
 
 // 数学・物理定数 (自前マクロ : <math.h> の M_PI には依存しない)
 #define PI   (4.0 * atan(1.0))
@@ -165,6 +166,7 @@ typedef struct {
 	int    dist;                  // distribution = 1 : 電流・電荷分布を出力
 	int    gp;                    // groundplane = z : 無限 PEC 地板 (鏡像法)
 	double gpz;                   // 地板の z 座標 (gp = 1 のとき有効)
+	int    ffnth, ffnph;          // farfield = 分割数theta 分割数phi (0 = 無効)
 
 	// 結果
 	d_complex_t *zin;             // [nport * nfreq] 各ポートの入力インピーダンス
@@ -256,5 +258,8 @@ int  output_csv(const peec_t *p, const char *fn);
 void output_spara(const peec_t *p, FILE *fp_log);
 int  output_touchstone(const peec_t *p);
 int  output_dist(const peec_t *p, const char *fn);
+
+// farfield.c
+int  output_far(const peec_t *p, const char *fn, FILE *fp_log);
 
 #endif		// _PEEC_H_

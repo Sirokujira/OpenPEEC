@@ -136,14 +136,12 @@ int solve(peec_t *p, FILE *fp_log)
 	d_complex_t *scol = (d_complex_t *)malloc((size_t)np * sizeof(d_complex_t));
 	int *spiv = (int *)malloc((size_t)np * sizeof(int));
 
-	// 電流・電荷分布 (distribution = 1 のときのみ)
-	if (p->dist) {
-		if (p->nseg > 0) {
-			p->segi = (d_complex_t *)malloc((size_t)p->nfreq * p->nseg * sizeof(d_complex_t));
-		}
-		if (p->capacitance && (p->ncell > 0)) {
-			p->cellq = (d_complex_t *)malloc((size_t)p->nfreq * p->ncell * sizeof(d_complex_t));
-		}
+	// 電流・電荷分布 (distribution = 1)。区間電流は遠方界 (farfield) でも使う。
+	if ((p->dist || (p->ffnth > 0)) && (p->nseg > 0)) {
+		p->segi = (d_complex_t *)malloc((size_t)p->nfreq * p->nseg * sizeof(d_complex_t));
+	}
+	if (p->dist && p->capacitance && (p->ncell > 0)) {
+		p->cellq = (d_complex_t *)malloc((size_t)p->nfreq * p->ncell * sizeof(d_complex_t));
 	}
 
 	// acceleration = 1 : 前処理 LU (行列と同サイズ) を別に持つ
@@ -233,8 +231,8 @@ int solve(peec_t *p, FILE *fp_log)
 			}
 			p->zin[(size_t)j * p->nfreq + ifreq] = p->zmat[ZIDX(p, ifreq, j, j)];
 
-			// 分布は port #1 を 1A で励振したときの解から取る
-			if (p->dist && (j == 0)) {
+			// 分布・遠方界は port #1 を 1A で励振したときの解から取る
+			if (j == 0) {
 				// 区間電流 : 未知数ベクトルの [offS, offS + nseg) がそのまま枝電流
 				if (p->segi != NULL) {
 					for (int m = 0; m < p->nseg; m++) {

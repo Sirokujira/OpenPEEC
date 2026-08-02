@@ -436,6 +436,18 @@ int input_data(FILE *fp, peec_t *p)
 		else if (!strcmp(strkey, "acceleration")) {
 			p->accel = atoi(token[2]);
 		}
+		else if (!strcmp(strkey, "farfield")) {
+			if (ntoken < 4) err = 1;
+			else {
+				p->ffnth = atoi(token[2]);
+				p->ffnph = atoi(token[3]);
+				if ((p->ffnth < 2) || (p->ffnph < 2)) err = 1;
+			}
+			if (err) {
+				printf(errfmt2, "farfield");
+				return 1;
+			}
+		}
 		else if (!strcmp(strkey, "groundplane")) {
 			p->gp = 1;
 			p->gpz = atof(token[2]);

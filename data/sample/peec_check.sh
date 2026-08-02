@@ -344,6 +344,34 @@ else
 	chk "monopole Rin at res." "${res#* }" 36.55 0.10
 fi
 
+echo "--- far field"
+# far.csv (単一周波数) から最大 D [linear] を取り出す
+getD() { awk -F, 'NR>1 {d = exp($8/10*log(10)); if (d > mx) mx = d} END {printf "%.6f", mx}' "$WORK/far.csv"; }
+# peec.log の farfield 行から放射効率を取り出す
+getEff() { grep "^farfield :" "$log" | tail -1 | sed 's/.*eff = \([0-9.eE+-]*\).*/\1/'; }
+
+# (ad) 半波長ダイポール : D = 1.628 (正弦電流 kh = 1.5065 の解析値、
+#      D = 2 max|F|^2/∫|F|^2 sin th dth, F = [cos(kh cos th)-cos(kh)]/sin th)
+#      効率 ~ 1 : 遠方界の規格化 + 球面積分がポインティングの定理と整合すること
+cp "$SRC/dipole_ff.peec" "$WORK/"
+run dipole_ff.peec
+dd=$(getD)
+chk "dipole ff D" "$dd" 1.628 0.015
+chk "dipole ff efficiency" "$(getEff)" 1.0 0.005
+
+# (ae) 微小ダイポール : 軸方向電流なら分布に依らずパターンは sin^2 th で D = 1.5 (厳密)
+awk '{print} /^title = /{print "farfield = 36 24"}' "$SRC/dipole_short.peec" > "$WORK/dipole_short_ff.peec"
+run dipole_short_ff.peec
+chk "short dipole D" "$(getD)" 1.5 0.005
+
+# (af) モノポール (地板) : 上半球に同じ界・電力は半分なので D = 2 x ダイポール。
+#      鏡像電流の遠方界と上半球積分の判定 (ダイポール側 (ad) と同一周波数で比較)
+awk '{sub(/^frequency = .*/, "frequency = 1.4376e8 1.4376e8 0"); print}
+     /^title = /{print "farfield = 18 24"}' "$SRC/monopole_gp.peec" > "$WORK/monopole_ff.peec"
+run monopole_ff.peec
+chk "monopole D = 2 x dipole" "$(awk -v m="$(getD)" -v d="$dd" 'BEGIN{printf "%.6f", m/d}')" 2.0 0.01
+chk "monopole ff efficiency" "$(getEff)" 1.0 0.005
+
 echo "--- multi-port S parameters"
 # (q) 抵抗性 T 型 2 ポート : Z=[[75,50],[50,75]], Z0=50 -> S11=1/21, S21=8/21 (実数)
 cp "$SRC/tnetwork_spara.peec" "$WORK/"
