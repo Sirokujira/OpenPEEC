@@ -372,6 +372,29 @@ run monopole_ff.peec
 chk "monopole D = 2 x dipole" "$(awk -v m="$(getD)" -v d="$dd" 'BEGIN{printf "%.6f", m/d}')" 2.0 0.01
 chk "monopole ff efficiency" "$(getEff)" 1.0 0.005
 
+echo "--- dielectric (excess capacitance)"
+# (ag) 平行平板 + εr = 4 ブリック : ΔC = (εr-1) eps0 A/d = 1.06250e-10 F。
+#      平板は等電位面なので過剰容量ネットワークの合計は格子に依らず厳密
+#      (縁効果は差で相殺、実測残差 ~1e-6)
+getCzin() { awk -F, 'NR==2{printf "%.9e", -1/(6.283185307179586e6*$4)}' "$csv"; }
+cp "$SRC/diel_pp.peec" "$WORK/"
+run diel_pp.peec
+cdiel=$(getCzin)
+sed '/^dielectric/d' "$SRC/diel_pp.peec" > "$WORK/diel_air.peec"
+run diel_air.peec
+cair=$(getCzin)
+cp "$csv" "$WORK/zin_diel_air.csv"
+chk "dielectric dC (pp)" "$(awk -v a="$cdiel" -v b="$cair" 'BEGIN{printf "%.9e", a-b}')" 1.0625025e-10 0.005
+# εr = 1 のブリックはセルを作らない = ブリック無しと bit 単位で一致
+sed 's/ 4 8 8 2$/ 1 8 8 2/' "$SRC/diel_pp.peec" > "$WORK/diel_eps1.peec"
+run diel_eps1.peec
+if cmp -s "$WORK/zin_diel_air.csv" "$csv"; then
+	printf "%-24s -> OK (epsr = 1 はブリック無しと完全一致)\n" "dielectric epsr=1 noop"
+else
+	printf "%-24s -> NG (epsr = 1 がブリック無しと不一致)\n" "dielectric epsr=1 noop" >&2
+	status=1
+fi
+
 echo "--- multi-port S parameters"
 # (q) 抵抗性 T 型 2 ポート : Z=[[75,50],[50,75]], Z0=50 -> S11=1/21, S21=8/21 (実数)
 cp "$SRC/tnetwork_spara.peec" "$WORK/"

@@ -85,6 +85,18 @@ typedef struct {
 	int    ndiva, ndivb, ndivt;
 } plate_t;
 
+// 誘電体ブリック (Ruehli の過剰容量による誘電体 PEEC)。
+// org を底面の角として o + s*ea + t*eb + u*thick*n (n = ea x eb 方向、
+// s,t,u は 0..1) の直方体を占める (plate と違い法線方向へ片側に押し出す)。
+// 3 方向の枝 (体積セル) に過剰容量 C_e = eps0 (epsr-1) A/len を直列に置き、
+// 節点の束縛電荷が電位係数 P に参加する。導体と接する面のノードは
+// nodetol マージで導体ノードと共有される。
+typedef struct {
+	double org[3], ea[3], eb[3];
+	double thick, epsr;
+	int    ndiva, ndivb, ndivt;
+} diel_t;
+
 // 分割後の 1 セル。導体電流 (枝) にも電荷セルにも使う。
 // wid = 0 なら細線フィラメント、wid > 0 なら幅 wid の帯 (リボン)。
 // リボンは x1->x2 を軸、wv を面内の横方向単位ベクトルとする矩形。
@@ -105,15 +117,18 @@ typedef struct {
 	double area, perim;           // 断面積・周長 (DC 抵抗・表皮効果)
 	double sigma;
 	double res;                   // DC 抵抗 = len / (sigma * area)
+	int    diel;                  // 1 = 誘電体セル (枝の直列インピーダンス = 1/(jw cexc))
+	double cexc;                  // 過剰容量 C_e = eps0 (epsr-1) area / len [F]
 } seg_t;
 
 typedef struct {
 	char   title[BUFSIZ];
 
 	// ネットリスト
-	int    nres, ncap, nind, nmut, nsrc, nport, nwire, nplate, npanel, nnodexyz;
+	int    nres, ncap, nind, nmut, nsrc, nport, nwire, nplate, npanel, ndiel, nnodexyz;
 	plate_t *plate;
 	panel_t *panel;
+	diel_t *diel;
 	rc_t   *res, *cap;
 	ind_t  *ind;
 	mut_t  *mut;

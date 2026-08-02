@@ -114,6 +114,7 @@ d_complex_t zint_seg(const seg_t *s, double freq)
 	// 体積セル (plate の厚み分割) : 厚み方向の電流再配分は Lp 行列が
 	// 陽に解くので、合成式を使うと二重計上になる。DC 抵抗のみ返す
 	// (内部インダクタンスも体積自己項に含まれている)。
+	if (s->diel) return d_complex(0, 0);   // 誘電体セルは mna.c が 1/(jw C_e) を入れる
 	if (s->vol) return d_complex(s->res, 0);
 
 	// 多角形セル (三角形メッシュ) : DC 抵抗は cotangent 重み (FEM) で決まる。
