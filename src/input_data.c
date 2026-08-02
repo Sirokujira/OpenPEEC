@@ -434,6 +434,10 @@ int input_data(FILE *fp, peec_t *p)
 		else if (!strcmp(strkey, "acceleration")) {
 			p->accel = atoi(token[2]);
 		}
+		else if (!strcmp(strkey, "groundplane")) {
+			p->gp = 1;
+			p->gpz = atof(token[2]);
+		}
 		else if (!strcmp(strkey, "gmin")) {
 			p->gmin = atof(token[2]);
 			if (p->gmin < 0) {

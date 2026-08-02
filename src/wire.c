@@ -638,6 +638,42 @@ int wire_build(peec_t *p, FILE *fp_log)
 
 	p->maxid = autoid;
 
+	// 地板 (groundplane) : すべてのセルが地板より上 (z >= gpz) にあること。
+	// 鏡像法は上半空間でのみ有効なので、下にはみ出す導体はエラーにする。
+	if (p->gp) {
+		for (int i = 0; i < p->nseg + p->nchg; i++) {
+			const seg_t *s = (i < p->nseg) ? &p->seg[i] : &p->chg[i - p->nseg];
+			double mz;
+			if (s->npv > 0) {
+				mz = s->pv[2];
+				for (int k = 1; k < s->npv; k++) {
+					if (s->pv[(3 * k) + 2] < mz) mz = s->pv[(3 * k) + 2];
+				}
+			}
+			else {
+				mz = (s->x1[2] < s->x2[2]) ? s->x1[2] : s->x2[2];
+				if (s->wid > 0) {
+					// リボンの横方向 (体積セルは厚み方向も) の広がり
+					double lo = fabs(0.5 * s->wid * s->wv[2]);
+					if (s->vol) {
+						double t[3];
+						for (int c = 0; c < 3; c++) {
+							t[c] = (s->x2[c] - s->x1[c]) / s->len;
+						}
+						lo += fabs(0.5 * s->thick * ((t[0] * s->wv[1]) - (t[1] * s->wv[0])));
+					}
+					mz -= lo;
+				}
+			}
+			if (mz < p->gpz - p->nodetol) {
+				printf("*** conductor below ground plane (z = %.3e < %.3e)\n", mz, p->gpz);
+				fprintf(fp_log, "*** conductor below ground plane (z = %.3e < %.3e)\n", mz, p->gpz);
+				return 1;
+			}
+		}
+		fprintf(fp_log, "ground plane : z = %g (image method)\n", p->gpz);
+	}
+
 	// 近接ノード警告 (マージされなかったが nodetol の 10 倍未満 : 意図しない分離の可能性)
 	int nwarn = 0;
 	for (int i = 0; (i < p->ngnode) && (nwarn < 10); i++) {

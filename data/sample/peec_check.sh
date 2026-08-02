@@ -284,6 +284,52 @@ cp "$SRC/disk_annulus.peec" "$WORK/"
 run disk_annulus.peec
 chk "annulus Rin (DC)" "$(getR)" 1.902031e-5 0.03
 
+echo "--- ground plane (image method)"
+# (ab) 地板上の水平単線 : L = L_self - M(2h) (Grover)、R は鏡像の影響を受けない
+cp "$SRC/wire_gp.peec" "$WORK/"
+run wire_gp.peec
+chk "wire-gp L (images)" "$(getL)" 5.953664e-7 0.001
+chk "wire-gp Rin (DC)" "$(getR)" 5.48810e-3 0.005
+# 対地板容量 (鏡像電荷 -q、ndiv = 1 で平均電位法と厳密に一致)
+awk '{sub(/5.8e7 8$/, "5.8e7 1"); print} /^title = /{print "capacitance = 1"}' \
+	"$SRC/wire_gp.peec" > "$WORK/wire_gp_cap.peec"
+run wire_gp_cap.peec
+chk "wire-gp C (to plane)" "$(getC)" 1.868849e-11 0.001
+
+# (ac) λ/4 モノポール : イメージ理論により Zin = ダイポール/2 が
+#      離散化レベルで厳密に成り立つ (許容は丸め誤差 + LU 順序差のマージン)
+cp "$SRC/dipole_halfwave.peec" "$WORK/"
+run dipole_halfwave.peec
+cp "$csv" "$WORK/zin_dip.csv"
+cp "$SRC/monopole_gp.peec" "$WORK/"
+run monopole_gp.peec
+paste -d, "$WORK/zin_dip.csv" "$csv" | awk -F, 'NR > 1 {
+	dr = $10 - ($3 / 2); di = $11 - ($4 / 2);
+	e = sqrt((dr * dr) + (di * di)) / ((sqrt(($3 * $3) + ($4 * $4)) / 2) + 1);
+	if (e > mx) mx = e; n++
+} END {
+	ok = (n > 0) && (mx <= 1e-6);
+	printf "%-24s rows=%d max|Zm-Zd/2|rel=%.3e -> %s\n", "monopole = dipole/2", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# 文献値アンカー : 共振で Rin = 36.55 ohm、共振周波数はダイポールと同一
+res=$(awk -F, 'NR>1 {
+	f = $2; r = $3; x = $4;
+	if (pf && (px < 0) && (x >= 0) && !done) {
+		u = -px / (x - px);
+		printf "%.9e %.9e", (pf + u*(f-pf)) / 2.99792458e8, pr + u*(r-pr);
+		done = 1;
+	}
+	pf = f; pr = r; px = x;
+}' "$csv")
+if [ -z "$res" ]; then
+	echo "*** no resonance (Xin zero crossing) in monopole_gp sweep" >&2
+	status=1
+else
+	chk "monopole res. f/c" "${res% *}" 0.478 0.05
+	chk "monopole Rin at res." "${res#* }" 36.55 0.10
+fi
+
 echo "--- multi-port S parameters"
 # (q) 抵抗性 T 型 2 ポート : Z=[[75,50],[50,75]], Z0=50 -> S11=1/21, S21=8/21 (実数)
 cp "$SRC/tnetwork_spara.peec" "$WORK/"

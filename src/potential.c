@@ -93,10 +93,19 @@ int pot_fill(peec_t *p, double f, FILE *fp_log)
 #endif
 	for (h1 = 0; h1 < nh; h1++) {
 		for (int h2 = h1; h2 < nh; h2++) {
-			ig[(size_t)h1 * nh + h2] = (h1 == h2)
+			d_complex_t v = (h1 == h2)
 				? neumann_self_k(&p->chg[h1], p->chg[h1].aP, kw)
 				: neumann_pair_k(&p->chg[h1], &p->chg[h2],
 				                 p->chg[h1].aP, p->chg[h2].aP, kw);
+			if (p->gp) {
+				// 地板 : 鏡像電荷は -q なので鏡像との相互項を減算する
+				// (自己項 h1 == h2 も自分の鏡像との相互項を引く)
+				seg_t m2;
+				seg_mirror(&p->chg[h2], p->gpz, &m2);
+				v = d_sub(v, neumann_pair_k(&p->chg[h1], &m2,
+					p->chg[h1].aP, p->chg[h2].aP, kw));
+			}
+			ig[(size_t)h1 * nh + h2] = v;
 		}
 	}
 	for (h1 = 0; h1 < nh; h1++) {

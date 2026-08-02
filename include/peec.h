@@ -162,6 +162,8 @@ typedef struct {
 	int    retardation;           // retardation = 1 : 遅延 (フルウェーブ PEEC)
 	int    accel;                 // acceleration = 1 : 掃引で LU を再利用する GMRES
 	int    dist;                  // distribution = 1 : 電流・電荷分布を出力
+	int    gp;                    // groundplane = z : 無限 PEC 地板 (鏡像法)
+	double gpz;                   // 地板の z 座標 (gp = 1 のとき有効)
 
 	// 結果
 	d_complex_t *zin;             // [nport * nfreq] 各ポートの入力インピーダンス
@@ -211,6 +213,7 @@ double poly_static(const seg_t *s1, const seg_t *s2, int nsub);
 d_complex_t poly_corr(const seg_t *s1, const seg_t *s2, double kw);
 
 // partial.c
+void seg_mirror(const seg_t *s, double gpz, seg_t *out);
 double neumann_self(double l, double a);
 double neumann_pair(const seg_t *s1, const seg_t *s2, double a1, double a2);
 d_complex_t neumann_self_k(const seg_t *s, double a, double kw);
