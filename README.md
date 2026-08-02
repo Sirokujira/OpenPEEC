@@ -1,11 +1,11 @@
 # OpenPEEC
 
-A quasi-static PEEC (Partial Element Equivalent Circuit) electric-circuit
-solver in C. Companion project to
+A quasi-static to full-wave PEEC (Partial Element Equivalent Circuit)
+electric-circuit solver in C. Companion project to
 [OpenFDTD](https://github.com/Sirokujira/OpenFDTD) — same build conventions,
 same portability rules, no external numerical libraries.
 
-準静的 PEEC (部分要素等価回路法) による電気回路解析ソルバー (C 言語)。
+準静的〜フルウェーブ PEEC (部分要素等価回路法) による電気回路解析ソルバー (C 言語)。
 [OpenFDTD](https://github.com/Sirokujira/OpenFDTD) の姉妹プロジェクトで、
 ビルド規約・移植性規則を共有します。外部数値ライブラリ (LAPACK/BLAS/HDF5)
 には依存しません。
@@ -78,6 +78,33 @@ same portability rules, no external numerical libraries.
   総電荷が保存せず、放射抵抗の打ち消しが壊れて Rin が負になります。
   `capacitance = 1` のときは基準ノードを常にノード 0 (= 無限遠) とし、
   ノード 0 が未使用ならどの実ノードも消去しません (容量が電位を確定させる)。
+  **例外は地板 (`groundplane`) があるとき**で、鏡像が総電荷の保存を自動で
+  満たすため、ノード 0 (= 地板電位) にポートを繋いでかまいません
+  (モノポール給電はまさにこの形です)。
+- **無限 PEC 地板 (鏡像法)** — `groundplane = z` で有効 :
+  z = 一定の無限完全導体面を鏡像法で扱います。部分インダクタンスは
+  幾何鏡像セルとの相互項を鏡像電流の向き (水平成分反転・垂直成分保存)
+  込みで減算し、電位係数は鏡像電荷 −q の相互項を減算します。未知数は
+  増えません。遅延 (`retardation = 1`) でも同じ経路で有効です。導体は
+  すべて地板より上 (z ≥ 地板) に置きます。λ/4 モノポールの
+  Zin = 半波長ダイポール/2 が離散化レベルで厳密に再現されます
+  (検証で実測 3e-10)。
+- **遠方界の後処理** — `farfield = 分割数θ 分割数φ` で有効 :
+  port #1 を 1 A で励振したときの区間電流から放射ベクトル
+  `N = Σ I len t̂ sinc(k len (r̂·t̂)/2) e^{jk r̂·rc}` を求め、`far.csv` に
+  r·E の θ/φ 成分・指向性 D・利得 G (dBi) を出力します。放射電力 Prad は
+  球面 (地板ありは鏡像込みで上半球) のグリッド積分、放射効率 = Prad/Pin
+  (Pin = Re Zin/2) を `peec.log` に出します。効率が意味を持つのは
+  `retardation = 1` のときです (準静的電流は放射を含まないため)。
+- **誘電体ブリック (Ruehli の過剰容量)** — `dielectric` キー :
+  直方体の誘電体を 3 次元格子の体積セル (3 方向の枝) に分割し、各枝に
+  過剰容量 `C_e = ε0(εr−1)A/len` の直列インピーダンス `1/(jωC_e)` を
+  置きます (分極電流の枝)。真空部の結合は電位係数 P が受け持つので
+  二重計上はありません。節点の束縛電荷が P に参加し、導体と接する面の
+  ノードは `nodetol` マージで導体ノードと共有されます (経路が閉じる)。
+  枝は Lp にも参加するのでフルウェーブでも整合します。`capacitance = 1`
+  が必須です。平行平板間の ΔC = (εr−1)ε0A/d が格子に依らず厳密に
+  再現されます (検証で実測残差 ~1e-6)。
 
 ### 制限 / Limitations
 
@@ -104,9 +131,17 @@ same portability rules, no external numerical libraries.
   格子・極格子では O(格子幅²) の離散化誤差を含みます。表皮効果の合成式
   はパネルセルには適用しません (面内の再配分は格子が解きます)。
 - 導体は直線区間・平面パネルのみ (曲線は折れ線・ファセットで近似)。
+- 地板 (`groundplane`) は z = 一定の無限 PEC 面 1 枚のみです。有限サイズ・
+  有限導電率の地板は `plate` でモデル化してください (鏡像との併用は可)。
+- 遠方界 (`farfield`) は port #1 の 1 A 励振に対する値です。指向性 D は
+  電流分布だけで決まりますが、利得 G と効率は導体損を含みます。
+- 誘電体 (`dielectric`) は直交直方体のみで、損失 (tanδ)・周波数分散は
+  未対応です。節点の束縛電荷は a–b 面内の双対矩形パネルで表すため、
+  側面の束縛電荷は面直位置がセル幅の範囲で近似になります (表面電荷が
+  a–b 面に支配的な配置 — 基板・平行平板など — で正確)。
 - 行列は密です。計算量は電流セル数 N と電荷セル数 M に対して
   O(N²+M²) の積分と O((N+M)³) の LU。遅延ありのときはこれが周波数ごとに
-  必要になります。
+  必要になります。地板 (鏡像) は積分回数を 2 倍にします (未知数は不変)。
 
 ## Build / ビルド
 
@@ -157,6 +192,7 @@ peec [-n <threads>] input.peec
 | `zin.csv` | 各ポートの Zin (機械読み取り用) |
 | `peec.sNp` | S パラメータの Touchstone 1.1 形式 (N = ポート数) |
 | `dist.csv` | 電流・電荷分布 (`distribution = 1` のときのみ) |
+| `far.csv` | 遠方界パターン rE と D / G [dBi] (`farfield` 指定時のみ) |
 
 **多ポート解析** : `port` を複数書くと、ポート j に 1A を注入し (他ポートは
 開放) 全ポートの端子電圧を読むことで Z 行列を求め、電力波の定義 (Kurokawa)
@@ -191,8 +227,11 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `plate` | `plate = ox oy oz ax ay az bx by bz 厚さ 導電率 分割数a 分割数b [分割数t]` | 平面矩形の面導体 (2 辺ベクトルは直交)。`分割数t` (省略時 1) ≥ 2 で厚み方向も分割 (体積セル) |
 | `quad` | `quad = x1 y1 z1 x2 y2 z2 x3 y3 z3 x4 y4 z4 厚さ 導電率 分割数a 分割数b` | 凸な一般四辺形の面導体 (頂点は一周順)。分割 a は辺 1-2 方向、b は辺 1-4 方向 |
 | `disk` | `disk = cx cy cz nx ny nz 半径 厚さ 導電率 nring nsec` | 円板の面導体 (中心 c、法線 n)。nsec ≤ 32 |
+| `dielectric` | `dielectric = ox oy oz ax ay az bx by bz 厚さ εr 分割数a 分割数b 分割数t` | 誘電体ブリック (過剰容量)。org を底面として法線 (a×b) 方向へ厚さぶん押し出した直方体。`capacitance = 1` 必須。εr = 1 は無効果 |
 | `port` | `port = n1 n2 Z0` | ポート (Zin / S パラメータの基準抵抗 Z0 [Ω])。複数書くと多ポート解析になる |
-| `frequency` | `frequency = f開始 f終了 分割数` | 周波数掃引 (分割数+1 点) |
+| `frequency` | `frequency = f開始 f終了 分割数 [log]` | 周波数掃引 (分割数+1 点)。`log` で等比 (対数) 掃引、省略時は線形 |
+| `groundplane` | `groundplane = z` | 無限 PEC 地板 (z = 一定、鏡像法)。導体は z ≥ 地板に置く |
+| `farfield` | `farfield = 分割数θ 分割数φ` | 遠方界の後処理を有効化 (`far.csv` 出力)。地板ありは上半球のみ |
 | `nodetol` | `nodetol = 1e-8` | 座標マージ許容 [m] (省略時 1e-8) |
 | `gmin` | `gmin = 0` | 全ノード対地コンダクタンス [S] (省略時 0) |
 | `skineffect` | `skineffect = 1` | 1 で表皮効果 + 内部インダクタンス (省略時 0 = DC 抵抗) |
@@ -251,6 +290,15 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `quad_taper.peec` 先細りシート (台形) | R = l·ln(W2/W1)/(σt(W2−W1)) = 0.478033 mΩ (1 次元 + くさび補正 ~0.5%) | 1.5% |
 | `disk_cap.peec` 円板の容量 | 4/8 リングから Richardson 補外 → C = 8ε0a = 7.08335 pF (厳密解) | 1% |
 | `disk_annulus.peec` 円環の広がり抵抗 | R = ln(2)/(2πσt) = 19.0203 µΩ (対数則、厳密解) | 3% |
+| `rlc_series.peec` 対数掃引 | f0/10 〜 10f0 の 2 分割 log で幾何中点 = f0 : Zin = 50 + j0、X(u f0) = √(L/C)(u−1/u) = ∓313.065 Ω | 0.5% |
+| `wire_gp.peec` 地板上の水平単線 | L = L_self − M(2h) = 595.366 nH (Grover)、Rin (DC) は鏡像の影響なし | 0.1% / 0.5% |
+| `wire_gp.peec` + `capacitance=1` | 対地板容量 C = 4πε0l²/(I_self − I_par(2h)) = 18.688 pF (平均電位法、ndiv = 1 で厳密) | 0.1% |
+| `monopole_gp.peec` λ/4 モノポール (地板 + 遅延) | Zin = ダイポール/2 (イメージ理論、離散化レベルで厳密 : 判定 1e-6、実測 3e-10)。共振 Rin = 36.55 Ω、f/c = 0.478 | 1e-6 / 10% / 5% |
+| `dipole_ff.peec` 半波長ダイポールの遠方界 | D = 1.628 (正弦電流の解析値)、放射効率 Prad/Pin = 1 (ポインティング整合、実測 1.0004) | 1.5% / 0.5% |
+| `dipole_short.peec` + `farfield` | D = 1.5 (軸方向電流なら分布に依らず厳密) | 0.5% |
+| `monopole_gp.peec` + `farfield` | D = 2 × ダイポール (鏡像遠方界 + 上半球積分)、効率 = 1 | 1% / 0.5% |
+| `diel_pp.peec` 平行平板 + εr = 4 ブリック | ΔC = (εr−1)ε0A/d = 106.250 pF (等電位面間の過剰容量ラダーは格子に依らず厳密、実測残差 ~1e-6) | 0.5% |
+| `diel_pp.peec` εr = 1 | ブリック無しと bit 単位で一致 (完全無効果) | 完全一致 |
 
 ## License
 
