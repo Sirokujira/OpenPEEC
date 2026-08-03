@@ -25,6 +25,11 @@ Linux/macOS では通るが Windows (MSVC) で落ちるものだけを挙げる�
 7. 数学・物理定数は `peec.h` の自前マクロ (`PI` / `EPS0` / `MU0` / `C0`) を使う。
 8. 外部ライブラリ (LAPACK/BLAS/HDF5 等) を追加しない。OpenMP のみ任意依存で、
    `#ifdef _OPENMP` でガードする。
+   これは**ソルバー本体 (`src/`, `include/`, `CMakeLists.txt`) の規則**。
+   `tools/` の後処理スクリプトは対象外で、numpy / h5py 等を使ってよい
+   (`tools/peec2h5.py` の HDF5 変換がこれ)。ビルドと CI に影響させないこと。
+   検証スクリプトからこの種のツールを呼ぶときは、依存が無ければ SKIP する
+   (`peec_check.sh` の `peec2h5 converter` が例)。
 
 ## 検査
 
