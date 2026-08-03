@@ -1,0 +1,19 @@
+# 検証 (an) の相互検証相手 : strip_dipole_ret.peec と同じ帯 (幅 10 mm、
+# 厚さ 0.1 mm、全長 1 m の中央給電ダイポール) を bar でモデル化したもの。
+#
+# bar は矩形断面を等価半径の細線として扱う :
+#   インダクタンス : GMD a_L = 0.2235 (w + t)
+#   容量           : a_P = (w + t)/4
+# 面積分 (plate) とは完全に独立な経路なので、共振周波数と共振時 Rin の
+# 一致が遅延ありの面セル経路の番人になる。掃引条件は plate 版と同一。
+OpenPEEC 1 0
+title = strip dipole (bar = equivalent-radius filament, retarded)
+capacitance = 1
+retardation = 1
+node = 1 0 0 -0.0005
+node = 2 0 0 0.0005
+bar = 0 0 -0.5 0 0 -0.0005 0.01 1e-4 5.8e7 16
+bar = 0 0 0.0005 0 0 0.5 0.01 1e-4 5.8e7 16
+port = 1 2 50
+frequency = 1.20e8 1.55e8 14
+end

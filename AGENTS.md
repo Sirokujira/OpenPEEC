@@ -30,7 +30,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、91 件)
+# 検証 (解析解・文献値との比較、99 件)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -41,7 +41,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 91 件すべて OK でなければ
+**変更したら必ず `peec_check.sh` を通すこと。** 99 件すべて OK でなければ
 完了ではない。「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
 計測時の注意 : ソルバーが失敗すると `zin.csv` / `peec.log` は**前回の実行結果が
@@ -135,9 +135,13 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
    `R + l = R0²/(R − l)` で計算する。素朴な和は隣接セルの求積点が共有辺の
    延長線近傍に乗ると 0 になり、log が inf → MNA で NaN になる (実際に踏んだ)。
    DC 抵抗は構造四辺形格子の双対幅から取る (重なりのない三角形辺基底は一様流の
-   散逸を約 2 倍に過大評価するので使わない)。
-   (`quad sheet Rin (DC)` / `quad sheet L vs plate` / `disk C (extrapolated)` /
-   `annulus Rin (DC)`)
+   散逸を約 2 倍に過大評価するので使わない)。断面が plate と同じ幾何量
+   (双対幅 × 厚さ) なので、**表皮効果も plate と同じ合成式を適用する** —
+   合成式の DC 極限は `s->res` に厳密に一致するので不連続は生じない。適用
+   しないでいると厚み方向の表皮効果が丸ごと落ちる (1 GHz・厚さ 0.1 mm の
+   銅シートで −24% だった)。
+   (`quad sheet Rin (DC)` / `quad sheet L vs plate` / `quad sheet R vs plate (HF)` /
+   `quad sheet R (skin at DC)` / `disk C (extrapolated)` / `annulus Rin (DC)`)
 8. **鏡像の符号規約 (groundplane)** — 鏡像セルは幾何鏡像 (`seg_mirror()`,
    partial.c)。Lp は `(t₁·t₂′) I(s₁, M s₂)` を**減算** (= 鏡像電流の
    水平反転・垂直保存)、P は鏡像電荷 −q の相互項を減算、**自己項 (対角) も
@@ -145,12 +149,14 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
    電流 −I)。M は等長変換かつ対合なので行列の対称性は保たれる。
    (`wire-gp L (images)` / `wire-gp C (to plane)` / `monopole = dipole/2` —
    モノポール = ダイポール/2 が全符号を同時に判定する)
-9. **誘電体は εr − 1 だけを枝に載せる (二重計上禁止)** — 真空 (ε0) は電位
-   係数 P が受け持ち、誘電体の枝は過剰容量 C_e = ε0(εr−1)A/len の直列
-   インピーダンス 1/(jωC_e) だけを持つ (mna.c が `seg->diel` を見る。skin は
-   適用しない)。εr = 1 のブリックは**セルを作らない** (作ると 1/(jω·0) で
-   NaN。スキップすれば真空と bit 一致)。
-   (`dielectric dC (pp)` / `dielectric epsr=1 noop`)
+9. **誘電体は εr* − 1 だけを枝に載せる (二重計上禁止)** — 真空 (ε0) は電位
+   係数 P が受け持ち、誘電体の枝は複素比誘電率 εr* = εr(1 − j tanδ) の
+   **過剰分だけ**を持つ : `Y = jωε0(εr*−1)A/len = ω(gexc + j cexc)`、
+   枝は Z = 1/Y (mna.c が `seg->diel` を見る。skin は適用しない)。
+   εr = 1 のブリックは**セルを作らない** (作ると 1/(jω·0) で NaN。
+   スキップすれば真空と bit 一致)。tanδ = 0 なら Z = −j/(ωC_e) で従来と一致。
+   (`dielectric dC (pp)` / `dielectric epsr=1 noop` / `dielectric G (tand)` /
+   `dielectric tand=0 noop`)
 10. **遠方界の規格化とポインティング整合** — r E = −j(ωμ0/4π)[N − (N·r̂)r̂]、
     U = |rE|²/(2η0)。係数を触るとパターン (D) は変わらず**効率だけが静かに
     狂う**ため、Prad = ∮U dΩ が Pin = Re(Zin)/2 と一致することが番人になる。
@@ -255,7 +261,8 @@ OpenMP で並列化しているのは `lp_fill` (partial.c)、`pot_fill` (potent
 - 電流は区間ごと一定、電荷はセルごと一定の低次基底。共振近傍の精度は分割数依存。
 - 地板 (`groundplane`) は z = 一定の無限 PEC 面 1 枚のみ。積分回数は 2 倍に
   なるが未知数は増えない。導体は z ≥ 地板に置く (下はエラー)。
-- 誘電体 (`dielectric`) は直交直方体のみ。損失 (tanδ)・周波数分散は未対応。
+- 誘電体 (`dielectric`) は直交直方体のみ。周波数分散 (εr(f)) は未対応
+  (損失 tanδ は一定値で指定可能 : epsr* = epsr(1 - j tand))。
   節点の束縛電荷は a–b 面内の双対矩形パネルで表す近似 (表面電荷が a–b 面に
   支配的な配置 — 基板・平行平板 — で正確)。`capacitance = 1` 必須。
 - 遠方界 (`farfield`) は port #1 の 1 A 励振に対する値。効率が意味を持つのは

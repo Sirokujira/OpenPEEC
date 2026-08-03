@@ -285,8 +285,9 @@ int input_data(FILE *fp, peec_t *p)
 			}
 		}
 		else if (!strcmp(strkey, "dielectric")) {
-			// dielectric = ox oy oz  ax ay az  bx by bz  厚さ epsr ndiv_a ndiv_b ndiv_t
-			// org を底面として法線 (ea x eb) 方向へ thick 押し出した直方体
+			// dielectric = ox oy oz  ax ay az  bx by bz  厚さ epsr ndiv_a ndiv_b ndiv_t [tand]
+			// org を底面として法線 (ea x eb) 方向へ thick 押し出した直方体。
+			// tand (省略時 0) は誘電正接 : epsr* = epsr (1 - j tand)
 			if (ntoken < 16) err = 1;
 			else {
 				APPEND(p->diel, p->ndiel, cdiel, diel_t);
@@ -302,6 +303,8 @@ int input_data(FILE *fp, peec_t *p)
 				e->ndiva = atoi(token[13]);
 				e->ndivb = atoi(token[14]);
 				e->ndivt = atoi(token[15]);
+				e->tand = (ntoken >= 17) ? atof(token[16]) : 0;
+				if (e->tand < 0) err = 1;
 				const double la = sqrt((e->ea[0] * e->ea[0]) + (e->ea[1] * e->ea[1]) + (e->ea[2] * e->ea[2]));
 				const double lb = sqrt((e->eb[0] * e->eb[0]) + (e->eb[1] * e->eb[1]) + (e->eb[2] * e->eb[2]));
 				const double ab = (e->ea[0] * e->eb[0]) + (e->ea[1] * e->eb[1]) + (e->ea[2] * e->eb[2]);

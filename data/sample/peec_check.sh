@@ -159,6 +159,38 @@ awk '{print} /^title = /{print "retardation = 1"}' "$SRC/loop_square.peec" > "$W
 run loop_ret.peec
 chk "loop L (retarded)" "$(getL)" 7.24689e-7 0.02
 
+# (an) 遅延 x 面セル : ストリップダイポール。遅延ありの検証はこれまで全て
+#      細線だったので、面セル (リボン) 経路にも番人を置く。
+#      教科書値 (l = 0.478 lambda、Rin = 73.1 ohm) と、同じ帯を bar
+#      (等価半径の細線 = 独立経路) でモデル化したものとの相互検証。
+# resonance <label> : Xin の零交差を線形補間して "l/lambda Rin" を返す
+resonance() {
+	awk -F, 'NR>1 {
+		f = $2; r = $3; x = $4;
+		if (pf && (px < 0) && (x >= 0) && !done) {
+			u = -px / (x - px);
+			printf "%.9e %.9e", (pf + u*(f-pf)) / 2.99792458e8, pr + u*(r-pr);
+			done = 1;
+		}
+		pf = f; pr = r; px = x
+	}' "$csv"
+}
+cp "$SRC/strip_dipole_ret.peec" "$WORK/"
+run strip_dipole_ret.peec
+sp=$(resonance)
+cp "$SRC/strip_dipole_ret_bar.peec" "$WORK/"
+run strip_dipole_ret_bar.peec
+sb=$(resonance)
+if [ -z "$sp" ] || [ -z "$sb" ]; then
+	echo "*** no resonance in strip dipole sweep (plate='$sp' bar='$sb')" >&2
+	status=1
+else
+	chk "strip dip l/lambda" "${sp% *}" 0.478 0.05
+	chk "strip dip Rin at res." "${sp#* }" 73.1 0.10
+	chk "strip dip f vs bar" "${sp% *}" "${sb% *}" 0.03
+	chk "strip dip Rin vs bar" "${sp#* }" "${sb#* }" 0.05
+fi
+
 echo "--- acceleration (sweep-reuse GMRES)"
 # 掃引 LU 再利用 GMRES (acceleration = 1) が密 LU と同じ結果になること。
 # 収束判定 1e-10 なので Zin の差は ~1e-9 以下になるはず (判定は 1e-8)。
@@ -281,6 +313,22 @@ lq=$(getL)
 cp "$SRC/quad_square_ref.peec" "$WORK/"
 run quad_square_ref.peec
 chk "quad sheet L vs plate" "$lq" "$(getL)" 0.001
+
+# 表皮効果ありの高周波抵抗も plate と一致すること。パネルセルの断面は plate と
+# 同じく格子の双対幅から幾何的に取る (不変条件 7) ので、合成式が同じ値を返す。
+# 適用漏れがあると厚み方向の表皮効果 (delta < thick) が丸ごと落ちて R が
+# 過小になる (1 GHz・厚さ 0.1 mm の銅シートで実測 -24% だった)。
+for c in quad_square quad_square_ref; do
+	sed -e 's/^title = /skineffect = 1\ntitle = /' -e 's/^frequency = .*/frequency = 1e9 1e9 0/' \
+		"$SRC/$c.peec" > "$WORK/sk_$c.peec"
+	run "sk_$c.peec"
+	if [ "$c" = quad_square ]; then rq=$(getR); else rp=$(getR); fi
+done
+chk "quad sheet R vs plate (HF)" "$rq" "$rp" 0.001
+# 合成式の DC 極限は幾何断面の抵抗に厳密に一致する (低周波で不連続が無いこと)
+sed 's/^title = /skineffect = 1\ntitle = /' "$SRC/quad_square.peec" > "$WORK/sk_dc.peec"
+run sk_dc.peec
+chk "quad sheet R (skin at DC)" "$(getR)" 1.724138e-4 0.001
 
 # (y) 台形シート : R = l ln(W2/W1)/(sigma t (W2-W1)) (1 次元 + くさび補正)
 cp "$SRC/quad_taper.peec" "$WORK/"
@@ -536,6 +584,7 @@ getCzin() { awk -F, 'NR==2{printf "%.9e", -1/(6.283185307179586e6*$4)}' "$csv"; 
 cp "$SRC/diel_pp.peec" "$WORK/"
 run diel_pp.peec
 cdiel=$(getCzin)
+cp "$csv" "$WORK/zin_diel_lossless.csv"
 sed '/^dielectric/d' "$SRC/diel_pp.peec" > "$WORK/diel_air.peec"
 run diel_air.peec
 cair=$(getCzin)
@@ -548,6 +597,25 @@ if cmp -s "$WORK/zin_diel_air.csv" "$csv"; then
 	printf "%-24s -> OK (epsr = 1 はブリック無しと完全一致)\n" "dielectric epsr=1 noop"
 else
 	printf "%-24s -> NG (epsr = 1 がブリック無しと不一致)\n" "dielectric epsr=1 noop" >&2
+	status=1
+fi
+
+# 誘電正接 : epsr* = epsr (1 - j tand) の損失分は枝のコンダクタンスになる。
+# 損失性平行平板の解析値 G = w eps0 epsr tand A/d
+#   = 2pi*1e6 * 8.8541878e-12 * 4 * 0.02 * 0.0016/4e-4 = 1.780240e-5 S
+# 真空部もフリンジも無損失なので Re(Yin) はこの値そのものになる
+# (導体損の寄与は Re(Y) 換算 9e-10 S で 4 桁下)。コードとは独立な期待値。
+sed 's/ 4 8 8 2$/ 4 8 8 2 0.02/' "$SRC/diel_pp.peec" > "$WORK/diel_tand.peec"
+run diel_tand.peec
+chk "dielectric G (tand)" \
+	"$(awk -F, 'NR==2{d=($3*$3)+($4*$4); printf "%.9e", $3/d}' "$csv")" 1.780240e-5 0.005
+# tand = 0 を明示しても従来 (省略時) と bit 単位で一致すること
+sed 's/ 4 8 8 2$/ 4 8 8 2 0/' "$SRC/diel_pp.peec" > "$WORK/diel_tand0.peec"
+run diel_tand0.peec
+if cmp -s "$WORK/zin_diel_lossless.csv" "$csv"; then
+	printf "%-24s -> OK (tand = 0 は省略時と完全一致)\n" "dielectric tand=0 noop"
+else
+	printf "%-24s -> NG (tand = 0 が省略時と不一致)\n" "dielectric tand=0 noop" >&2
 	status=1
 fi
 

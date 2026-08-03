@@ -65,7 +65,7 @@ static int node_at(peec_t *p, const double *x, int *autoid)
 // 誘電体の体積セル (枝) を追加する。断面 wid x thk、横方向 wv。
 // 枝の直列インピーダンスは過剰容量 1/(jw C_e) (mna.c が diel を見て入れる)。
 static void diel_seg(peec_t *p, const double *x1, const double *x2, int n1, int n2,
-	const double *wv, double wid, double thk, double epsr)
+	const double *wv, double wid, double thk, double epsr, double tand)
 {
 	seg_t *s = &p->seg[p->nseg];
 	memset(s, 0, sizeof(seg_t));
@@ -89,7 +89,9 @@ static void diel_seg(peec_t *p, const double *x1, const double *x2, int n1, int 
 	s->aP = 0.25 * (wid + thk);
 	s->sigma = 0;
 	s->res = 0;
+	// 複素比誘電率 epsr* = epsr (1 - j tand) の過剰分 (epsr* - 1) を枝に載せる
 	s->cexc = EPS0 * (epsr - 1) * s->area / s->len;
+	s->gexc = EPS0 * epsr * tand * s->area / s->len;
 	p->nseg++;
 }
 
@@ -748,7 +750,7 @@ int wire_build(peec_t *p, FILE *fp_log)
 					x2[c] = base + ((k + 1) * ha * ta[c]);
 				}
 				diel_seg(p, x1, x2, DNID(k, ib, it), DNID(k + 1, ib, it),
-					tb, wb, wt, dl->epsr);
+					tb, wb, wt, dl->epsr, dl->tand);
 			}
 		}
 		}
@@ -768,7 +770,7 @@ int wire_build(peec_t *p, FILE *fp_log)
 					x2[c] = base + ((k + 1) * hb * tb[c]);
 				}
 				diel_seg(p, x1, x2, DNID(ia, k, it), DNID(ia, k + 1, it),
-					ta, wa, wt, dl->epsr);
+					ta, wa, wt, dl->epsr, dl->tand);
 			}
 		}
 		}
@@ -788,7 +790,7 @@ int wire_build(peec_t *p, FILE *fp_log)
 					x2[c] = base + ((k + 1) * ht * nv[c]);
 				}
 				diel_seg(p, x1, x2, DNID(ia, ib, k), DNID(ia, ib, k + 1),
-					ta, wa, wb, dl->epsr);
+					ta, wa, wb, dl->epsr, dl->tand);
 			}
 		}
 		}
