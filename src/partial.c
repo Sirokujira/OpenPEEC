@@ -24,6 +24,10 @@ sum_ij I_ij = I_self(全長) が厳密に成立する (CLAUDE.md の不変条件
 
 #include "peec.h"
 
+// 多角形セルの外側求積で 7 点則を使う距離 (セル寸法の何倍まで)。
+// これを超えたら 3 点則に落とす (内側が解析的に厳密なので遠方では十分)。
+#define POLY_R7 5.0
+
 // 8 点 Gauss-Legendre ([-1,1])
 static const double xg8[8] = {
 	-0.9602898564975363, -0.7966664774136267, -0.5255324099163290, -0.1834346424956498,
@@ -189,8 +193,8 @@ static int is_ribbon(const seg_t *s1, const seg_t *s2)
 	return ((s1->wid > 0) || (s2->wid > 0));
 }
 
-// リボン用の分割数 : 近接ほど、また位相変化が大きいほど細かくする
-static int ribbon_nsub(const seg_t *s1, const seg_t *s2, double kw)
+// セル中心間距離を寸法で割った比 (求積の粗さを決める唯一の指標)
+static double ribbon_ratio(const seg_t *s1, const seg_t *s2)
 {
 	double c1[3], c2[3];
 	for (int i = 0; i < 3; i++) {
@@ -205,11 +209,43 @@ static int ribbon_nsub(const seg_t *s1, const seg_t *s2, double kw)
 	if (s1->wid > lmax) lmax = s1->wid;
 	if (s2->wid > lmax) lmax = s2->wid;
 
-	int nsub = (rc > 2 * lmax) ? 1 : 2;
+	return (lmax > 0) ? (rc / lmax) : 0;
+}
+
+// リボン用の分割数 : 近接ほど、また位相変化が大きいほど細かくする
+static int ribbon_nsub(const seg_t *s1, const seg_t *s2, double kw)
+{
+	double lmax = (s1->len > s2->len) ? s1->len : s2->len;
+	if (s1->wid > lmax) lmax = s1->wid;
+	if (s2->wid > lmax) lmax = s2->wid;
+
+	int nsub = (ribbon_ratio(s1, s2) > 2) ? 1 : 2;
 	nsub += (int)(kw * lmax);
 	if (nsub > 4) nsub = 4;
 
 	return nsub;
+}
+
+/*
+リボン静的部の外側求積の次数。
+
+内側 (点から見た矩形のポテンシャル) は解析式で厳密なので、外側の被積分
+関数はセルが離れるほど滑らかになり、必要な次数は距離だけで決まる。
+セル寸法 h に対する中心間距離 d で測った実測相対誤差 (8 点則を基準) :
+
+    d/h      1        2        3        5        8       10       16
+  4 点  -2.7e-4  -8.4e-10 -4.9e-09 -7.7e-11 -1.8e-12 -2.9e-13 -4.3e-15
+  2 点  -3.6e-3  -3.6e-05 -9.9e-05 -1.2e-05 -1.9e-06 -7.7e-07 -1.2e-07
+
+近接 (自己項・隣接) は 8 点、中間は 4 点 (誤差 1e-9 以下)、遠方は 2 点
+(同 1e-6 以下) で十分。板の分割が細かいほど遠方対の割合が増えるので、
+充填コストは点数の平均で効いてくる (20x20 板で実測 4 倍前後)。
+*/
+static int ribbon_nq(const seg_t *s1, const seg_t *s2)
+{
+	const double r = ribbon_ratio(s1, s2);
+
+	return (r <= 2.5) ? 8 : (r <= 10) ? 4 : 2;
 }
 
 // 遅延を含む幾何二重積分 (kw = 0 なら静的値がそのまま返る)
@@ -241,7 +277,9 @@ d_complex_t neumann_pair_k(const seg_t *s1, const seg_t *s2, double a1, double a
 			is = d_complex(s1->len * s2->len / rc, 0);
 		}
 		else {
-			is = d_complex(poly_static(s1, s2, (rc < 2 * lmax) ? 2 : 1), 0);
+			// 近接は各三角形を 4 分割、遠方は 7 点則 -> 3 点則に落とす
+			is = d_complex(poly_static(s1, s2, (rc < 2 * lmax) ? 2 : 1,
+				(rc <= POLY_R7 * lmax) ? 1 : 0), 0);
 		}
 		if (kw <= 0) return is;
 		return d_add(is, poly_corr(s1, s2, kw));
@@ -261,7 +299,7 @@ d_complex_t neumann_pair_k(const seg_t *s1, const seg_t *s2, double a1, double a
 
 	if (is_ribbon(s1, s2)) {
 		const int nsub = ribbon_nsub(s1, s2, kw);
-		const d_complex_t is = d_complex(ribbon_static(s1, s2, nsub), 0);
+		const d_complex_t is = d_complex(ribbon_static(s1, s2, nsub, ribbon_nq(s1, s2)), 0);
 		if (kw <= 0) return is;
 		return d_add(is, ribbon_corr(s1, s2, kw, nsub));
 	}

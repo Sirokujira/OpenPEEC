@@ -271,13 +271,16 @@ awk -v r3="$r3" -v r6="$r6" -v r12="$r12" 'BEGIN {
 echo "--- panel conductors (quad / disk)"
 # (x) 一般四辺形 : 正方形シートの DC 抵抗 (1 スクエアの解析値) と、
 #     L の plate (矩形リボン閉形式 = 別経路の実装) との相互検証
+#     許容 0.1% : 同じ格子を多角形経路とリボン経路で解いた結果なので実測は
+#     1e-5 レベルで一致する。ここを締めておくと、両経路の外側求積を距離で
+#     粗くする最適化 (ribbon_nq / POLY_R7) が壊れたときに検出できる。
 cp "$SRC/quad_square.peec" "$WORK/"
 run quad_square.peec
 chk "quad sheet Rin (DC)" "$(getR)" 1.724138e-4 0.001
 lq=$(getL)
 cp "$SRC/quad_square_ref.peec" "$WORK/"
 run quad_square_ref.peec
-chk "quad sheet L vs plate" "$lq" "$(getL)" 0.005
+chk "quad sheet L vs plate" "$lq" "$(getL)" 0.001
 
 # (y) 台形シート : R = l ln(W2/W1)/(sigma t (W2-W1)) (1 次元 + くさび補正)
 cp "$SRC/quad_taper.peec" "$WORK/"

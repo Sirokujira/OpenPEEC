@@ -33,6 +33,8 @@ static const double xg4[4] = {
 	-0.8611363115940526, -0.3399810435848563,  0.3399810435848563,  0.8611363115940526};
 static const double wg4[4] = {
 	 0.3478548451374538,  0.6521451548625461,  0.6521451548625461,  0.3478548451374538};
+static const double xg2[2] = {-0.5773502691896257, 0.5773502691896257};
+static const double wg2[2] = { 1.0, 1.0};
 
 static double dot3(const double *a, const double *b)
 {
@@ -88,26 +90,37 @@ double rect_potential(const seg_t *s, const double *pt)
 	     - phi_rect(u + hl, v - hw, z) + phi_rect(u - hl, v - hw, z);
 }
 
-// 静的 : Ihat = (1/(w1 w2)) ∬_{S1} [解析的な内側積分] dS
-//   外側は S1 を nsub x nsub に分割した複合 8x8 点 Gauss 求積
-double ribbon_static(const seg_t *s1, const seg_t *s2, int nsub)
+/*
+静的 : Ihat = (1/(w1 w2)) ∬_{S1} [解析的な内側積分] dS
+  外側は S1 を nsub x nsub に分割した複合 Gauss 求積 (nq 点則)。
+
+内側は解析的に厳密なので、外側の被積分関数 (点から見た矩形のポテンシャル)
+だけを求積すればよい。この関数はセルが離れるほど滑らかになるので、
+必要な次数は距離で決まる (nq は呼び出し側が ribbon_nq() で選ぶ)。
+近接・自己項では 8 点則が要るが、離れた対では 2 点則で十分な精度が出る。
+*/
+double ribbon_static(const seg_t *s1, const seg_t *s2, int nsub, int nq)
 {
+	const double *xg = (nq >= 8) ? xg8 : (nq >= 4) ? xg4 : xg2;
+	const double *wg = (nq >= 8) ? wg8 : (nq >= 4) ? wg4 : wg2;
+	const int n = (nq >= 8) ? 8 : (nq >= 4) ? 4 : 2;
+
 	double t1[3], w1[3], n1[3], c1[3];
 	local_frame(s1, t1, w1, n1, c1);
 
 	double sum = 0;
 	for (int ia = 0; ia < nsub; ia++) {
 	for (int ib = 0; ib < nsub; ib++) {
-		for (int i = 0; i < 8; i++) {
+		for (int i = 0; i < n; i++) {
 			// 軸方向 : 中心から測った [-len/2, len/2]
-			const double a = s1->len * (((ia + (0.5 * (1 + xg8[i]))) / nsub) - 0.5);
-			for (int j = 0; j < 8; j++) {
-				const double b = s1->wid * (((ib + (0.5 * (1 + xg8[j]))) / nsub) - 0.5);
+			const double a = s1->len * (((ia + (0.5 * (1 + xg[i]))) / nsub) - 0.5);
+			for (int j = 0; j < n; j++) {
+				const double b = s1->wid * (((ib + (0.5 * (1 + xg[j]))) / nsub) - 0.5);
 				double pt[3];
 				for (int k = 0; k < 3; k++) {
 					pt[k] = c1[k] + (a * t1[k]) + (b * w1[k]);
 				}
-				sum += wg8[i] * wg8[j] * rect_potential(s2, pt);
+				sum += wg[i] * wg[j] * rect_potential(s2, pt);
 			}
 		}
 	}
