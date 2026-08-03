@@ -40,6 +40,7 @@ add_executable(peec
     src/solve.c
     src/output.c
     src/farfield.c
+    src/transient.c
     src/utils.c
 )
 

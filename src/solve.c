@@ -136,6 +136,14 @@ int solve(peec_t *p, FILE *fp_log)
 	d_complex_t *scol = (d_complex_t *)malloc((size_t)np * sizeof(d_complex_t));
 	int *spiv = (int *)malloc((size_t)np * sizeof(int));
 
+	// 平面波入射 (planewave) : 各ポートの端子電圧と (distribution = 1 なら) 誘起電流
+	if (p->pw) {
+		p->voc = (d_complex_t *)malloc((size_t)p->nport * p->nfreq * sizeof(d_complex_t));
+		if (p->dist && (p->nseg > 0)) {
+			p->segipw = (d_complex_t *)malloc((size_t)p->nfreq * p->nseg * sizeof(d_complex_t));
+		}
+	}
+
 	// 電流・電荷分布 (distribution = 1)。区間電流は遠方界 (farfield) でも使う。
 	if ((p->dist || (p->ffnth > 0)) && (p->nseg > 0)) {
 		p->segi = (d_complex_t *)malloc((size_t)p->nfreq * p->nseg * sizeof(d_complex_t));
@@ -262,6 +270,36 @@ int solve(peec_t *p, FILE *fp_log)
 			free(sm); free(sinv); free(scol); free(spiv);
 			free(ac.alu); free(ac.apiv);
 			return 1;
+		}
+
+		// 平面波入射 : ポートには何もスタンプされていない (= 開放) ので、
+		// 端子間電圧がそのまま開放端電圧 Voc になる
+		if (p->voc != NULL) {
+			mna_rhs_planewave(p, f, b);
+			if (!p->accel) {
+				lu_solve(n, a, piv, b);
+			}
+			else if (accel_rhs(&ac, b)) {
+				printf("*** singular matrix at f = %.5e Hz\n", f);
+				fprintf(fp_log, "*** singular matrix at f = %.5e Hz\n", f);
+				free(a); free(b); free(piv);
+				free(sm); free(sinv); free(scol); free(spiv);
+				free(ac.alu); free(ac.apiv);
+				return 1;
+			}
+			for (int i = 0; i < p->nport; i++) {
+				const int i1 = p->nodemap[p->port[i].n1];
+				const int i2 = p->nodemap[p->port[i].n2];
+				const d_complex_t v1 = (i1 < 0) ? d_complex(0, 0) : b[i1];
+				const d_complex_t v2 = (i2 < 0) ? d_complex(0, 0) : b[i2];
+				p->voc[(size_t)i * p->nfreq + ifreq] = d_sub(v1, v2);
+			}
+			// 誘起電流分布 (EMC イミュニティ : 構造上に流れる電流)
+			if (p->segipw != NULL) {
+				for (int m = 0; m < p->nseg; m++) {
+					p->segipw[(size_t)ifreq * p->nseg + m] = b[p->offS + m];
+				}
+			}
 		}
 
 		if (p->nsrc > 0) {

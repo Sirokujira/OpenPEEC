@@ -8,9 +8,14 @@ OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を�
 導体は丸線 (`wire`) / 角線 (`bar`) / 面導体 (`plate` = 矩形、
 `quad` = 凸四辺形、`disk` = 円板)。ほかに無限 PEC 地板 (`groundplane`、
 鏡像法)、誘電体ブリック (`dielectric`、Ruehli の過剰容量)、
-遠方界後処理 (`farfield` → `far.csv`)、対数掃引 (`frequency ... log`)。
-`capacitance` / `skineffect` / `retardation` / `groundplane` / `farfield` は
-既定で無効 (キー省略時は従来動作と完全一致)。
+遠方界後処理 (`farfield` → `far.csv`)、平面波入射 (`planewave` → `pw.csv`、
+EMC イミュニティ)、過渡応答 (`transient` → `tran.csv`、掃引の逆 FFT)、
+対数掃引 (`frequency ... log`)。
+`capacitance` / `skineffect` / `retardation` / `groundplane` / `farfield` /
+`planewave` / `transient` は既定で無効 (キー省略時は従来動作と完全一致)。
+
+CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本体は
+外部ライブラリに依存しない**規約なので、HDF5 はこのスクリプト側に置く。
 
 外部ライブラリに依存しない (C11 + CMake、OpenMP のみ任意)。
 
@@ -25,7 +30,8 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
 # 回帰 : 解析解・文献値との比較 (MNA / 部分 L / 表皮効果 / 容量 / 遅延 / 角線 /
-#        面導体 / 体積セル / パネル / 地板 / 遠方界 / 誘電体 / 対数掃引)
+#        面導体 / 体積セル / パネル / 地板 / 遠方界 / 誘電体 / 対数掃引 /
+#        平面波入射 / 過渡応答)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 ```
 
@@ -50,6 +56,8 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 | `src/solve.c` | 周波数掃引 |
 | `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、`dist.csv` |
 | `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率) |
+| `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
+| `tools/peec2h5.py` | CSV → HDF5 変換 (本体の依存を増やさないための外付け) |
 
 ## 詳細な規則
 

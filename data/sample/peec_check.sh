@@ -372,6 +372,159 @@ run monopole_ff.peec
 chk "monopole D = 2 x dipole" "$(awk -v m="$(getD)" -v d="$dd" 'BEGIN{printf "%.6f", m/d}')" 2.0 0.01
 chk "monopole ff efficiency" "$(getEff)" 1.0 0.005
 
+echo "--- plane wave incidence (external field excitation)"
+# pw.csv の 1 行目 (port#1、単一周波数) から |Voc| と実効長を取り出す
+getVoc() { awk -F, 'NR==2{print $5}' "$WORK/pw.csv"; }
+getLeff() { awk -F, 'NR==2{print $6}' "$WORK/pw.csv"; }
+
+# (ah) 半波長ダイポール : |l_eff| = lambda/pi = 0.663793 m (正弦電流分布の教科書値)
+cp "$SRC/dipole_pw.peec" "$WORK/"
+run dipole_pw.peec
+chk "dipole pw leff" "$(getLeff)" 0.66379304 0.01
+
+# (ai) 微小ループ : |Voc| = k E0 A = 8.383380e-3 V (ファラデーの法則 = 磁界結合。
+#      ダイポールの電界結合とは別経路の判定)
+cp "$SRC/loop_pw.peec" "$WORK/"
+run loop_pw.peec
+chk "loop pw |Voc| (kE0A)" "$(getVoc)" 8.383380e-3 0.005
+# 磁界結合は E と 90 deg ずれるので Voc はほぼ純虚数 (残差は O((ks)^2))
+awk -F, 'NR==2 {
+	ar = ($3 < 0) ? -$3 : $3; rel = ar / $5;
+	printf "%-24s |Re Voc|/|Voc|=%.4f -> %s (<= 0.05)\n", "loop pw quadrature", rel, (rel <= 0.05) ? "OK" : "NG";
+	exit (rel <= 0.05) ? 0 : 1
+}' "$WORK/pw.csv" || status=1
+
+# 誘起電流 : ループを 50 ohm で閉じると |I| = |Voc| / |R + R_wire + j wL|。
+# 期待値はファラデーの法則と検証済みの L (loop_square) の組合せで、
+# 誘起電流の実装とは独立。直列ループなので 4 区間の電流は等しい。
+sed 's/^planewave = .*/planewave = 90 0 2 1.0\ndistribution = 1\nresistor = 1 5 50/' \
+	"$SRC/loop_pw.peec" > "$WORK/loop_pw_load.peec"
+run loop_pw_load.peec
+awk -F, '$1 == "Ipw" {
+	n++; if ($9 > mx) mx = $9; if ((mn == 0) || ($9 < mn)) mn = $9;
+} END {
+	spread = (mx > 0) ? ((mx - mn) / mx) : 1;
+	ok = (n == 4) && (spread <= 1e-9);
+	printf "%-24s segments=%d spread=%.3e -> %s\n", "loop pw I continuity", n, spread, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/dist.csv" || status=1
+chk "loop pw induced |I|" "$(awk -F, '$1 == "Ipw" {print $9; exit}' "$WORK/dist.csv")" 1.239605e-4 0.005
+
+# (aj) 相反定理 : 送信パス (farfield の放射ベクトル) と受信パス (planewave の
+#      起電力) は独立な実装だが、離散化した系でも次の恒等式が厳密に成り立つ :
+#        l_eff = rE * 2 lambda / (-j eta0),   Voc = -E0 (e^・l_eff)
+#      (符号は mna_rhs_port の +1A 注入と Voc = v(n1)-v(n2) の向きの差)
+#      到来方向・偏波を変えて突き合わせることで、位相規約・sinc 積分・
+#      偏波ベクトル・角度依存が同時に検証される。
+# recip <入力.peec のパス> <far.csv> <f[Hz]> <theta> <phi> <pol>
+recip() {
+	sed "s/^planewave = .*/planewave = $4 $5 $6 1.0/" "$1" > "$WORK/recip_t.peec"
+	run recip_t.peec
+	awk -F, -v th="$4" -v ph="$5" -v pol="$6" -v fr="$3" -v lb="$1" '
+	BEGIN {c = 2.99792458e8; lam = c / fr; eta = 4 * atan2(0, -1) * 1e-7 * c; fac = 2 * lam / eta}
+	NR == FNR && FNR > 1 && (($2 + 0) == th) && (($3 + 0) == ph) {
+		if (pol == 1) {a = $4; b = $5} else {a = $6; b = $7}
+		got = 1; next
+	}
+	FNR == 2 && got {
+		# E0 = 1 : Re = fac*Im(rE)、Im = -fac*Re(rE)
+		er = fac * b; ei = -fac * a;
+		dr = $3 - er; di = $4 - ei;
+		d = sqrt((dr * dr) + (di * di)) / (sqrt((er * er) + (ei * ei)) + 1e-12);
+		ok = (d <= 1e-6);
+		printf "%-24s rel.diff=%.3e -> %s\n", sprintf("recip %d/%d/p%d", th, ph, pol), d, ok ? "OK" : "NG";
+		exit ok ? 0 : 1
+	}
+	END {if (!got) {printf "*** far.csv row (%d, %d) not found for %s\n", th, ph, lb; exit 1}}
+	' "$2" "$WORK/pw.csv" || status=1
+}
+
+# 非対称な折れ曲がりダイポール : パターンが theta / phi 両成分を持つ
+cp "$SRC/bent_pw.peec" "$WORK/"
+run bent_pw.peec
+cp "$WORK/far.csv" "$WORK/far_bent.csv"
+for spec in "30 45 1" "60 120 1" "90 30 2" "120 255 2" "45 90 2"; do
+	# shellcheck disable=SC2086
+	recip "$SRC/bent_pw.peec" "$WORK/far_bent.csv" 1.5e8 $spec
+done
+
+# (ak) 地板ありの相反 : 送信側の鏡像 (farfield) と受信側の PEC 反射波
+#      (planewave) が整合していることの判定。上半球のみ (theta <= 90)
+sed -e 's/^frequency = .*/frequency = 1.4376e8 1.4376e8 0/' \
+    -e 's/^title = .*/title = monopole receiving\nfarfield = 18 24\nplanewave = 60 0 1 1.0/' \
+    "$SRC/monopole_gp.peec" > "$WORK/mono_pw.peec"
+run mono_pw.peec
+cp "$WORK/far.csv" "$WORK/far_mono.csv"
+recip "$WORK/mono_pw.peec" "$WORK/far_mono.csv" 1.4376e8 60 0 1
+
+echo "--- transient (inverse FFT of the sweep)"
+# (al) 周波数に依らない反射係数 : y(t) = S11 x(t) が全時刻で厳密に成り立つ。
+#      励振と応答を同じ合成式で作るので帯域打ち切りも相殺する。
+cp "$SRC/tdr_resistor.peec" "$WORK/"
+for R in 50 150 1e-6 1e9; do
+	sed "s/^resistor = .*/resistor = 1 0 $R/" "$SRC/tdr_resistor.peec" > "$WORK/tdr_r.peec"
+	run tdr_r.peec
+	awk -F, -v R="$R" 'NR > 1 && $1 == "X" {x[$4] = $5}
+	NR > 1 && $1 == "S" {s[$4] = $5}
+	END {
+		s11 = (R - 50) / (R + 50);
+		for (t in x) {d = s[t] - (s11 * x[t]); ad = (d < 0) ? -d : d; if (ad > mx) mx = ad}
+		ok = (mx <= 1e-9);
+		printf "%-24s max|y-S11*x|=%.3e -> %s\n", sprintf("tdr R=%s (S11=%+.1f)", R, s11), mx, ok ? "OK" : "NG";
+		exit ok ? 0 : 1
+	}' "$WORK/tran.csv" || status=1
+done
+
+# 励振パルスが解析的なガウス (ピーク 1、t0 = 4 sigma) になっていること
+run tdr_resistor.peec
+awk -F, 'BEGIN {sig = 0.483008 / 6.4e9; t0 = 4 * sig}
+$1 == "X" {
+	g = exp(-($4 - t0) * ($4 - t0) / (2 * sig * sig));
+	d = $5 - g; ad = (d < 0) ? -d : d; if (ad > mx) mx = ad
+} END {
+	ok = (mx <= 5e-3);
+	printf "%-24s max|x-gaussian|=%.3e -> %s (<= 5e-3)\n", "transient excitation", mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/tran.csv" || status=1
+
+# 時間軸 : dt = 1/(2 fmax)、サンプル数 2N
+awk -F, '$1 == "X" {n++; if (n == 2) dt = $4} END {
+	ok = (n == 128) && ((dt - 7.8125e-11) < 1e-16) && ((7.8125e-11 - dt) < 1e-16);
+	printf "%-24s samples=%d dt=%.6e -> %s\n", "transient time axis", n, dt, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/tran.csv" || status=1
+
+# 対数掃引では時間軸が定義できないので拒否されること
+sed 's/^frequency = .*/frequency = 1e8 6.4e9 63 log/' "$SRC/tdr_resistor.peec" > "$WORK/tdr_log.peec"
+if (cd "$WORK" && "$PEEC" -n 1 tdr_log.peec > tdr_log.out 2>&1); then
+	printf "%-24s -> NG (log sweep must be rejected)\n" "transient sweep guard" >&2
+	status=1
+else
+	printf "%-24s -> OK (log sweep rejected)\n" "transient sweep guard"
+fi
+
+# (am) 微小ループ : v(t) = -(E0 A/c) dx/dt (Voc ∝ jω = 微分)。
+#      合成が exp(+jwt) 規約で一貫していることの番人 (純抵抗の判定は
+#      S11 が実数なので共役の取り違えを検出できない)
+cp "$SRC/loop_tran.peec" "$WORK/"
+run loop_tran.peec
+awk -F, 'BEGIN {
+	PI = atan2(0, -1); fmax = 1e7; att = 80;
+	sig = sqrt(att * log(10) / (20 * 2 * PI * PI)) / fmax;   # transient.c と同じ式
+	t0 = 4 * sig; K = 0.04 / 2.99792458e8                    # K = E0 A / c
+}
+$1 == "V" {
+	# v(t) = -(E0 A/c) dx/dt,  dx/dt = -((t-t0)/sig^2) x(t)
+	a = K * (($4 - t0) / (sig * sig)) * exp(-($4 - t0) * ($4 - t0) / (2 * sig * sig));
+	d = $5 - a; ad = (d < 0) ? -d : d; if (ad > mx) mx = ad;
+	aa = (a < 0) ? -a : a; if (aa > pk) pk = aa
+} END {
+	rel = mx / pk;
+	ok = (rel <= 0.01);
+	printf "%-24s max|v-(-(E0A/c)dx/dt)|/peak=%.4f -> %s (<= 0.01)\n", "loop transient (d/dt)", rel, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/tran.csv" || status=1
+
 echo "--- dielectric (excess capacitance)"
 # (ag) 平行平板 + εr = 4 ブリック : ΔC = (εr-1) eps0 A/d = 1.06250e-10 F。
 #      平板は等電位面なので過剰容量ネットワークの合計は格子に依らず厳密
@@ -473,6 +626,40 @@ if cmp -s "$WORK/zin_n1.csv" "$csv"; then
 else
 	printf "%-24s -> NG (-n 1 と -n 4 が不一致)\n" "thread invariance" >&2
 	status=1
+fi
+
+echo "--- HDF5 converter (tools/peec2h5.py)"
+# ソルバー本体は依存ゼロなので、変換スクリプトは numpy + h5py がある環境
+# でだけ検証する (無ければスキップ : CI の 3 OS には入れない)。
+# 専用ディレクトリで実行して他ケースの残骸を拾わないようにし、変換結果が
+# 元の CSV と整合すること (S11 が Zin と一致すること) まで確かめる。
+H5DIR="$WORK/h5"
+mkdir -p "$H5DIR"
+cp "$SRC/tdr_resistor.peec" "$H5DIR/"
+(cd "$H5DIR" && "$PEEC" -n 1 tdr_resistor.peec > /dev/null)
+grep -q "normal end" "$H5DIR/peec.log"
+if python3 -c "import numpy, h5py" 2>/dev/null; then
+	if python3 "$SRC/../../tools/peec2h5.py" "$H5DIR" -o "$H5DIR/peec.h5" > /dev/null 2>&1 &&
+	   python3 - "$H5DIR/peec.h5" <<'PYEOF'
+import sys, h5py, numpy as np
+with h5py.File(sys.argv[1]) as f:
+    for name in ("frequency", "zin", "transient/time", "transient/excitation"):
+        assert name in f, "missing dataset: " + name
+    z = f["zin"][0]
+    s = f["sparam"][:, 0, 0]
+    err = np.abs(s - ((z - 50) / (z + 50))).max()
+    assert err < 1e-6, "S11 vs Zin mismatch: %g" % err
+    t = f["transient/time"][:]
+    assert len(t) > 1 and np.all(np.diff(t) > 0), "bad time axis"
+PYEOF
+	then
+		printf "%-24s -> OK (h5 written and consistent with the CSV)\n" "peec2h5 converter"
+	else
+		printf "%-24s -> NG (conversion or consistency check failed)\n" "peec2h5 converter" >&2
+		status=1
+	fi
+else
+	printf "%-24s -> SKIP (numpy/h5py not installed)\n" "peec2h5 converter"
 fi
 
 if [ "$status" -ne 0 ]; then

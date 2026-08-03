@@ -162,11 +162,60 @@ int output_touchstone(const peec_t *p)
 
 
 /*
+平面波入射の応答 (pw.csv) — planewave 指定時のみ
+
+ポート自体は MNA に何もスタンプしない (観測点にすぎない) ので、solve() が
+捕捉した端子間電圧はそのまま**開放端電圧 Voc** になる。ただしポート間に
+素子 (resistor 等) を置いた場合はその負荷が掛かった端子電圧になるので、
+Voc として読めるのはポート間に何も繋いでいないときだけ。あわせて
+
+  実効長 |l_eff| = |Voc| / |E0|                       … アンテナの受信有効長
+  利用可能電力 Pav = |Voc|^2 / (8 Re Zin)             … 共役整合負荷への電力
+
+を出力する (どちらも開放時の解釈)。Pav はそのポートの Zin を内部インピー
+ダンスとする Thevenin 等価なので、多ポートでは他ポートが開放のときの値。
+*/
+int output_pw(const peec_t *p, const char *fn, FILE *fp_log)
+{
+	if (!p->pw || (p->voc == NULL)) return 0;
+
+	FILE *fp = fopen(fn, "w");
+	if (fp == NULL) {
+		printf("*** file %s open error.\n", fn);
+		return 1;
+	}
+
+	fprintf(fp, "port,frequency[Hz],Voc_real[V],Voc_imag[V],Voc_abs[V],leff[m],Pav[W]\n");
+
+	fprintf(fp_log, "=== plane wave response === (arrival theta = %.2f deg, phi = %.2f deg, %s pol., E0 = %.4g V/m)\n",
+		p->pwth, p->pwph, (p->pwpol == 2) ? "phi" : "theta", p->pwamp);
+	for (int iport = 0; iport < p->nport; iport++) {
+		fprintf(fp_log, "port #%d\n", iport + 1);
+		fprintf(fp_log, "  %s\n", "frequency[Hz]  |Voc|[V]   leff[m]      Pav[W]");
+		for (int ifreq = 0; ifreq < p->nfreq; ifreq++) {
+			const d_complex_t v = p->voc[(size_t)iport * p->nfreq + ifreq];
+			const double va = d_abs(v);
+			const double rin = p->zin[(size_t)iport * p->nfreq + ifreq].r;
+			const double pav = (rin > 0) ? (va * va / (8 * rin)) : 0;
+			fprintf(fp_log, "%13.5e%11.4e%11.4e%12.4e\n",
+				freq_at(p, ifreq), va, va / p->pwamp, pav);
+			fprintf(fp, "%d,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e\n",
+				iport + 1, freq_at(p, ifreq), v.r, v.i, va, va / p->pwamp, pav);
+		}
+	}
+	fflush(fp_log);
+
+	fclose(fp);
+	return 0;
+}
+
+
+/*
 電流・電荷分布 (dist.csv) — distribution = 1 のときのみ
 
-port #1 を 1A で励振したときの
-  - 各導体区間の電流 [A] (区間中点の座標つき)
-  - 各容量セルの電荷 [C] (capacitance = 1 のときのみ)
+  - I   : port #1 を 1A で励振したときの各導体区間の電流 [A] (区間中点の座標つき)
+  - Ipw : 平面波入射 (planewave) で誘起された区間電流 [A] — EMC イミュニティ用
+  - Q   : port #1 励振時の各容量セルの電荷 [C] (capacitance = 1 のときのみ)
 を 1 ファイルにまとめる。type 列で行を区別する。
 
 区間電流は MNA 未知数ベクトルの [offS, offS + nseg) がそのまま枝電流なので
@@ -175,7 +224,7 @@ port #1 を 1A で励振したときの
 int output_dist(const peec_t *p, const char *fn)
 {
 	if (!p->dist) return 0;
-	if ((p->segi == NULL) && (p->cellq == NULL)) return 0;
+	if ((p->segi == NULL) && (p->cellq == NULL) && (p->segipw == NULL)) return 0;
 
 	FILE *fp = fopen(fn, "w");
 	if (fp == NULL) {
@@ -194,6 +243,20 @@ int output_dist(const peec_t *p, const char *fn)
 				const seg_t *s = &p->seg[m];
 				const d_complex_t v = p->segi[(size_t)ifreq * p->nseg + m];
 				fprintf(fp, "I,%d,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e\n",
+					m, f,
+					0.5 * (s->x1[0] + s->x2[0]),
+					0.5 * (s->x1[1] + s->x2[1]),
+					0.5 * (s->x1[2] + s->x2[2]),
+					v.r, v.i, d_abs(v));
+			}
+		}
+
+		// 平面波入射による誘起区間電流 [A] (planewave 指定時のみ)
+		if (p->segipw != NULL) {
+			for (int m = 0; m < p->nseg; m++) {
+				const seg_t *s = &p->seg[m];
+				const d_complex_t v = p->segipw[(size_t)ifreq * p->nseg + m];
+				fprintf(fp, "Ipw,%d,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e\n",
 					m, f,
 					0.5 * (s->x1[0] + s->x2[0]),
 					0.5 * (s->x1[1] + s->x2[1]),

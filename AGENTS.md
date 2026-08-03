@@ -11,8 +11,14 @@
 `disk` = 円板)。`plate` は `分割数t` (省略時 1) を 2 以上にすると厚み方向にも
 分割し、体積セル (矩形バー) として厚み方向の電流分布 (表皮効果) を解く。
 ほかに無限 PEC 地板 (`groundplane`、鏡像法)、誘電体ブリック (`dielectric`、
-Ruehli の過剰容量)、遠方界後処理 (`farfield` → `far.csv`)、対数掃引
-(`frequency ... log`)。いずれもキー省略時は無効 (従来動作と完全一致)。
+Ruehli の過剰容量)、遠方界後処理 (`farfield` → `far.csv`)、平面波入射
+(`planewave` → `pw.csv`、EMC イミュニティ)、過渡応答 (`transient` →
+`tran.csv`、掃引の逆フーリエ変換)、対数掃引 (`frequency ... log`)。
+いずれもキー省略時は無効 (従来動作と完全一致)。
+
+CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本体は
+外部ライブラリに依存しない**規約 (下記 8) を守るため、HDF5 はスクリプト側に
+置いてある。ビルド・CI には一切影響しない。
 
 > このファイルは Claude Code 用の `CLAUDE.md` / `.claude/rules/*.md` と同じ内容を
 > 単独で読めるようまとめたもの。**片方だけ直すと食い違うので、規約を変えたら
@@ -24,7 +30,7 @@ Ruehli の過剰容量)、遠方界後処理 (`farfield` → `far.csv`)、対数
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、72 件)
+# 検証 (解析解・文献値との比較、91 件)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -35,7 +41,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 72 件すべて OK でなければ
+**変更したら必ず `peec_check.sh` を通すこと。** 91 件すべて OK でなければ
 完了ではない。「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
 計測時の注意 : ソルバーが失敗すると `zin.csv` / `peec.log` は**前回の実行結果が
@@ -60,6 +66,8 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/pe
 | `src/solve.c` | 周波数掃引、Z → S 変換 |
 | `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、`dist.csv` |
 | `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率) |
+| `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
+| `tools/peec2h5.py` | CSV → HDF5 変換 (本体の依存を増やさないための外付け) |
 
 状態はグローバル変数ではなく `peec_t` コンテキスト構造体 1 個を main で
 確保して関数に渡す。
@@ -81,6 +89,9 @@ Linux/macOS では通るが Windows で落ちるものだけを挙げる。
    (`/utf-8`, `_USE_MATH_DEFINES`, `_CRT_SECURE_NO_WARNINGS`)。
 7. 数学・物理定数は `peec.h` の自前マクロ (`PI` / `EPS0` / `MU0` / `C0`) を使う。
 8. **外部ライブラリを追加しない**。OpenMP のみ任意依存で `#ifdef _OPENMP` でガードする。
+   これは**ソルバー本体 (`src/`, `include/`, `CMakeLists.txt`) の規則**。
+   `tools/` の後処理スクリプトは対象外で、そこでなら numpy / h5py 等を使ってよい
+   (`tools/peec2h5.py` の HDF5 出力がこれ)。ビルドと CI に影響しないことが条件。
 
 `.claude/hooks/check-portability.sh` が (1)(2)(3) を機械的に検査する。
 Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩ける。
@@ -144,6 +155,21 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
     U = |rE|²/(2η0)。係数を触るとパターン (D) は変わらず**効率だけが静かに
     狂う**ため、Prad = ∮U dΩ が Pin = Re(Zin)/2 と一致することが番人になる。
     (`dipole ff efficiency` / `short dipole D` / `monopole D = 2 x dipole`)
+11. **送信と受信は相反定理で結ばれている** — 平面波入射 (`mna_rhs_planewave`)
+    と遠方界 (`farfield.c`) は独立な実装だが、離散化した系でも
+    `l_eff = rE·2λ/(−jη0)`、`Voc = −E0(ê·l_eff)` が厳密に成り立つ。符号 (−) は
+    ポート規約 (n1 に +1A 注入 vs Voc = v(n1)−v(n2)) によるもので、**角度・
+    偏波によらず厳密に −1 倍**になる (バグなら一定倍率にならない)。両者は
+    位相規約・sinc 積分・偏波ベクトル・鏡像規約を共有しているので、片方だけ
+    触ると必ず落ちる。(`recip ...` 6 通り / `dipole pw leff` / `loop pw |Voc|`)
+12. **過渡応答は exp(+jωt) 規約と等間隔掃引に依存する** — `transient.c` の
+    合成はコードベース全体の exp(+jωt) 規約 (inductor が +jωL) と一致して
+    いる必要がある。**純抵抗の判定は S11 が実数なので共役の取り違えを検出
+    できない**ため、周波数依存のあるケースが要る (微小ループは Voc ∝ jω な
+    ので時間波形が励振の微分になり、共役を誤ると符号が反転する)。掃引は
+    f_k = k·df でなければ時間軸が定義できず、`tran_check()` が検査して
+    対数掃引を拒否する。DC 項は実数条件のもとで下 2 点から線形補外。
+    (`loop transient (d/dt)` / `tdr R=...` 4 通り / `transient sweep guard`)
 
 ## メモリ
 
@@ -234,6 +260,12 @@ OpenMP で並列化しているのは `lp_fill` (partial.c)、`pot_fill` (potent
   支配的な配置 — 基板・平行平板 — で正確)。`capacitance = 1` 必須。
 - 遠方界 (`farfield`) は port #1 の 1 A 励振に対する値。効率が意味を持つのは
   `retardation = 1` のとき (準静的電流は放射を含まない)。
+- 平面波 (`planewave`) は 1 方向・1 偏波の単一入射波 (重ね合わせは実行を分けて
+  線形性で足す)。`pw.csv` はポート間に素子が無いときだけ Voc として読める。
+- 過渡応答 (`transient`) は掃引の逆フーリエ変換なので、応答が `1/Δf` 以内に
+  減衰しないと巻き込み (時間領域エイリアス) が起きる。Q の高い共振では
+  分割数を増やす。時間分解の下限は Δt = 1/(2f_max) で、既定の −40 dB では
+  ガウス幅が σ ≈ Δt (帯域を使い切った状態) になる。
 - 行列は密。O(N²+M²) の積分と O((N+M)³) の LU (LU は並列化済みだがオーダーは不変)。
   `acceleration = 1` で掃引の LU 回数を減らせる (前処理 GMRES、密 LU と実質同一の
   結果、収束しなければ自動で LU に戻る)。fill の O(N²) と行列の密メモリは不変

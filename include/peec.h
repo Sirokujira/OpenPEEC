@@ -24,6 +24,8 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 #define FN_CSV "zin.csv"
 #define FN_DIST "dist.csv"
 #define FN_FAR "far.csv"
+#define FN_PW "pw.csv"
+#define FN_TRAN "tran.csv"
 
 // 数学・物理定数 (自前マクロ : <math.h> の M_PI には依存しない)
 #define PI   (4.0 * atan(1.0))
@@ -182,6 +184,12 @@ typedef struct {
 	int    gp;                    // groundplane = z : 無限 PEC 地板 (鏡像法)
 	double gpz;                   // 地板の z 座標 (gp = 1 のとき有効)
 	int    ffnth, ffnph;          // farfield = 分割数theta 分割数phi (0 = 無効)
+	int    pw;                    // planewave : 平面波入射 (外部界励振)
+	double pwth, pwph;            // 平面波の到来方向 (theta, phi) [deg]
+	int    pwpol;                 // 偏波 : 1 = theta 偏波、2 = phi 偏波
+	double pwamp, pwphase;        // 振幅 [V/m] と位相 [deg]
+	int    tran;                  // transient = 1 : 過渡応答 (掃引の逆フーリエ変換)
+	double tranatt;               // 帯域端でのガウス励振の減衰 [dB] (既定 40)
 
 	// 結果
 	d_complex_t *zin;             // [nport * nfreq] 各ポートの入力インピーダンス
@@ -193,6 +201,10 @@ typedef struct {
 	// 分布 (distribution = 1 のときのみ)。port #1 を 1A で励振したときの値。
 	d_complex_t *segi;            // [nfreq * nseg]  区間電流 [A]
 	d_complex_t *cellq;           // [nfreq * ncell] セル電荷 [C] (capacitance = 1 のときのみ)
+	// 平面波入射 (planewave) : 各ポートの端子電圧 [V] と誘起電流 [A]
+	// (ポート間に素子が無ければ端子電圧 = 開放端電圧 Voc)
+	d_complex_t *voc;             // [nport * nfreq]
+	d_complex_t *segipw;          // [nfreq * nseg] 誘起区間電流 (distribution = 1)
 } peec_t;
 
 // Z / S 行列の添字 (周波数 ifreq、行 i、列 j)
@@ -255,6 +267,7 @@ int  mna_numbering(peec_t *p, FILE *fp_log);
 void mna_assemble(const peec_t *p, double f, d_complex_t *a);
 void mna_rhs_port(const peec_t *p, int iport, d_complex_t *b);
 void mna_rhs_sources(const peec_t *p, d_complex_t *b);
+void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b);
 
 // lu.c
 int  lu_decomp(int n, d_complex_t *a, int *piv);
@@ -273,8 +286,12 @@ int  output_csv(const peec_t *p, const char *fn);
 void output_spara(const peec_t *p, FILE *fp_log);
 int  output_touchstone(const peec_t *p);
 int  output_dist(const peec_t *p, const char *fn);
+int  output_pw(const peec_t *p, const char *fn, FILE *fp_log);
 
 // farfield.c
 int  output_far(const peec_t *p, const char *fn, FILE *fp_log);
+
+// transient.c
+int  output_tran(const peec_t *p, const char *fn, FILE *fp_log);
 
 #endif		// _PEEC_H_

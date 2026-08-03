@@ -50,6 +50,7 @@ int input_data(FILE *fp, peec_t *p)
 	p->nodetol = 1e-8;
 	p->gmin = 0;
 	p->refnode = -1;
+	p->tranatt = 40;              // 過渡応答 : 帯域端でのガウス励振の減衰 [dB]
 
 	// read
 	while (fgets(strline, sizeof(strline), fp) != NULL) {
@@ -471,6 +472,34 @@ int input_data(FILE *fp, peec_t *p)
 		else if (!strcmp(strkey, "acceleration")) {
 			p->accel = atoi(token[2]);
 		}
+		else if (!strcmp(strkey, "transient")) {
+			// transient = 1 [帯域端の減衰dB] : 掃引の逆フーリエ変換で時間波形
+			p->tran = atoi(token[2]);
+			if (ntoken >= 4) p->tranatt = atof(token[3]);
+			if (p->tranatt <= 0) {
+				printf(errfmt2, "transient");
+				return 1;
+			}
+		}
+		else if (!strcmp(strkey, "planewave")) {
+			// planewave = theta phi 偏波 振幅 [位相deg]
+			// (theta, phi) は到来方向 (伝搬方向はその逆)、偏波 1 = theta / 2 = phi
+			if (ntoken < 6) err = 1;
+			else {
+				p->pwth = atof(token[2]);
+				p->pwph = atof(token[3]);
+				p->pwpol = atoi(token[4]);
+				p->pwamp = atof(token[5]);
+				p->pwphase = (ntoken >= 7) ? atof(token[6]) : 0;
+				if ((p->pwpol != 1) && (p->pwpol != 2)) err = 1;
+				if (p->pwamp <= 0) err = 1;
+				if (!err) p->pw = 1;
+			}
+			if (err) {
+				printf(errfmt2, "planewave");
+				return 1;
+			}
+		}
 		else if (!strcmp(strkey, "farfield")) {
 			if (ntoken < 4) err = 1;
 			else {
@@ -584,6 +613,8 @@ void peec_free(peec_t *p)
 	free(p->smat);
 	free(p->segi);
 	free(p->cellq);
+	free(p->voc);
+	free(p->segipw);
 
 	memset(p, 0, sizeof(peec_t));
 }
