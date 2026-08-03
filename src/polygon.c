@@ -277,15 +277,18 @@ static double cell_potential(const seg_t *s, const double *pt)
 //   面セルは幅 (= 面積/len) で規格化、細線 (wid = 0) は規格化しない。
 //   s2 が細線のときは解析式を持つ側 (多角形) を内側にするため入れ替える
 //   (積分は対称なので値は変わらない)。
-double poly_static(const seg_t *s1, const seg_t *s2, int nsub)
+//   n7 : 外側の三角形則 (1 = 7 点 / 0 = 3 点)。内側が解析的に厳密なので
+//   被積分関数は離れるほど滑らかになり、遠方対では 3 点で足りる
+//   (しきい値は呼び出し側が距離で決める)。
+double poly_static(const seg_t *s1, const seg_t *s2, int nsub, int n7)
 {
 	if ((s2->npv <= 0) && (s2->wid <= 0)) {
 		if ((s1->npv <= 0) && (s1->wid <= 0)) return 0;   // 細線どうしは来ない
-		return poly_static(s2, s1, nsub);
+		return poly_static(s2, s1, nsub, n7);
 	}
 
 	double px[POLY_NQMAX * 3], wt[POLY_NQMAX];
-	const int np = cell_qpts(s1, nsub, 1, px, wt);
+	const int np = cell_qpts(s1, nsub, n7, px, wt);
 
 	double sum = 0;
 	for (int q = 0; q < np; q++) {

@@ -232,7 +232,7 @@ int  wire_build(peec_t *p, FILE *fp_log);
 
 // surface.c
 double rect_potential(const seg_t *s, const double *pt);
-double ribbon_static(const seg_t *s1, const seg_t *s2, int nsub);
+double ribbon_static(const seg_t *s1, const seg_t *s2, int nsub, int nq);
 d_complex_t ribbon_corr(const seg_t *s1, const seg_t *s2, double kw, int nsub);
 
 // volume.c
@@ -242,7 +242,7 @@ double bar_pair(const seg_t *s1, const seg_t *s2);
 // polygon.c
 double poly_area(const seg_t *s);
 double poly_potential(const seg_t *s, const double *pt);
-double poly_static(const seg_t *s1, const seg_t *s2, int nsub);
+double poly_static(const seg_t *s1, const seg_t *s2, int nsub, int n7);
 d_complex_t poly_corr(const seg_t *s1, const seg_t *s2, double kw);
 
 // partial.c
