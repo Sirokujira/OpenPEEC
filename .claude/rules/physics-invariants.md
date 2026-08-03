@@ -107,8 +107,16 @@ Hoer-Love の原始関数 `hl_F(x,y,z)` (volume.c) では、引数が 0 のと�
   三角形辺基底に変えると一様シート流の散逸を約 2 倍に過大評価する
   (構造直角三角形格子で厳密に 2 倍。試して棄却済み)。構造四辺形格子
   では幾何幅で厳密。
+- 断面が plate と同じ幾何量 (双対幅 × 厚さ) なので、**表皮効果も plate と
+  同じ合成式を適用する**。合成式の DC 極限は `s->res` に厳密に一致するので
+  不連続は生じない。以前は「DC 抵抗が cotangent 重みで決まるから」という
+  理由で除外していたが、DC 抵抗を幾何双対幅に変えた時点でその理由は消えて
+  いた (コメントだけが残っていた)。適用しないでいると厚み方向の表皮効果
+  (δ < thick) が丸ごと落ち、1 GHz・厚さ 0.1 mm の銅シートで plate 比 −24%
+  になる。面内の再配分は格子が解くので、ここで見ているのは厚み方向のみ。
 
 **番人**: `quad sheet Rin (DC)` / `quad sheet L vs plate` /
+`quad sheet R vs plate (HF)` / `quad sheet R (skin at DC)` /
 `disk C (extrapolated)` / `annulus Rin (DC)`
 
 ## (8) 鏡像の符号規約 (groundplane)
@@ -142,8 +150,20 @@ C_e = ε0(εr−1)A/len だけ**を直列インピーダンス 1/(jωC_e) とし
 作ると C_e = 0 → 1/(jω·0) = inf で NaN になる。スキップすれば
 真空と bit 単位で一致する。
 
+損失 (tanδ) も同じ原則で、複素比誘電率 εr* = εr(1 − j tanδ) の**過剰分
+だけ**を枝に載せる :
+
+  Y = jω ε0 (εr* − 1) A/len = ω (gexc + j cexc)
+  gexc = ε0 εr tanδ A/len,  cexc = ε0 (εr − 1) A/len
+
+損失側の係数が (εr − 1) ではなく **εr** である点に注意 (εr* − 1 の虚部は
+−εr tanδ)。tanδ = 0 なら Z = −j/(ωC_e) で従来と bit 単位で一致する。
+
 **番人**: `dielectric dC (pp)` (等電位面間の過剰容量ラダーは格子に依らず
-厳密に (εr−1)ε0A/d になる : 実測残差 ~1e-6) / `dielectric epsr=1 noop`
+厳密に (εr−1)ε0A/d になる : 実測残差 ~1e-6) / `dielectric epsr=1 noop` /
+`dielectric G (tand)` (損失性平行平板の G = ωε0 εr tanδ A/d という
+コード非依存の解析値。損失側を (εr−1) と取り違えるとここで 25% ずれる) /
+`dielectric tand=0 noop`
 
 ## (10) 遠方界の規格化とポインティング整合
 

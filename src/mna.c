@@ -177,9 +177,12 @@ void mna_assemble(const peec_t *p, double f, d_complex_t *a)
 		stamp(a, n, i2, rk, d_complex(-1, 0));
 		stamp(a, n, rk, i2, d_complex(-1, 0));
 		// 内部インピーダンス : 既定は DC 抵抗、skineffect = 1 で表皮効果 + 内部 L。
-		// 誘電体セルは過剰容量の直列インピーダンス 1/(jw C_e) (分極電流の枝)
+		// 誘電体セルは過剰容量の直列インピーダンス (分極電流の枝)。
+		// 複素比誘電率 epsr* = epsr (1 - j tand) では
+		//   Y = jw eps0 (epsr* - 1) A/len = w (gexc + j cexc)  ->  Z = 1/Y
+		// tand = 0 (gexc = 0) なら Z = -j/(w cexc) で従来と完全に一致する。
 		const d_complex_t zint = p->seg[k].diel
-			? d_complex(0, -1 / (omega * p->seg[k].cexc))
+			? d_rmul(1 / omega, d_inv(d_complex(p->seg[k].gexc, p->seg[k].cexc)))
 			: p->skin
 			? zint_seg(&p->seg[k], f)
 			: d_complex(p->seg[k].res, 0);

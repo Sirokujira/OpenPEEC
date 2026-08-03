@@ -95,7 +95,7 @@ typedef struct {
 // nodetol マージで導体ノードと共有される。
 typedef struct {
 	double org[3], ea[3], eb[3];
-	double thick, epsr;
+	double thick, epsr, tand;
 	int    ndiva, ndivb, ndivt;
 } diel_t;
 
@@ -119,8 +119,11 @@ typedef struct {
 	double area, perim;           // 断面積・周長 (DC 抵抗・表皮効果)
 	double sigma;
 	double res;                   // DC 抵抗 = len / (sigma * area)
-	int    diel;                  // 1 = 誘電体セル (枝の直列インピーダンス = 1/(jw cexc))
-	double cexc;                  // 過剰容量 C_e = eps0 (epsr-1) area / len [F]
+	int    diel;                  // 1 = 誘電体セル (枝の直列インピーダンスは下記)
+	// 複素比誘電率 epsr* = epsr (1 - j tand) の過剰分 (epsr* - 1) を枝に載せる :
+	//   Y = jw eps0 (epsr* - 1) A/len = w (gexc + j cexc)  ->  Z = 1/Y
+	double cexc;                  // eps0 (epsr - 1) area / len       [F]
+	double gexc;                  // eps0 epsr tand area / len        [F] (損失側)
 } seg_t;
 
 typedef struct {
