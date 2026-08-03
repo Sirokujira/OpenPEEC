@@ -25,6 +25,7 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 #define FN_DIST "dist.csv"
 #define FN_FAR "far.csv"
 #define FN_PW "pw.csv"
+#define FN_TRAN "tran.csv"
 
 // 数学・物理定数 (自前マクロ : <math.h> の M_PI には依存しない)
 #define PI   (4.0 * atan(1.0))
@@ -187,6 +188,8 @@ typedef struct {
 	double pwth, pwph;            // 平面波の到来方向 (theta, phi) [deg]
 	int    pwpol;                 // 偏波 : 1 = theta 偏波、2 = phi 偏波
 	double pwamp, pwphase;        // 振幅 [V/m] と位相 [deg]
+	int    tran;                  // transient = 1 : 過渡応答 (掃引の逆フーリエ変換)
+	double tranatt;               // 帯域端でのガウス励振の減衰 [dB] (既定 40)
 
 	// 結果
 	d_complex_t *zin;             // [nport * nfreq] 各ポートの入力インピーダンス
@@ -287,5 +290,8 @@ int  output_pw(const peec_t *p, const char *fn, FILE *fp_log);
 
 // farfield.c
 int  output_far(const peec_t *p, const char *fn, FILE *fp_log);
+
+// transient.c
+int  output_tran(const peec_t *p, const char *fn, FILE *fp_log);
 
 #endif		// _PEEC_H_

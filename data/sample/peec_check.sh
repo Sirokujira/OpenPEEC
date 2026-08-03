@@ -457,6 +457,74 @@ run mono_pw.peec
 cp "$WORK/far.csv" "$WORK/far_mono.csv"
 recip "$WORK/mono_pw.peec" "$WORK/far_mono.csv" 1.4376e8 60 0 1
 
+echo "--- transient (inverse FFT of the sweep)"
+# (al) 周波数に依らない反射係数 : y(t) = S11 x(t) が全時刻で厳密に成り立つ。
+#      励振と応答を同じ合成式で作るので帯域打ち切りも相殺する。
+cp "$SRC/tdr_resistor.peec" "$WORK/"
+for R in 50 150 1e-6 1e9; do
+	sed "s/^resistor = .*/resistor = 1 0 $R/" "$SRC/tdr_resistor.peec" > "$WORK/tdr_r.peec"
+	run tdr_r.peec
+	awk -F, -v R="$R" 'NR > 1 && $1 == "X" {x[$4] = $5}
+	NR > 1 && $1 == "S" {s[$4] = $5}
+	END {
+		s11 = (R - 50) / (R + 50);
+		for (t in x) {d = s[t] - (s11 * x[t]); ad = (d < 0) ? -d : d; if (ad > mx) mx = ad}
+		ok = (mx <= 1e-9);
+		printf "%-24s max|y-S11*x|=%.3e -> %s\n", sprintf("tdr R=%s (S11=%+.1f)", R, s11), mx, ok ? "OK" : "NG";
+		exit ok ? 0 : 1
+	}' "$WORK/tran.csv" || status=1
+done
+
+# 励振パルスが解析的なガウス (ピーク 1、t0 = 4 sigma) になっていること
+run tdr_resistor.peec
+awk -F, 'BEGIN {sig = 0.483008 / 6.4e9; t0 = 4 * sig}
+$1 == "X" {
+	g = exp(-($4 - t0) * ($4 - t0) / (2 * sig * sig));
+	d = $5 - g; ad = (d < 0) ? -d : d; if (ad > mx) mx = ad
+} END {
+	ok = (mx <= 5e-3);
+	printf "%-24s max|x-gaussian|=%.3e -> %s (<= 5e-3)\n", "transient excitation", mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/tran.csv" || status=1
+
+# 時間軸 : dt = 1/(2 fmax)、サンプル数 2N
+awk -F, '$1 == "X" {n++; if (n == 2) dt = $4} END {
+	ok = (n == 128) && ((dt - 7.8125e-11) < 1e-16) && ((7.8125e-11 - dt) < 1e-16);
+	printf "%-24s samples=%d dt=%.6e -> %s\n", "transient time axis", n, dt, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/tran.csv" || status=1
+
+# 対数掃引では時間軸が定義できないので拒否されること
+sed 's/^frequency = .*/frequency = 1e8 6.4e9 63 log/' "$SRC/tdr_resistor.peec" > "$WORK/tdr_log.peec"
+if (cd "$WORK" && "$PEEC" -n 1 tdr_log.peec > tdr_log.out 2>&1); then
+	printf "%-24s -> NG (log sweep must be rejected)\n" "transient sweep guard" >&2
+	status=1
+else
+	printf "%-24s -> OK (log sweep rejected)\n" "transient sweep guard"
+fi
+
+# (am) 微小ループ : v(t) = -(E0 A/c) dx/dt (Voc ∝ jω = 微分)。
+#      合成が exp(+jwt) 規約で一貫していることの番人 (純抵抗の判定は
+#      S11 が実数なので共役の取り違えを検出できない)
+cp "$SRC/loop_tran.peec" "$WORK/"
+run loop_tran.peec
+awk -F, 'BEGIN {
+	PI = atan2(0, -1); fmax = 1e7; att = 80;
+	sig = sqrt(att * log(10) / (20 * 2 * PI * PI)) / fmax;   # transient.c と同じ式
+	t0 = 4 * sig; K = 0.04 / 2.99792458e8                    # K = E0 A / c
+}
+$1 == "V" {
+	# v(t) = -(E0 A/c) dx/dt,  dx/dt = -((t-t0)/sig^2) x(t)
+	a = K * (($4 - t0) / (sig * sig)) * exp(-($4 - t0) * ($4 - t0) / (2 * sig * sig));
+	d = $5 - a; ad = (d < 0) ? -d : d; if (ad > mx) mx = ad;
+	aa = (a < 0) ? -a : a; if (aa > pk) pk = aa
+} END {
+	rel = mx / pk;
+	ok = (rel <= 0.01);
+	printf "%-24s max|v-(-(E0A/c)dx/dt)|/peak=%.4f -> %s (<= 0.01)\n", "loop transient (d/dt)", rel, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/tran.csv" || status=1
+
 echo "--- dielectric (excess capacitance)"
 # (ag) 平行平板 + εr = 4 ブリック : ΔC = (εr-1) eps0 A/d = 1.06250e-10 F。
 #      平板は等電位面なので過剰容量ネットワークの合計は格子に依らず厳密
@@ -558,6 +626,40 @@ if cmp -s "$WORK/zin_n1.csv" "$csv"; then
 else
 	printf "%-24s -> NG (-n 1 と -n 4 が不一致)\n" "thread invariance" >&2
 	status=1
+fi
+
+echo "--- HDF5 converter (tools/peec2h5.py)"
+# ソルバー本体は依存ゼロなので、変換スクリプトは numpy + h5py がある環境
+# でだけ検証する (無ければスキップ : CI の 3 OS には入れない)。
+# 専用ディレクトリで実行して他ケースの残骸を拾わないようにし、変換結果が
+# 元の CSV と整合すること (S11 が Zin と一致すること) まで確かめる。
+H5DIR="$WORK/h5"
+mkdir -p "$H5DIR"
+cp "$SRC/tdr_resistor.peec" "$H5DIR/"
+(cd "$H5DIR" && "$PEEC" -n 1 tdr_resistor.peec > /dev/null)
+grep -q "normal end" "$H5DIR/peec.log"
+if python3 -c "import numpy, h5py" 2>/dev/null; then
+	if python3 "$SRC/../../tools/peec2h5.py" "$H5DIR" -o "$H5DIR/peec.h5" > /dev/null 2>&1 &&
+	   python3 - "$H5DIR/peec.h5" <<'PYEOF'
+import sys, h5py, numpy as np
+with h5py.File(sys.argv[1]) as f:
+    for name in ("frequency", "zin", "transient/time", "transient/excitation"):
+        assert name in f, "missing dataset: " + name
+    z = f["zin"][0]
+    s = f["sparam"][:, 0, 0]
+    err = np.abs(s - ((z - 50) / (z + 50))).max()
+    assert err < 1e-6, "S11 vs Zin mismatch: %g" % err
+    t = f["transient/time"][:]
+    assert len(t) > 1 and np.all(np.diff(t) > 0), "bad time axis"
+PYEOF
+	then
+		printf "%-24s -> OK (h5 written and consistent with the CSV)\n" "peec2h5 converter"
+	else
+		printf "%-24s -> NG (conversion or consistency check failed)\n" "peec2h5 converter" >&2
+		status=1
+	fi
+else
+	printf "%-24s -> SKIP (numpy/h5py not installed)\n" "peec2h5 converter"
 fi
 
 if [ "$status" -ne 0 ]; then

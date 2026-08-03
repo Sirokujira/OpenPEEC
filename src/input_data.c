@@ -50,6 +50,7 @@ int input_data(FILE *fp, peec_t *p)
 	p->nodetol = 1e-8;
 	p->gmin = 0;
 	p->refnode = -1;
+	p->tranatt = 40;              // 過渡応答 : 帯域端でのガウス励振の減衰 [dB]
 
 	// read
 	while (fgets(strline, sizeof(strline), fp) != NULL) {
@@ -470,6 +471,15 @@ int input_data(FILE *fp, peec_t *p)
 		}
 		else if (!strcmp(strkey, "acceleration")) {
 			p->accel = atoi(token[2]);
+		}
+		else if (!strcmp(strkey, "transient")) {
+			// transient = 1 [帯域端の減衰dB] : 掃引の逆フーリエ変換で時間波形
+			p->tran = atoi(token[2]);
+			if (ntoken >= 4) p->tranatt = atof(token[3]);
+			if (p->tranatt <= 0) {
+				printf(errfmt2, "transient");
+				return 1;
+			}
 		}
 		else if (!strcmp(strkey, "planewave")) {
 			// planewave = theta phi 偏波 振幅 [位相deg]
