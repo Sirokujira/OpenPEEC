@@ -217,6 +217,98 @@ void mna_rhs_port(const peec_t *p, int iport, d_complex_t *b)
 	if (i2 >= 0) b[i2] = d_sub(b[i2], d_complex(1, 0));
 }
 
+/*
+平面波入射 (planewave) の右辺 — 外部界励振
+
+導体表面の電界積分方程式 E_inc + E_scat = J/sigma を区間に沿って線積分すると
+
+  v_a - v_b - Z_int i_k - jw sum_m Lp[k][m] i_m = -∫_k E_inc・dl
+
+となる (左辺は mna_assemble() が組んだ枝方程式そのもの)。したがって区間 k の
+行 (offS + k) に誘起起電力 -∫E_inc・dl を立てればよい。
+
+平面波は到来方向 r^ = (theta, phi) から来るものとする (伝搬方向は -r^)。
+exp(jwt) 系では E(r) = E0 e^ exp(+j k r^・r) で、区間内は直線かつ一定方向
+なので線積分は厳密に評価できる :
+
+  ∫E・dl = (E0 e^・t^) len exp(j k r^・rc) sinc(k len (r^・t^)/2)   (rc = 中点)
+
+面セル (幅 wid、横方向 wv) では幅方向の平均にも同じ形の sinc が掛かる
+(幅で規格化した Lp と同じ扱い)。多角形セルは wv を持たないので軸方向のみ
+(セル寸法 << 波長 では差は O((kw)^2))。
+
+地板 (groundplane) があるときは PEC 面での反射波を足す : 到来方向を z 鏡像に
+し、偏波の水平成分を反転・垂直成分を保存する。z = gpz で接線成分が打ち消され
+(partial.c の鏡像規約と同一)、位相は面上で一致するよう 2 k r^z gpz だけずらす。
+*/
+static double pw_sinc(double x)
+{
+	return (fabs(x) < 1e-8) ? 1.0 : (sin(x) / x);
+}
+
+// 1 波ぶんの起電力 ∫E・dl
+static d_complex_t pw_emf(const seg_t *s, const double *rh, const double *ev,
+	d_complex_t e0, double kw)
+{
+	double tv[3], rc[3];
+	for (int c = 0; c < 3; c++) {
+		tv[c] = (s->x2[c] - s->x1[c]) / s->len;
+		rc[c] = 0.5 * (s->x1[c] + s->x2[c]);
+	}
+	const double et = (ev[0] * tv[0]) + (ev[1] * tv[1]) + (ev[2] * tv[2]);
+	const double rt = (rh[0] * tv[0]) + (rh[1] * tv[1]) + (rh[2] * tv[2]);
+	const double rr = (rh[0] * rc[0]) + (rh[1] * rc[1]) + (rh[2] * rc[2]);
+
+	double amp = et * s->len * pw_sinc(0.5 * kw * s->len * rt);
+
+	// 幅方向の平均 (リボン・体積セル : wv が単位ベクトル)
+	const double wl = sqrt((s->wv[0] * s->wv[0]) + (s->wv[1] * s->wv[1])
+	                     + (s->wv[2] * s->wv[2]));
+	if ((s->wid > 0) && (wl > 0)) {
+		const double rw = ((rh[0] * s->wv[0]) + (rh[1] * s->wv[1])
+		                 + (rh[2] * s->wv[2])) / wl;
+		amp *= pw_sinc(0.5 * kw * s->wid * rw);
+	}
+
+	return d_rmul(amp, d_mul(e0, d_complex(cos(kw * rr), sin(kw * rr))));
+}
+
+void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b)
+{
+	const int n = p->nunknown;
+	const double kw = 2 * PI * f / C0;
+
+	memset(b, 0, (size_t)n * sizeof(d_complex_t));
+	if (!p->pw) return;
+
+	const double th = p->pwth * PI / 180;
+	const double ph = p->pwph * PI / 180;
+	const double st = sin(th), ct = cos(th), cp = cos(ph), sp = sin(ph);
+	const double rh[3] = {st * cp, st * sp, ct};
+	const double thh[3] = {ct * cp, ct * sp, -st};
+	const double phh[3] = {-sp, cp, 0};
+	double ev[3];
+	for (int c = 0; c < 3; c++) {
+		ev[c] = (p->pwpol == 2) ? phh[c] : thh[c];
+	}
+	const d_complex_t e0 = d_polar_deg(p->pwamp, p->pwphase);
+
+	// 反射波 (地板) : 到来方向を z 鏡像、偏波の水平成分を反転、
+	// 位相は z = gpz で入射波と一致するようずらす
+	const double rh2[3] = {rh[0], rh[1], -rh[2]};
+	const double ev2[3] = {-ev[0], -ev[1], ev[2]};
+	const double psi = 2 * kw * rh[2] * p->gpz;
+	const d_complex_t e0r = d_mul(e0, d_complex(cos(psi), sin(psi)));
+
+	for (int k = 0; k < p->nseg; k++) {
+		d_complex_t emf = pw_emf(&p->seg[k], rh, ev, e0, kw);
+		if (p->gp) {
+			emf = d_add(emf, pw_emf(&p->seg[k], rh2, ev2, e0r, kw));
+		}
+		b[p->offS + k] = d_rmul(-1, emf);
+	}
+}
+
 // 独立電源励振 (isource : 電流は電源内部を n1 -> n2 に流れる = SPICE 規約)
 void mna_rhs_sources(const peec_t *p, d_complex_t *b)
 {

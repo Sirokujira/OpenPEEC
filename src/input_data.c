@@ -471,6 +471,25 @@ int input_data(FILE *fp, peec_t *p)
 		else if (!strcmp(strkey, "acceleration")) {
 			p->accel = atoi(token[2]);
 		}
+		else if (!strcmp(strkey, "planewave")) {
+			// planewave = theta phi 偏波 振幅 [位相deg]
+			// (theta, phi) は到来方向 (伝搬方向はその逆)、偏波 1 = theta / 2 = phi
+			if (ntoken < 6) err = 1;
+			else {
+				p->pwth = atof(token[2]);
+				p->pwph = atof(token[3]);
+				p->pwpol = atoi(token[4]);
+				p->pwamp = atof(token[5]);
+				p->pwphase = (ntoken >= 7) ? atof(token[6]) : 0;
+				if ((p->pwpol != 1) && (p->pwpol != 2)) err = 1;
+				if (p->pwamp <= 0) err = 1;
+				if (!err) p->pw = 1;
+			}
+			if (err) {
+				printf(errfmt2, "planewave");
+				return 1;
+			}
+		}
 		else if (!strcmp(strkey, "farfield")) {
 			if (ntoken < 4) err = 1;
 			else {
@@ -584,6 +603,8 @@ void peec_free(peec_t *p)
 	free(p->smat);
 	free(p->segi);
 	free(p->cellq);
+	free(p->voc);
+	free(p->segipw);
 
 	memset(p, 0, sizeof(peec_t));
 }

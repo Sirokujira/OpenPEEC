@@ -372,6 +372,91 @@ run monopole_ff.peec
 chk "monopole D = 2 x dipole" "$(awk -v m="$(getD)" -v d="$dd" 'BEGIN{printf "%.6f", m/d}')" 2.0 0.01
 chk "monopole ff efficiency" "$(getEff)" 1.0 0.005
 
+echo "--- plane wave incidence (external field excitation)"
+# pw.csv の 1 行目 (port#1、単一周波数) から |Voc| と実効長を取り出す
+getVoc() { awk -F, 'NR==2{print $5}' "$WORK/pw.csv"; }
+getLeff() { awk -F, 'NR==2{print $6}' "$WORK/pw.csv"; }
+
+# (ah) 半波長ダイポール : |l_eff| = lambda/pi = 0.663793 m (正弦電流分布の教科書値)
+cp "$SRC/dipole_pw.peec" "$WORK/"
+run dipole_pw.peec
+chk "dipole pw leff" "$(getLeff)" 0.66379304 0.01
+
+# (ai) 微小ループ : |Voc| = k E0 A = 8.383380e-3 V (ファラデーの法則 = 磁界結合。
+#      ダイポールの電界結合とは別経路の判定)
+cp "$SRC/loop_pw.peec" "$WORK/"
+run loop_pw.peec
+chk "loop pw |Voc| (kE0A)" "$(getVoc)" 8.383380e-3 0.005
+# 磁界結合は E と 90 deg ずれるので Voc はほぼ純虚数 (残差は O((ks)^2))
+awk -F, 'NR==2 {
+	ar = ($3 < 0) ? -$3 : $3; rel = ar / $5;
+	printf "%-24s |Re Voc|/|Voc|=%.4f -> %s (<= 0.05)\n", "loop pw quadrature", rel, (rel <= 0.05) ? "OK" : "NG";
+	exit (rel <= 0.05) ? 0 : 1
+}' "$WORK/pw.csv" || status=1
+
+# 誘起電流 : ループを 50 ohm で閉じると |I| = |Voc| / |R + R_wire + j wL|。
+# 期待値はファラデーの法則と検証済みの L (loop_square) の組合せで、
+# 誘起電流の実装とは独立。直列ループなので 4 区間の電流は等しい。
+sed 's/^planewave = .*/planewave = 90 0 2 1.0\ndistribution = 1\nresistor = 1 5 50/' \
+	"$SRC/loop_pw.peec" > "$WORK/loop_pw_load.peec"
+run loop_pw_load.peec
+awk -F, '$1 == "Ipw" {
+	n++; if ($9 > mx) mx = $9; if ((mn == 0) || ($9 < mn)) mn = $9;
+} END {
+	spread = (mx > 0) ? ((mx - mn) / mx) : 1;
+	ok = (n == 4) && (spread <= 1e-9);
+	printf "%-24s segments=%d spread=%.3e -> %s\n", "loop pw I continuity", n, spread, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/dist.csv" || status=1
+chk "loop pw induced |I|" "$(awk -F, '$1 == "Ipw" {print $9; exit}' "$WORK/dist.csv")" 1.239605e-4 0.005
+
+# (aj) 相反定理 : 送信パス (farfield の放射ベクトル) と受信パス (planewave の
+#      起電力) は独立な実装だが、離散化した系でも次の恒等式が厳密に成り立つ :
+#        l_eff = rE * 2 lambda / (-j eta0),   Voc = -E0 (e^・l_eff)
+#      (符号は mna_rhs_port の +1A 注入と Voc = v(n1)-v(n2) の向きの差)
+#      到来方向・偏波を変えて突き合わせることで、位相規約・sinc 積分・
+#      偏波ベクトル・角度依存が同時に検証される。
+# recip <入力.peec のパス> <far.csv> <f[Hz]> <theta> <phi> <pol>
+recip() {
+	sed "s/^planewave = .*/planewave = $4 $5 $6 1.0/" "$1" > "$WORK/recip_t.peec"
+	run recip_t.peec
+	awk -F, -v th="$4" -v ph="$5" -v pol="$6" -v fr="$3" -v lb="$1" '
+	BEGIN {c = 2.99792458e8; lam = c / fr; eta = 4 * atan2(0, -1) * 1e-7 * c; fac = 2 * lam / eta}
+	NR == FNR && FNR > 1 && (($2 + 0) == th) && (($3 + 0) == ph) {
+		if (pol == 1) {a = $4; b = $5} else {a = $6; b = $7}
+		got = 1; next
+	}
+	FNR == 2 && got {
+		# E0 = 1 : Re = fac*Im(rE)、Im = -fac*Re(rE)
+		er = fac * b; ei = -fac * a;
+		dr = $3 - er; di = $4 - ei;
+		d = sqrt((dr * dr) + (di * di)) / (sqrt((er * er) + (ei * ei)) + 1e-12);
+		ok = (d <= 1e-6);
+		printf "%-24s rel.diff=%.3e -> %s\n", sprintf("recip %d/%d/p%d", th, ph, pol), d, ok ? "OK" : "NG";
+		exit ok ? 0 : 1
+	}
+	END {if (!got) {printf "*** far.csv row (%d, %d) not found for %s\n", th, ph, lb; exit 1}}
+	' "$2" "$WORK/pw.csv" || status=1
+}
+
+# 非対称な折れ曲がりダイポール : パターンが theta / phi 両成分を持つ
+cp "$SRC/bent_pw.peec" "$WORK/"
+run bent_pw.peec
+cp "$WORK/far.csv" "$WORK/far_bent.csv"
+for spec in "30 45 1" "60 120 1" "90 30 2" "120 255 2" "45 90 2"; do
+	# shellcheck disable=SC2086
+	recip "$SRC/bent_pw.peec" "$WORK/far_bent.csv" 1.5e8 $spec
+done
+
+# (ak) 地板ありの相反 : 送信側の鏡像 (farfield) と受信側の PEC 反射波
+#      (planewave) が整合していることの判定。上半球のみ (theta <= 90)
+sed -e 's/^frequency = .*/frequency = 1.4376e8 1.4376e8 0/' \
+    -e 's/^title = .*/title = monopole receiving\nfarfield = 18 24\nplanewave = 60 0 1 1.0/' \
+    "$SRC/monopole_gp.peec" > "$WORK/mono_pw.peec"
+run mono_pw.peec
+cp "$WORK/far.csv" "$WORK/far_mono.csv"
+recip "$WORK/mono_pw.peec" "$WORK/far_mono.csv" 1.4376e8 60 0 1
+
 echo "--- dielectric (excess capacitance)"
 # (ag) 平行平板 + εr = 4 ブリック : ΔC = (εr-1) eps0 A/d = 1.06250e-10 F。
 #      平板は等電位面なので過剰容量ネットワークの合計は格子に依らず厳密

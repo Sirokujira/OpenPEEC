@@ -107,7 +107,8 @@ int main(int argc, char *argv[])
 	output_zin(&peec, fp_log);
 	output_spara(&peec, fp_log);
 	if (output_csv(&peec, FN_CSV) || output_touchstone(&peec) ||
-	    output_dist(&peec, FN_DIST) || output_far(&peec, FN_FAR, fp_log)) {
+	    output_dist(&peec, FN_DIST) || output_far(&peec, FN_FAR, fp_log) ||
+	    output_pw(&peec, FN_PW, fp_log)) {
 		peec_free(&peec);
 		fclose(fp_log);
 		exit(1);
@@ -120,6 +121,10 @@ int main(int argc, char *argv[])
 	if (peec.ffnth > 0) {
 		strcat(str, ", ");
 		strcat(str, FN_FAR);
+	}
+	if (peec.pw) {
+		strcat(str, ", ");
+		strcat(str, FN_PW);
 	}
 	monitor(fp_log, str);
 
