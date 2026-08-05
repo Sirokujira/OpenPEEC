@@ -112,7 +112,7 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 						const double amp = sgn * s->len * sinc(0.5 * kw * s->len * rt);
 						const d_complex_t ph = d_complex(cos(kw * rr), sin(kw * rr));
 						const d_complex_t w = d_rmul(amp,
-							d_mul(p->segi[(size_t)ifreq * p->nseg + m], ph));
+							d_mul(p->segi[DIDX(p, ifreq, 0, m)], ph));
 						for (int c = 0; c < 3; c++) {
 							nv[c] = d_add(nv[c], d_rmul(tv[c], w));
 						}

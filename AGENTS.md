@@ -30,7 +30,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、99 件)
+# 検証 (解析解・文献値との比較、100 件)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -41,7 +41,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 99 件すべて OK でなければ
+**変更したら必ず `peec_check.sh` を通すこと。** 100 件すべて OK でなければ
 完了ではない。「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
 計測時の注意 : ソルバーが失敗すると `zin.csv` / `peec.log` は**前回の実行結果が
