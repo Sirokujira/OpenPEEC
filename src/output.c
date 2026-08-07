@@ -213,10 +213,15 @@ int output_pw(const peec_t *p, const char *fn, FILE *fp_log)
 /*
 電流・電荷分布 (dist.csv) — distribution = 1 のときのみ
 
-  - I   : port #1 を 1A で励振したときの各導体区間の電流 [A] (区間中点の座標つき)
+  - I   : ポート励振時の各導体区間の電流 [A] (区間中点の座標つき)
   - Ipw : 平面波入射 (planewave) で誘起された区間電流 [A] — EMC イミュニティ用
-  - Q   : port #1 励振時の各容量セルの電荷 [C] (capacitance = 1 のときのみ)
+  - Q   : ポート励振時の各容量セルの電荷 [C] (capacitance = 1 のときのみ)
 を 1 ファイルにまとめる。type 列で行を区別する。
+
+port 列は**その行を励振したポート番号** : I / Q は「ポート j に 1A を注入し
+他ポートは開放」の状態なので、多ポートではポートごとに 1 組ずつ出る
+(Z 行列の第 j 列に対応するのでクロストークの経路が追える)。Ipw は平面波が
+励振源で特定のポートに属さないので 0。
 
 区間電流は MNA 未知数ベクトルの [offS, offS + nseg) がそのまま枝電流なので
 追加計算は不要。セル電荷は q = C v (v は各セルのノード電位) で求める。
@@ -232,31 +237,33 @@ int output_dist(const peec_t *p, const char *fn)
 		return 1;
 	}
 
-	fprintf(fp, "type,index,frequency[Hz],x[m],y[m],z[m],real,imag,abs\n");
+	fprintf(fp, "type,port,index,frequency[Hz],x[m],y[m],z[m],real,imag,abs\n");
 
 	for (int ifreq = 0; ifreq < p->nfreq; ifreq++) {
 		const double f = freq_at(p, ifreq);
 
-		// 区間電流 [A] : 座標は区間の中点
+		// 区間電流 [A] : 座標は区間の中点。励振ポートごとに 1 組
 		if (p->segi != NULL) {
-			for (int m = 0; m < p->nseg; m++) {
-				const seg_t *s = &p->seg[m];
-				const d_complex_t v = p->segi[(size_t)ifreq * p->nseg + m];
-				fprintf(fp, "I,%d,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e\n",
-					m, f,
-					0.5 * (s->x1[0] + s->x2[0]),
-					0.5 * (s->x1[1] + s->x2[1]),
-					0.5 * (s->x1[2] + s->x2[2]),
-					v.r, v.i, d_abs(v));
+			for (int j = 0; j < p->nport; j++) {
+				for (int m = 0; m < p->nseg; m++) {
+					const seg_t *s = &p->seg[m];
+					const d_complex_t v = p->segi[DIDX(p, ifreq, j, m)];
+					fprintf(fp, "I,%d,%d,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e\n",
+						j + 1, m, f,
+						0.5 * (s->x1[0] + s->x2[0]),
+						0.5 * (s->x1[1] + s->x2[1]),
+						0.5 * (s->x1[2] + s->x2[2]),
+						v.r, v.i, d_abs(v));
+				}
 			}
 		}
 
-		// 平面波入射による誘起区間電流 [A] (planewave 指定時のみ)
+		// 平面波入射による誘起区間電流 [A] (planewave 指定時のみ、port = 0)
 		if (p->segipw != NULL) {
 			for (int m = 0; m < p->nseg; m++) {
 				const seg_t *s = &p->seg[m];
 				const d_complex_t v = p->segipw[(size_t)ifreq * p->nseg + m];
-				fprintf(fp, "Ipw,%d,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e\n",
+				fprintf(fp, "Ipw,0,%d,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e\n",
 					m, f,
 					0.5 * (s->x1[0] + s->x2[0]),
 					0.5 * (s->x1[1] + s->x2[1]),
@@ -267,22 +274,24 @@ int output_dist(const peec_t *p, const char *fn)
 
 		// セル電荷 [C] : 座標はそのセルに属する電荷セルの中点の平均
 		if (p->cellq != NULL) {
-			for (int m = 0; m < p->ncell; m++) {
-				double xc[3] = {0, 0, 0};
-				int cnt = 0;
-				for (int h = 0; h < p->nchg; h++) {
-					if (p->cellof[h] != m) continue;
-					for (int d = 0; d < 3; d++) {
-						xc[d] += 0.5 * (p->chg[h].x1[d] + p->chg[h].x2[d]);
+			for (int j = 0; j < p->nport; j++) {
+				for (int m = 0; m < p->ncell; m++) {
+					double xc[3] = {0, 0, 0};
+					int cnt = 0;
+					for (int h = 0; h < p->nchg; h++) {
+						if (p->cellof[h] != m) continue;
+						for (int d = 0; d < 3; d++) {
+							xc[d] += 0.5 * (p->chg[h].x1[d] + p->chg[h].x2[d]);
+						}
+						cnt++;
 					}
-					cnt++;
+					if (cnt > 0) {
+						for (int d = 0; d < 3; d++) xc[d] /= cnt;
+					}
+					const d_complex_t v = p->cellq[QIDX(p, ifreq, j, m)];
+					fprintf(fp, "Q,%d,%d,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e\n",
+						j + 1, m, f, xc[0], xc[1], xc[2], v.r, v.i, d_abs(v));
 				}
-				if (cnt > 0) {
-					for (int d = 0; d < 3; d++) xc[d] /= cnt;
-				}
-				const d_complex_t v = p->cellq[(size_t)ifreq * p->ncell + m];
-				fprintf(fp, "Q,%d,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e\n",
-					m, f, xc[0], xc[1], xc[2], v.r, v.i, d_abs(v));
 			}
 		}
 	}

@@ -202,8 +202,9 @@ typedef struct {
 	d_complex_t *zmat;            // [nfreq * nport * nport]
 	d_complex_t *smat;            // [nfreq * nport * nport]
 	// 分布 (distribution = 1 のときのみ)。port #1 を 1A で励振したときの値。
-	d_complex_t *segi;            // [nfreq * nseg]  区間電流 [A]
-	d_complex_t *cellq;           // [nfreq * ncell] セル電荷 [C] (capacitance = 1 のときのみ)
+	// ポート j に 1A を注入したときの値。添字は DIDX / QIDX を使う。
+	d_complex_t *segi;            // [nfreq * nport * nseg]  区間電流 [A]
+	d_complex_t *cellq;           // [nfreq * nport * ncell] セル電荷 [C] (capacitance = 1)
 	// 平面波入射 (planewave) : 各ポートの端子電圧 [V] と誘起電流 [A]
 	// (ポート間に素子が無ければ端子電圧 = 開放端電圧 Voc)
 	d_complex_t *voc;             // [nport * nfreq]
@@ -212,6 +213,10 @@ typedef struct {
 
 // Z / S 行列の添字 (周波数 ifreq、行 i、列 j)
 #define ZIDX(p, ifreq, i, j) ((size_t)((ifreq) * (p)->nport + (i)) * (p)->nport + (j))
+
+// 分布の添字 (周波数 ifreq、励振ポート j、セル m)
+#define DIDX(p, ifreq, j, m) ((size_t)((ifreq) * (p)->nport + (j)) * (p)->nseg + (m))
+#define QIDX(p, ifreq, j, m) ((size_t)((ifreq) * (p)->nport + (j)) * (p)->ncell + (m))
 
 // 掃引周波数 (ifreq = 0 ... nfreq-1)。flog = 1 なら等比 (対数) 掃引。
 static inline double freq_at(const peec_t *p, int ifreq)

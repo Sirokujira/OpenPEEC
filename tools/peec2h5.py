@@ -36,9 +36,9 @@ HDF5 化はこの変換スクリプトが受け持つ。**ソルバーのビル�
     /farfield/e_phi       [nf, ntheta, nphi] complex   rE  V
     /farfield/d           [nf, ntheta, nphi]       dBi
     /farfield/g           [nf, ntheta, nphi]       dBi
-    /distribution/<type>/{position,value,frequency}
+    /distribution/<type>/{port,frequency,position,value}
         type = I (ポート励振の区間電流) / Ipw (平面波による誘起電流) /
-               Q (容量セルの電荷)
+               Q (容量セルの電荷)。value は [ポート, 周波数, セル]
 """
 
 import argparse
@@ -211,22 +211,31 @@ def conv_far(h5, rows):
 
 
 def conv_dist(h5, rows):
-    """dist.csv -> /distribution/<type>"""
+    """dist.csv -> /distribution/<type>
+
+    value は [励振ポート, 周波数, セル] の 3 次元。I / Q は「ポート j に 1A、
+    他は開放」の分布がポートごとに 1 組出る (Z 行列の第 j 列に対応)。
+    Ipw は平面波が励振源なので port = 0 の 1 組だけ。
+    """
     grp = h5.create_group("distribution")
     units = {"I": "A", "Ipw": "A", "Q": "C"}
     kinds = uniq(r["type"] for r in rows)
     for kind in kinds:
         sel = [r for r in rows if r["type"] == kind]
+        ports = uniq(int(r["port"]) for r in sel)
         freqs = uniq(float(r["frequency[Hz]"]) for r in sel)
         idx = uniq(int(r["index"]) for r in sel)
-        val = np.zeros((len(freqs), len(idx)), dtype=np.complex128)
+        val = np.zeros((len(ports), len(freqs), len(idx)), dtype=np.complex128)
         pos = np.zeros((len(idx), 3))
         for r in sel:
+            j = ports.index(int(r["port"]))
             k = freqs.index(float(r["frequency[Hz]"]))
             m = idx.index(int(r["index"]))
-            val[k, m] = complex(float(r["real"]), float(r["imag"]))
+            val[j, k, m] = complex(float(r["real"]), float(r["imag"]))
             pos[m] = (float(r["x[m]"]), float(r["y[m]"]), float(r["z[m]"]))
         sub = grp.create_group(kind)
+        add(sub, "port", np.array(ports, dtype="i4"),
+            note="excited port (1-based); 0 = plane-wave excitation")
         add(sub, "frequency", np.array(freqs), units="Hz")
         add(sub, "position", pos, units="m")
         add(sub, "value", val, units=units.get(kind, ""))

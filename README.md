@@ -224,7 +224,7 @@ peec [-n <threads>] input.peec
 | `peec.log` | 入力インピーダンス表、S パラメータ表、`=== normal end ===` |
 | `zin.csv` | 各ポートの Zin (機械読み取り用) |
 | `peec.sNp` | S パラメータの Touchstone 1.1 形式 (N = ポート数) |
-| `dist.csv` | 電流・電荷分布 (`distribution = 1` のときのみ) |
+| `dist.csv` | 電流・電荷分布 (`distribution = 1` のときのみ)。`port` 列が励振ポート番号 (多ポートではポートごとに 1 組)、平面波による誘起電流 `Ipw` は 0 |
 | `far.csv` | 遠方界パターン rE と D / G [dBi] (`farfield` 指定時のみ) |
 | `pw.csv` | 平面波入射の端子電圧・実効長・利用可能電力 (`planewave` 指定時のみ) |
 | `tran.csv` | 過渡波形 (励振 / S 行列の時間応答 / 誘起電圧、`transient` 指定時のみ) |
@@ -292,7 +292,7 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `capacitance` | `capacitance = 1` | 1 で容量性 PEEC (電位係数) を有効化 (省略時 0) |
 | `retardation` | `retardation = 1` | 1 で遅延 (フルウェーブ PEEC) を有効化 (省略時 0) |
 | `acceleration` | `acceleration = 1` | 1 で掃引 LU 再利用の GMRES (省略時 0 = 毎周波数 LU)。結果は密 LU と実質同一 |
-| `distribution` | `distribution = 1` | 1 で電流・電荷分布を `dist.csv` に出力 (省略時 0) |
+| `distribution` | `distribution = 1` | 1 で電流・電荷分布を `dist.csv` に出力 (省略時 0)。多ポートでは「ポート j に 1A、他は開放」の分布をポートごとに出す |
 
 - 導体と回路素子の接続は `node` キーで行います。導体端点 (面導体は格子点)
   の座標が `nodetol` 以内で一致するとそのノード id に接続されます。
@@ -364,6 +364,7 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `quad_square.peec` + `skineffect` | 高周波抵抗が plate 版と一致 (パネルにも合成式が適用されること)。合成式の DC 極限が幾何断面の抵抗に一致 | 0.1% |
 | `strip_dipole_ret.peec` 遅延 × 面セル | 共振長 l = 0.478λ、Rin = 73.1 Ω (教科書値) と、同じ帯の `bar` 版 (等価半径 = 独立経路) との共振周波数・Rin 一致 | 5% / 10% / 3% / 5% |
 | `diel_pp.peec` + tanδ = 0.02 | 損失性平行平板の G = ωε₀εr·tanδ·A/d = 17.8024 µS (解析値)。tanδ = 0 は省略時と bit 一致 | 0.5% / 完全一致 |
+| `twoport_dist.peec` 多ポート分布 | 独立な 2 線に 1 ポートずつ → ポート j 励振で線 j に厳密に 1 A、他方は開放なので 0 A (KCL のみで決まる) | 1e-12 |
 
 ## License
 

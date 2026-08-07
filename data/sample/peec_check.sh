@@ -452,14 +452,14 @@ sed 's/^planewave = .*/planewave = 90 0 2 1.0\ndistribution = 1\nresistor = 1 5 
 	"$SRC/loop_pw.peec" > "$WORK/loop_pw_load.peec"
 run loop_pw_load.peec
 awk -F, '$1 == "Ipw" {
-	n++; if ($9 > mx) mx = $9; if ((mn == 0) || ($9 < mn)) mn = $9;
+	n++; if ($10 > mx) mx = $10; if ((mn == 0) || ($10 < mn)) mn = $10;
 } END {
 	spread = (mx > 0) ? ((mx - mn) / mx) : 1;
 	ok = (n == 4) && (spread <= 1e-9);
 	printf "%-24s segments=%d spread=%.3e -> %s\n", "loop pw I continuity", n, spread, ok ? "OK" : "NG";
 	exit ok ? 0 : 1
 }' "$WORK/dist.csv" || status=1
-chk "loop pw induced |I|" "$(awk -F, '$1 == "Ipw" {print $9; exit}' "$WORK/dist.csv")" 1.239605e-4 0.005
+chk "loop pw induced |I|" "$(awk -F, '$1 == "Ipw" {print $10; exit}' "$WORK/dist.csv")" 1.239605e-4 0.005
 
 # (aj) 相反定理 : 送信パス (farfield の放射ベクトル) と受信パス (planewave の
 #      起電力) は独立な実装だが、離散化した系でも次の恒等式が厳密に成り立つ :
@@ -656,9 +656,9 @@ echo "--- current / charge distribution"
 #     (キルヒホッフの電流則。分割数・周波数・材料に依らず厳密)
 cp "$SRC/wire_dist.peec" "$WORK/"
 run wire_dist.peec
-awk -F, '$1 == "I" {
-	n++; d = $9 - 1.0; ad = (d < 0) ? -d : d; if (ad > mx) mx = ad;
-	ai = ($8 < 0) ? -$8 : $8; if (ai > mi) mi = ai;
+awk -F, '($1 == "I") && ($2 == 1) {
+	n++; d = $10 - 1.0; ad = (d < 0) ? -d : d; if (ad > mx) mx = ad;
+	ai = ($9 < 0) ? -$9 : $9; if (ai > mi) mi = ai;
 }
 END {
 	ok = (n == 8) && (mx <= 1e-9) && (mi <= 1e-9);
@@ -671,14 +671,32 @@ END {
 #     構造の総電荷は 0 のまま (max|q| に対する相対値で判定)
 sed 's/^distribution = 1/capacitance = 1\ndistribution = 1/' "$SRC/wire_dist.peec" > "$WORK/wire_dist_cap.peec"
 run wire_dist_cap.peec
-awk -F, '$1 == "Q" {
-	n++; sr += $7; si += $8; if ($9 > mx) mx = $9;
+awk -F, '($1 == "Q") && ($2 == 1) {
+	n++; sr += $8; si += $9; if ($10 > mx) mx = $10;
 }
 END {
 	rel = (mx > 0) ? sqrt(sr * sr + si * si) / mx : 1;
 	ok = (n > 0) && (rel <= 1e-6);
 	printf "%-24s cells=%d |sum q|/max|q|=%.3e -> %s\n",
 		"wire charge neutrality", n, rel, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/dist.csv" || status=1
+
+# (ao) 多ポート : dist.csv はポートごとに 1 組出る (Z 行列の第 j 列)。
+#      独立な 2 線に 1 ポートずつ置くと、ポート j 励振では線 j に厳密に 1A、
+#      他方は開放なので厳密に 0A になる (KCL のみで決まり、分割数・周波数・
+#      部分要素の値に依存しない)。port 列の取り違えがあれば即座に落ちる。
+cp "$SRC/twoport_dist.peec" "$WORK/"
+run twoport_dist.peec
+awk -F, '$1 == "I" {
+	n++; want = (((($2 + 0) == 1) && (($3 + 0) < 4)) ||
+	             ((($2 + 0) == 2) && (($3 + 0) >= 4))) ? 1 : 0;
+	d = $10 - want; ad = (d < 0) ? -d : d; if (ad > mx) mx = ad;
+}
+END {
+	ok = (n == 16) && (mx <= 1e-12);
+	printf "%-24s rows=%d max||I|-expected|=%.3e -> %s\n",
+		"two-port I per port", n, mx, ok ? "OK" : "NG";
 	exit ok ? 0 : 1
 }' "$WORK/dist.csv" || status=1
 
