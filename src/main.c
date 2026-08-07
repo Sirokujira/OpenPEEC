@@ -47,12 +47,14 @@ int main(int argc, char *argv[])
 	}
 
 	// logo
-	sprintf(str, "<<< %s Ver.%d.%d.%d >>>", PROGRAM, VERSION_MAJOR, VERSION_MINOR, VERSION_BUILD);
+	// (sprintf は macOS の AppleClang で非推奨警告になるので snprintf を使う)
+	snprintf(str, sizeof(str), "<<< %s Ver.%d.%d.%d >>>",
+		PROGRAM, VERSION_MAJOR, VERSION_MINOR, VERSION_BUILD);
 	monitor(fp_log, str);
 #ifdef _OPENMP
-	sprintf(str, "CPU, thread=%d", nthread);
+	snprintf(str, sizeof(str), "CPU, thread=%d", nthread);
 #else
-	sprintf(str, "CPU, no OpenMP");
+	snprintf(str, sizeof(str), "%s", "CPU, no OpenMP");
 #endif
 	monitor(fp_log, str);
 
@@ -113,7 +115,8 @@ int main(int argc, char *argv[])
 		fclose(fp_log);
 		exit(1);
 	}
-	sprintf(str, "output filename : %s, %s, peec.s%dp", FN_LOG, FN_CSV, peec.nport);
+	snprintf(str, sizeof(str), "output filename : %s, %s, peec.s%dp",
+		FN_LOG, FN_CSV, peec.nport);
 	if (peec.dist) {
 		strcat(str, ", ");
 		strcat(str, FN_DIST);
@@ -133,7 +136,8 @@ int main(int argc, char *argv[])
 	monitor(fp_log, str);
 
 	// cpu time
-	sprintf(str, "cpu time : setup %.3f s, solve %.3f s", cpu1 - cpu0, cpu2 - cpu1);
+	snprintf(str, sizeof(str), "cpu time : setup %.3f s, solve %.3f s",
+		cpu1 - cpu0, cpu2 - cpu1);
 	monitor(fp_log, str);
 
 	monitor(fp_log, "=== normal end ===");
