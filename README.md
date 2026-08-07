@@ -175,7 +175,8 @@ same portability rules, no external numerical libraries.
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解と比較、許容誤差は各ケース 0.5〜2%)
+# 検証 (解析解・文献値と比較、100 件。許容は判定ごとに 1e-12 〜 3%)
+# 実行ファイルは相対パスでもよい (スクリプトが絶対パスに直す)
 sh data/sample/peec_check.sh bin/peec /tmp/peec-check
 
 # メモリ健全性の検証 (AddressSanitizer + UndefinedBehaviorSanitizer)

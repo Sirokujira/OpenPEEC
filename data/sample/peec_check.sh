@@ -4,7 +4,8 @@
 # data/sample/ の各ケースを実行し、zin.csv / peec.log を解析解と比較する。
 # 期待値の導出は各 .peec ファイルのコメント参照。
 #
-# 使い方 : peec_check.sh <peec 実行ファイル(絶対パス)> [作業ディレクトリ]
+# 使い方 : peec_check.sh <peec 実行ファイル> [作業ディレクトリ]
+#   実行ファイルは相対パスでもよい (下で絶対パスに直す)。
 
 set -e
 
@@ -15,6 +16,23 @@ TWOPI=6.283185307179586
 
 if [ -z "$PEEC" ]; then
 	echo "Usage: peec_check.sh <peec> [workdir]" >&2
+	exit 2
+fi
+
+# run() は作業ディレクトリへ cd してから実行するので、相対パスのままだと
+# そこから解決できずに "No such file or directory" になる。ここで絶対パスに
+# 直しておき、bin/peec と "$PWD/bin/peec" のどちらで呼ばれても動くようにする。
+# (?:[/\\]* は Windows のドライブレター表記 C:/... を絶対パスとして扱うため)
+case "$PEEC" in
+	/* | ?:[/\\]*) ;;
+	*) PEEC="$(pwd)/$PEEC" ;;
+esac
+
+# ビルド前に呼ばれたときは早めに止める (存在しないと全ケースが同じ理由で
+# 落ちて原因が見えにくい)。Windows で拡張子なしのパスを渡す場合もあるので
+# .exe も見る。
+if [ ! -x "$PEEC" ] && [ ! -x "$PEEC.exe" ]; then
+	echo "*** $PEEC が見つからない (先に cmake --build build を実行する)" >&2
 	exit 2
 fi
 
