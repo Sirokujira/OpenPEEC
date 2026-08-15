@@ -285,9 +285,14 @@ int input_data(FILE *fp, peec_t *p)
 			}
 		}
 		else if (!strcmp(strkey, "dielectric")) {
-			// dielectric = ox oy oz  ax ay az  bx by bz  厚さ epsr ndiv_a ndiv_b ndiv_t [tand]
+			// dielectric = ox oy oz  ax ay az  bx by bz  厚さ epsr
+			//              ndiv_a ndiv_b ndiv_t [tand [eps_inf f_relax]]
 			// org を底面として法線 (ea x eb) 方向へ thick 押し出した直方体。
-			// tand (省略時 0) は誘電正接 : epsr* = epsr (1 - j tand)
+			// tand (省略時 0) は誘電正接 : epsr* = epsr (1 - j tand)。
+			// eps_inf f_relax を書くと単極 Debye 分散 :
+			//   epsr*(f) = eps_inf + (epsr - eps_inf)/(1 + j f/f_relax)
+			// (因果的で Kramers-Kronig を満たす。損失は緩和が生むので
+			//  定数 tand との併用は二重計上 : tand = 0 を書くこと)
 			if (ntoken < 16) err = 1;
 			else {
 				APPEND(p->diel, p->ndiel, cdiel, diel_t);
@@ -305,6 +310,14 @@ int input_data(FILE *fp, peec_t *p)
 				e->ndivt = atoi(token[15]);
 				e->tand = (ntoken >= 17) ? atof(token[16]) : 0;
 				if (e->tand < 0) err = 1;
+				if (ntoken >= 19) {
+					e->epsinf = atof(token[17]);
+					e->frelax = atof(token[18]);
+					// eps_inf は 1 以上 epsr 以下 (緩和で誘電率は下がる)。
+					// 定数 tand と Debye の併用は損失の二重計上なので拒否する
+					if ((e->epsinf < 1) || (e->epsinf > e->epsr)
+					 || (e->frelax <= 0) || (e->tand != 0)) err = 1;
+				}
 				const double la = sqrt((e->ea[0] * e->ea[0]) + (e->ea[1] * e->ea[1]) + (e->ea[2] * e->ea[2]));
 				const double lb = sqrt((e->eb[0] * e->eb[0]) + (e->eb[1] * e->eb[1]) + (e->eb[2] * e->eb[2]));
 				const double ab = (e->ea[0] * e->eb[0]) + (e->ea[1] * e->eb[1]) + (e->ea[2] * e->eb[2]);

@@ -526,6 +526,36 @@ run mono_pw.peec
 cp "$WORK/far.csv" "$WORK/far_mono.csv"
 recip "$WORK/mono_pw.peec" "$WORK/far_mono.csv" 1.4376e8 60 0 1
 
+# (aq) 周波数分散 (単極 Debye) : 空気ケースとのアドミタンス差が
+#      dY(f) = j w eps0 (epsr*(f) - 1) A/d に一致すること (等電位面間の
+#      過剰ラダーは周波数ごとに厳密)。3 点 (f_relax/100, f_relax,
+#      100 f_relax) x (G, B) の最大相対誤差で判定。期待値は Debye の
+#      解析式そのもので、コードの出力を使わない。
+cp "$SRC/diel_debye.peec" "$WORK/"
+run diel_debye.peec
+cp "$csv" "$WORK/zin_debye.csv"
+sed '/^dielectric/d' "$SRC/diel_debye.peec" > "$WORK/diel_debye_air.peec"
+run diel_debye_air.peec
+paste -d, "$WORK/zin_debye.csv" "$csv" | awk -F, 'BEGIN {
+	PI = atan2(0, -1); e0 = 8.854187817620389e-12;
+	K = e0 * 0.0016 / 4e-4; es = 4; ei = 2; fr = 1e5
+}
+NR > 1 {
+	f = $2; w = 2 * PI * f;
+	d1 = ($3 * $3) + ($4 * $4);   g1 = $3 / d1;  b1 = -$4 / d1;
+	d2 = ($10 * $10) + ($11 * $11); g2 = $10 / d2; b2 = -$11 / d2;
+	q = f / fr; den = 1 + (q * q);
+	a = ei + ((es - ei) / den); b = -(es - ei) * q / den;
+	eG = w * K * (-b); eB = w * K * (a - 1);
+	dg = ((g1 - g2) / eG) - 1; if (dg < 0) dg = -dg; if (dg > mx) mx = dg;
+	db = ((b1 - b2) / eB) - 1; if (db < 0) db = -db; if (db > mx) mx = db;
+	n++
+} END {
+	ok = (n == 3) && (mx <= 2e-3);
+	printf "%-24s freqs=%d max rel err=%.3e -> %s (<= 2e-3)\n", "debye dY (3 freqs)", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+
 echo "--- transient (inverse FFT of the sweep)"
 # (al) 周波数に依らない反射係数 : y(t) = S11 x(t) が全時刻で厳密に成り立つ。
 #      励振と応答を同じ合成式で作るので帯域打ち切りも相殺する。

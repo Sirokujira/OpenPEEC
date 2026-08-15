@@ -97,6 +97,8 @@ typedef struct {
 typedef struct {
 	double org[3], ea[3], eb[3];
 	double thick, epsr, tand;
+	double epsinf, frelax;        // 単極 Debye : epsr*(f) = eps_inf +
+	                              //   (epsr - eps_inf)/(1 + j f/frelax)。frelax = 0 で無効
 	int    ndiva, ndivb, ndivt;
 } diel_t;
 
@@ -121,10 +123,16 @@ typedef struct {
 	double sigma;
 	double res;                   // DC 抵抗 = len / (sigma * area)
 	int    diel;                  // 1 = 誘電体セル (枝の直列インピーダンスは下記)
-	// 複素比誘電率 epsr* = epsr (1 - j tand) の過剰分 (epsr* - 1) を枝に載せる :
-	//   Y = jw eps0 (epsr* - 1) A/len = w (gexc + j cexc)  ->  Z = 1/Y
+	// 複素比誘電率 epsr* の過剰分 (epsr* - 1) を枝に載せる :
+	//   Y = jw eps0 (epsr*(f) - 1) A/len  ->  Z = 1/Y
+	// 非分散 (frelax = 0) : epsr* = epsr (1 - j tand) は周波数に依らないので
+	// 事前計算した cexc / gexc を使う (Y = w (gexc + j cexc))。
+	// 分散 (frelax > 0)   : 単極 Debye epsr*(f) = epsinf + (epss - epsinf)/
+	//   (1 + j f/frelax)。mna.c が周波数ごとに gfac から Y を組む。
 	double cexc;                  // eps0 (epsr - 1) area / len       [F]
 	double gexc;                  // eps0 epsr tand area / len        [F] (損失側)
+	double gfac;                  // eps0 area / len [F] (分散モデル用の幾何係数)
+	double epss, epsinf, frelax;  // Debye の静的値・光学値・緩和周波数 [Hz]
 } seg_t;
 
 typedef struct {

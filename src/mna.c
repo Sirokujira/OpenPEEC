@@ -89,6 +89,31 @@ int mna_numbering(peec_t *p, FILE *fp_log)
 	return 0;
 }
 
+/*
+誘電体セルの直列インピーダンス (分極電流の枝)
+
+  Z = 1/Y,  Y = jw eps0 (epsr*(f) - 1) A/len
+
+非分散 (frelax = 0) : epsr* = epsr (1 - j tand) は周波数に依らないので
+事前計算済みの cexc / gexc から Y = w (gexc + j cexc)。
+分散 (frelax > 0) : 単極 Debye
+  epsr*(f) = epsinf + (epss - epsinf)/(1 + j f/frelax)
+(因果的で Kramers-Kronig を満たす)。epsr* = a + jb (b <= 0) とすると
+  Y = jw eps0 gfac (a - 1 + jb) = w eps0 gfac (-b + j(a - 1))
+で、-b >= 0 が緩和損失のコンダクタンスになる。
+*/
+static d_complex_t zint_diel(const seg_t *s, double omega, double f)
+{
+	if (s->frelax > 0) {
+		const d_complex_t er = d_add(d_complex(s->epsinf, 0),
+			d_div(d_complex(s->epss - s->epsinf, 0), d_complex(1, f / s->frelax)));
+		return d_inv(d_complex(omega * s->gfac * (-er.i),
+		                       omega * s->gfac * (er.r - 1)));
+	}
+
+	return d_rmul(1 / omega, d_inv(d_complex(s->gexc, s->cexc)));
+}
+
 // a[i*n+j] += v (i, j < 0 は基準ノード : スキップ)
 static void stamp(d_complex_t *a, int n, int i, int j, d_complex_t v)
 {
@@ -177,12 +202,9 @@ void mna_assemble(const peec_t *p, double f, d_complex_t *a)
 		stamp(a, n, i2, rk, d_complex(-1, 0));
 		stamp(a, n, rk, i2, d_complex(-1, 0));
 		// 内部インピーダンス : 既定は DC 抵抗、skineffect = 1 で表皮効果 + 内部 L。
-		// 誘電体セルは過剰容量の直列インピーダンス (分極電流の枝)。
-		// 複素比誘電率 epsr* = epsr (1 - j tand) では
-		//   Y = jw eps0 (epsr* - 1) A/len = w (gexc + j cexc)  ->  Z = 1/Y
-		// tand = 0 (gexc = 0) なら Z = -j/(w cexc) で従来と完全に一致する。
+		// 誘電体セルは過剰分 (epsr* - 1) の直列インピーダンス (zint_diel)
 		const d_complex_t zint = p->seg[k].diel
-			? d_rmul(1 / omega, d_inv(d_complex(p->seg[k].gexc, p->seg[k].cexc)))
+			? zint_diel(&p->seg[k], omega, f)
 			: p->skin
 			? zint_seg(&p->seg[k], f)
 			: d_complex(p->seg[k].res, 0);
