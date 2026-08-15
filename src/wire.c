@@ -65,7 +65,7 @@ static int node_at(peec_t *p, const double *x, int *autoid)
 // 誘電体の体積セル (枝) を追加する。断面 wid x thk、横方向 wv。
 // 枝の直列インピーダンスは過剰容量 1/(jw C_e) (mna.c が diel を見て入れる)。
 static void diel_seg(peec_t *p, const double *x1, const double *x2, int n1, int n2,
-	const double *wv, double wid, double thk, double epsr, double tand)
+	const double *wv, double wid, double thk, const diel_t *dl)
 {
 	seg_t *s = &p->seg[p->nseg];
 	memset(s, 0, sizeof(seg_t));
@@ -89,9 +89,15 @@ static void diel_seg(peec_t *p, const double *x1, const double *x2, int n1, int 
 	s->aP = 0.25 * (wid + thk);
 	s->sigma = 0;
 	s->res = 0;
-	// 複素比誘電率 epsr* = epsr (1 - j tand) の過剰分 (epsr* - 1) を枝に載せる
-	s->cexc = EPS0 * (epsr - 1) * s->area / s->len;
-	s->gexc = EPS0 * epsr * tand * s->area / s->len;
+	// 複素比誘電率 epsr* の過剰分 (epsr* - 1) を枝に載せる。
+	// 非分散は事前計算 (cexc / gexc)、Debye (frelax > 0) は mna.c が
+	// 幾何係数 gfac から周波数ごとに Y を組む。
+	s->cexc = EPS0 * (dl->epsr - 1) * s->area / s->len;
+	s->gexc = EPS0 * dl->epsr * dl->tand * s->area / s->len;
+	s->gfac = EPS0 * s->area / s->len;
+	s->epss = dl->epsr;
+	s->epsinf = dl->epsinf;
+	s->frelax = dl->frelax;
 	p->nseg++;
 }
 
@@ -117,8 +123,15 @@ static void add_chg(peec_t *p, int node, const double *x1, const double *x2,
 static void panel_node(const panel_t *pa, int i, int j, double *x)
 {
 	if (pa->kind == PANEL_QUAD) {
-		const double u = (double)i / pa->ndiva;
-		const double v = (double)j / pa->ndivb;
+		// grading = 1 : パラメータ空間の余弦分布で縁にセルを寄せる。
+		// セル・双対セルはすべて格子点座標から導かれるので、これだけで
+		// 幅・面積・DC 抵抗のすべてが非一様格子に整合する。
+		const double u = pa->grading
+			? (0.5 * (1 - cos(PI * i / pa->ndiva)))
+			: ((double)i / pa->ndiva);
+		const double v = pa->grading
+			? (0.5 * (1 - cos(PI * j / pa->ndivb)))
+			: ((double)j / pa->ndivb);
 		for (int c = 0; c < 3; c++) {
 			x[c] = ((1 - u) * (1 - v) * pa->v[c])
 			     + (u * (1 - v) * pa->v[3 + c])
@@ -152,7 +165,10 @@ static void panel_node(const panel_t *pa, int i, int j, double *x)
 	v[0] = ((nn[1] * u[2]) - (nn[2] * u[1])) / ul;
 	v[1] = ((nn[2] * u[0]) - (nn[0] * u[2])) / ul;
 	v[2] = ((nn[0] * u[1]) - (nn[1] * u[0])) / ul;
-	const double r = pa->radius * i / pa->ndiva;
+	// grading = 1 : 正弦分布でリングを外周 (電荷の縁特異性側) に寄せる
+	const double r = pa->grading
+		? (pa->radius * sin(0.5 * PI * i / pa->ndiva))
+		: (pa->radius * i / pa->ndiva);
 	const int jm = ((j % pa->ndivb) + pa->ndivb) % pa->ndivb;
 	const double th = 2 * PI * jm / pa->ndivb;
 	for (int c = 0; c < 3; c++) {
@@ -474,17 +490,32 @@ int wire_build(peec_t *p, FILE *fp_log)
 			ta[c] = pl->ea[c] / la;
 			tb[c] = pl->eb[c] / lb;
 		}
-		// 格子点のノード id (行優先 [ia*(nb+1)+ib])
+		// 格子座標 (辺に沿った 0 .. la / 0 .. lb)。
+		// grading = 1 なら余弦分布で縁にセルを寄せる (電荷密度の縁特異性
+		// ~1/sqrt(d) に合わせる)。0 なら従来どおり等間隔。
+		// セルの幅・中心はすべてこの座標配列の隣接中点 (双対格子) から導く
+		// ので、非一様でも面を重複なく張り、DC 抵抗の厳密性も保たれる。
+		double *xa = (double *)malloc((size_t)(na + 1) * sizeof(double));
+		double *xb = (double *)malloc((size_t)(nb + 1) * sizeof(double));
 		int *nid = (int *)malloc((size_t)(na + 1) * (nb + 1) * sizeof(int));
-		if (nid == NULL) {
+		if ((xa == NULL) || (xb == NULL) || (nid == NULL)) {
 			printf("%s\n", "*** memory allocation error (plate)");
+			free(xa); free(xb); free(nid);
 			return 1;
 		}
+		for (int ia = 0; ia <= na; ia++) {
+			xa[ia] = p->grading ? (0.5 * la * (1 - cos(PI * ia / na))) : (ia * ha);
+		}
+		for (int ib = 0; ib <= nb; ib++) {
+			xb[ib] = p->grading ? (0.5 * lb * (1 - cos(PI * ib / nb))) : (ib * hb);
+		}
+
+		// 格子点のノード id (行優先 [ia*(nb+1)+ib])
 		for (int ia = 0; ia <= na; ia++) {
 			for (int ib = 0; ib <= nb; ib++) {
 				double x[3];
 				for (int c = 0; c < 3; c++) {
-					x[c] = pl->org[c] + (ia * ha * ta[c]) + (ib * hb * tb[c]);
+					x[c] = pl->org[c] + (xa[ia] * ta[c]) + (xb[ib] * tb[c]);
 				}
 				nid[(ia * (nb + 1)) + ib] = node_at(p, x, &autoid);
 			}
@@ -510,21 +541,21 @@ int wire_build(peec_t *p, FILE *fp_log)
 		nv[2] = (ta[0] * tb[1]) - (ta[1] * tb[0]);
 
 		// 電流セル : 格子線に沿って隣接ノードを結ぶ。幅は双対格子の横幅
-		// (内部の行/列は h、端は h/2)。
+		// (格子座標の隣接中点 [lo, hi]。等間隔なら内部 h、端 h/2 に一致)。
 		for (int it = 0; it < nt; it++) {
 			const double zoff = (it - (0.5 * (nt - 1))) * tl;   // nt = 1 なら 0
 		for (int dir = 0; dir < 2; dir++) {
 			const int n1 = dir ? nb : na;             // 進行方向の分割数
 			const int n2 = dir ? na : nb;             // 横方向の分割数
-			const double h1 = dir ? hb : ha;
-			const double h2 = dir ? ha : hb;
+			const double *x1a = dir ? xb : xa;        // 進行方向の格子座標
+			const double *x2a = dir ? xa : xb;        // 横方向の格子座標
 			const double *t1 = dir ? tb : ta;
 			const double *t2 = dir ? ta : tb;
 			for (int j = 0; j <= n2; j++) {
-				const double wid = ((j == 0) || (j == n2)) ? (0.5 * h2) : h2;
-				// 端の行は幅が半分なので、セルの中心も半セル分内側にずらす
-				const double off = (j == 0) ? (0.25 * h2)
-				                 : (j == n2) ? (-0.25 * h2) : 0;
+				const double lo = (j == 0) ? x2a[0] : (0.5 * (x2a[j - 1] + x2a[j]));
+				const double hi = (j == n2) ? x2a[n2] : (0.5 * (x2a[j] + x2a[j + 1]));
+				const double wid = hi - lo;
+				const double cen = 0.5 * (lo + hi);   // 帯の中心 (双対区間の中点)
 				for (int k = 0; k < n1; k++) {
 					seg_t *s = &p->seg[p->nseg];
 					proto.wid = wid;
@@ -536,13 +567,12 @@ int wire_build(peec_t *p, FILE *fp_log)
 					s->n1 = nid[(ia1 * (nb + 1)) + ib1];
 					s->n2 = nid[(ia2 * (nb + 1)) + ib2];
 					for (int c = 0; c < 3; c++) {
-						const double base = pl->org[c] + (j * h2 * t2[c]) + (off * t2[c])
-						                  + (zoff * nv[c]);
-						s->x1[c] = base + (k * h1 * t1[c]);
-						s->x2[c] = base + ((k + 1) * h1 * t1[c]);
+						const double base = pl->org[c] + (cen * t2[c]) + (zoff * nv[c]);
+						s->x1[c] = base + (x1a[k] * t1[c]);
+						s->x2[c] = base + (x1a[k + 1] * t1[c]);
 						s->wv[c] = t2[c];
 					}
-					s->len = h1;
+					s->len = x1a[k + 1] - x1a[k];
 					s->vol = (nt > 1);
 					s->thick = (nt > 1) ? tl : pl->thick;
 					s->area = wid * s->thick;
@@ -557,29 +587,32 @@ int wire_build(peec_t *p, FILE *fp_log)
 		}
 		}
 
-		// 電荷セル : 各格子点の双対矩形 (端は半分、隅は 1/4)
+		// 電荷セル : 各格子点の双対矩形 (格子座標の隣接中点。端は半分、隅は 1/4)
 		for (int ia = 0; ia <= na; ia++) {
 			for (int ib = 0; ib <= nb; ib++) {
-				const double wa = ((ia == 0) || (ia == na)) ? (0.5 * ha) : ha;
-				const double wb = ((ib == 0) || (ib == nb)) ? (0.5 * hb) : hb;
-				const double oa = (ia == 0) ? (0.25 * ha) : (ia == na) ? (-0.25 * ha) : 0;
-				const double ob = (ib == 0) ? (0.25 * hb) : (ib == nb) ? (-0.25 * hb) : 0;
+				const double loa = (ia == 0) ? xa[0] : (0.5 * (xa[ia - 1] + xa[ia]));
+				const double hia = (ia == na) ? xa[na] : (0.5 * (xa[ia] + xa[ia + 1]));
+				const double lob = (ib == 0) ? xb[0] : (0.5 * (xb[ib - 1] + xb[ib]));
+				const double hib = (ib == nb) ? xb[nb] : (0.5 * (xb[ib] + xb[ib + 1]));
 				double c0[3], x1[3], x2[3];
 				for (int c = 0; c < 3; c++) {
-					c0[c] = pl->org[c] + ((ia * ha) + oa) * ta[c]
-					                   + ((ib * hb) + ob) * tb[c];
-					x1[c] = c0[c] - (0.5 * wa * ta[c]);
-					x2[c] = c0[c] + (0.5 * wa * ta[c]);
+					c0[c] = pl->org[c] + (0.5 * (loa + hia) * ta[c])
+					                   + (0.5 * (lob + hib) * tb[c]);
+					x1[c] = c0[c] - (0.5 * (hia - loa) * ta[c]);
+					x2[c] = c0[c] + (0.5 * (hia - loa) * ta[c]);
 				}
-				add_chg(p, nid[(ia * (nb + 1)) + ib], x1, x2, wb, tb, &proto);
+				add_chg(p, nid[(ia * (nb + 1)) + ib], x1, x2, hib - lob, tb, &proto);
 			}
 		}
 
+		free(xa);
+		free(xb);
 		free(nid);
 	}
 
 	// ── パネル (quad / disk) : 構造格子の双対セル ─────────────────
 	for (int ip = 0; ip < p->npanel; ip++) {
+		p->panel[ip].grading = p->grading;
 		const panel_t *pa = &p->panel[ip];
 		const int na = pa->ndiva;
 		const int nb = pa->ndivb;
@@ -750,7 +783,7 @@ int wire_build(peec_t *p, FILE *fp_log)
 					x2[c] = base + ((k + 1) * ha * ta[c]);
 				}
 				diel_seg(p, x1, x2, DNID(k, ib, it), DNID(k + 1, ib, it),
-					tb, wb, wt, dl->epsr, dl->tand);
+					tb, wb, wt, dl);
 			}
 		}
 		}
@@ -770,7 +803,7 @@ int wire_build(peec_t *p, FILE *fp_log)
 					x2[c] = base + ((k + 1) * hb * tb[c]);
 				}
 				diel_seg(p, x1, x2, DNID(ia, k, it), DNID(ia, k + 1, it),
-					ta, wa, wt, dl->epsr, dl->tand);
+					ta, wa, wt, dl);
 			}
 		}
 		}
@@ -790,7 +823,7 @@ int wire_build(peec_t *p, FILE *fp_log)
 					x2[c] = base + ((k + 1) * ht * nv[c]);
 				}
 				diel_seg(p, x1, x2, DNID(ia, ib, k), DNID(ia, ib, k + 1),
-					ta, wa, wb, dl->epsr, dl->tand);
+					ta, wa, wb, dl);
 			}
 		}
 		}

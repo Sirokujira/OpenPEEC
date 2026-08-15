@@ -30,7 +30,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、100 件)
+# 検証 (解析解・文献値との比較、107 件)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -41,7 +41,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 100 件すべて OK でなければ
+**変更したら必ず `peec_check.sh` を通すこと。** 107 件すべて OK でなければ
 完了ではない。「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
 計測時の注意 : ソルバーが失敗すると `zin.csv` / `peec.log` は**前回の実行結果が
@@ -155,8 +155,11 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
    枝は Z = 1/Y (mna.c が `seg->diel` を見る。skin は適用しない)。
    εr = 1 のブリックは**セルを作らない** (作ると 1/(jω·0) で NaN。
    スキップすれば真空と bit 一致)。tanδ = 0 なら Z = −j/(ωC_e) で従来と一致。
+   周波数分散 (単極 Debye、frelax > 0) も同じ原則で、`zint_diel()` (mna.c) が
+   周波数ごとの εr*(f) から過剰分だけを組む。定数 tanδ と Debye の併用は
+   損失の二重計上なので入力検証で拒否する。
    (`dielectric dC (pp)` / `dielectric epsr=1 noop` / `dielectric G (tand)` /
-   `dielectric tand=0 noop`)
+   `dielectric tand=0 noop` / `debye dY (3 freqs)`)
 10. **遠方界の規格化とポインティング整合** — r E = −j(ωμ0/4π)[N − (N·r̂)r̂]、
     U = |rE|²/(2η0)。係数を触るとパターン (D) は変わらず**効率だけが静かに
     狂う**ため、Prad = ∮U dΩ が Pin = Re(Zin)/2 と一致することが番人になる。
@@ -176,6 +179,14 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
     f_k = k·df でなければ時間軸が定義できず、`tran_check()` が検査して
     対数掃引を拒否する。DC 項は実数条件のもとで下 2 点から線形補外。
     (`loop transient (d/dt)` / `tdr R=...` 4 通り / `transient sweep guard`)
+13. **非一様格子の幾何は格子座標の隣接中点 (双対区間) から導く** — 縁寄せ
+    格子 (`grading = 1`) の plate はセル幅・中心・電荷セルを格子座標配列の
+    隣接中点 [lo, hi] から導く (Σwid = 全幅が厳密で DC 抵抗の厳密性が保た
+    れる)。quad/disk は `panel_node()` のパラメータ変換だけで全幾何が整合。
+    `node =` で格子点に繋ぐ入力は縁寄せ後の座標に置くこと — 座標が食い違うと
+    nodetol マージが外れて**接続が静かに切れる** (quad 1 スクエアで +46%、
+    実際に踏んだ)。(`graded quad Rin (DC)` / `graded quad L vs plate` /
+    `graded thick plate R` / `graded8 beats uniform16`)
 
 ## メモリ
 
@@ -261,8 +272,14 @@ OpenMP で並列化しているのは `lp_fill` (partial.c)、`pot_fill` (potent
 - 電流は区間ごと一定、電荷はセルごと一定の低次基底。共振近傍の精度は分割数依存。
 - 地板 (`groundplane`) は z = 一定の無限 PEC 面 1 枚のみ。積分回数は 2 倍に
   なるが未知数は増えない。導体は z ≥ 地板に置く (下はエラー)。
-- 誘電体 (`dielectric`) は直交直方体のみ。周波数分散 (εr(f)) は未対応
-  (損失 tanδ は一定値で指定可能 : epsr* = epsr(1 - j tand))。
+- 誘電体 (`dielectric`) は直交直方体のみ。損失は一定 tanδ または単極 Debye
+  分散 epsr*(f) = eps_inf + (eps_s - eps_inf)/(1 + j f/f_relax) のどちらか
+  (併用は損失の二重計上なので入力検証で拒否)。多極 Debye / Lorentz は未対応。
+- 面格子の縁寄せは `grading = 1` (plate/quad 余弦・disk 正弦)。plate の
+  メッシュ生成は非一様間隔対応 : 幅・中心・電荷セルは格子座標配列の
+  隣接中点 (双対区間) から導く。等間隔時の式は従来と同一で省略時は
+  完全後方互換。`node =` で格子点に繋ぐ入力は縁寄せ後の座標に置くこと
+  (座標がずれると nodetol マージが外れて接続が切れる)。
   節点の束縛電荷は a–b 面内の双対矩形パネルで表す近似 (表面電荷が a–b 面に
   支配的な配置 — 基板・平行平板 — で正確)。`capacitance = 1` 必須。
 - 遠方界 (`farfield`) は port #1 の 1 A 励振に対する値。効率が意味を持つのは

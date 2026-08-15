@@ -1,0 +1,33 @@
+# 検証 (aq) : 誘電体の周波数分散 — 単極 Debye モデル
+#   diel_pp.peec と同じ平行平板 (40 x 40 mm、gap d = 0.4 mm) を、
+#   eps_s = 4, eps_inf = 2, f_relax = 100 kHz の Debye 誘電体で満たす :
+#     epsr*(f) = eps_inf + (eps_s - eps_inf)/(1 + j f/f_relax)
+#   (因果的で Kramers-Kronig を満たす。tand は 0 : 損失は緩和が生む)
+#
+#   平行平板は等電位面なので、空気ケースとのアドミタンス差は格子に依らず
+#     dY(f) = j w eps0 (epsr*(f) - 1) A/d
+#   になる (過剰容量ラダーの厳密性 : diel_pp.peec と同じ論法が周波数ごとに
+#   成り立つ。導体損・フリンジ・板厚の影響は差で相殺)。
+#
+#   掃引は 1 kHz .. 10 MHz の 2 分割対数 = {f_relax/100, f_relax, 100 f_relax}
+#   で、幾何中点がちょうど緩和周波数になる。q = f/f_relax として
+#     epsr* = eps_inf + (eps_s - eps_inf)(1 - jq)/(1 + q^2)
+#     q = 0.01 : ~4 - j0.02  (静的極限。dC = 3 eps0 A/d)
+#     q = 1    : 3 - j       (Re/Im とも中間値 : 分散の心臓部)
+#     q = 100  : ~2 - j0.02  (光学極限。dC = 1 eps0 A/d = 静的の 1/3)
+#   の 3 点 x (G, B) = 6 値を解析式と比較する。実測誤差は q <= 1 で ~2e-7、
+#   q = 100 で ~5e-4 (100 MHz 帯に近づくと直列インダクタンス w^2 LC の
+#   準静的補正が入り始めるため)。判定は最大相対誤差 2e-3。
+#
+#   eps_inf / f_relax を省略した既存入力は分岐ごと変わらない (bit 互換)。
+OpenPEEC 1 0
+title = parallel plates with Debye dielectric (es=4 einf=2 fr=100kHz)
+capacitance = 1
+plate = 0 0 0      0.04 0 0  0 0.04 0  1e-5 5.8e7 8 8
+plate = 0 0 0.0004 0.04 0 0  0 0.04 0  1e-5 5.8e7 8 8
+dielectric = 0 0 0  0.04 0 0  0 0.04 0  0.0004 4 8 8 2 0 2 1e5
+node = 1 0.02 0.02 0
+node = 2 0.02 0.02 0.0004
+port = 2 1 50
+frequency = 1e3 1e7 2 log
+end

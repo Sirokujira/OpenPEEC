@@ -526,6 +526,36 @@ run mono_pw.peec
 cp "$WORK/far.csv" "$WORK/far_mono.csv"
 recip "$WORK/mono_pw.peec" "$WORK/far_mono.csv" 1.4376e8 60 0 1
 
+# (aq) 周波数分散 (単極 Debye) : 空気ケースとのアドミタンス差が
+#      dY(f) = j w eps0 (epsr*(f) - 1) A/d に一致すること (等電位面間の
+#      過剰ラダーは周波数ごとに厳密)。3 点 (f_relax/100, f_relax,
+#      100 f_relax) x (G, B) の最大相対誤差で判定。期待値は Debye の
+#      解析式そのもので、コードの出力を使わない。
+cp "$SRC/diel_debye.peec" "$WORK/"
+run diel_debye.peec
+cp "$csv" "$WORK/zin_debye.csv"
+sed '/^dielectric/d' "$SRC/diel_debye.peec" > "$WORK/diel_debye_air.peec"
+run diel_debye_air.peec
+paste -d, "$WORK/zin_debye.csv" "$csv" | awk -F, 'BEGIN {
+	PI = atan2(0, -1); e0 = 8.854187817620389e-12;
+	K = e0 * 0.0016 / 4e-4; es = 4; ei = 2; fr = 1e5
+}
+NR > 1 {
+	f = $2; w = 2 * PI * f;
+	d1 = ($3 * $3) + ($4 * $4);   g1 = $3 / d1;  b1 = -$4 / d1;
+	d2 = ($10 * $10) + ($11 * $11); g2 = $10 / d2; b2 = -$11 / d2;
+	q = f / fr; den = 1 + (q * q);
+	a = ei + ((es - ei) / den); b = -(es - ei) * q / den;
+	eG = w * K * (-b); eB = w * K * (a - 1);
+	dg = ((g1 - g2) / eG) - 1; if (dg < 0) dg = -dg; if (dg > mx) mx = dg;
+	db = ((b1 - b2) / eB) - 1; if (db < 0) db = -db; if (db > mx) mx = db;
+	n++
+} END {
+	ok = (n == 3) && (mx <= 2e-3);
+	printf "%-24s freqs=%d max rel err=%.3e -> %s (<= 2e-3)\n", "debye dY (3 freqs)", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+
 echo "--- transient (inverse FFT of the sweep)"
 # (al) 周波数に依らない反射係数 : y(t) = S11 x(t) が全時刻で厳密に成り立つ。
 #      励振と応答を同じ合成式で作るので帯域打ち切りも相殺する。
@@ -636,6 +666,44 @@ else
 	printf "%-24s -> NG (tand = 0 が省略時と不一致)\n" "dielectric tand=0 noop" >&2
 	status=1
 fi
+
+echo "--- graded surface grids (grading = 1)"
+# (ap) 縁寄せ格子。電荷密度の縁特異性 ~1/sqrt(d) に合わせ、plate/quad は
+#      余弦分布、disk は正弦分布 (外周寄せ) で格子点を配置する。
+# 容量の収束改善 : 同じ分割数で誤差が減り、8x8 の縁寄せが 16x16 の等間隔を
+# 上回ること (未知数 1/4 で精度向上)。期待値は文献値 (plate_cap と同じ)。
+awk '{print} /^title = /{print "grading = 1"}' "$SRC/plate_cap.peec" > "$WORK/plate_cap_g.peec"
+run plate_cap_g.peec
+cg=$(getC)
+chk "graded plate C (8x8)" "$cg" 4.08100e-11 0.01
+awk -v g="$cg" -v u16="$c16" 'BEGIN {
+	eg = (g / 4.0810e-11) - 1; if (eg < 0) eg = -eg;
+	eu = (u16 / 4.0810e-11) - 1; if (eu < 0) eu = -eu;
+	ok = (eg < eu);
+	printf "%-24s |err| graded8=%.4f%% uniform16=%.4f%% -> %s\n", "graded8 beats uniform16", eg * 100, eu * 100, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+awk '{print} /^title = /{print "grading = 1"}' "$SRC/disk_cap.peec" > "$WORK/disk_cap_g.peec"
+run disk_cap_g.peec
+chk "graded disk C (nring=4)" "$(getC)" 7.08335e-12 0.015
+
+# 縁寄せ格子でも DC 抵抗の厳密性が保たれること (双対幅は格子座標の隣接
+# 中点から導くので、非一様でも矩形格子なら厳密)。quad はバスのノード座標も
+# 余弦位置に置いた専用サンプル (座標が食い違うと接続が外れて +46% ずれる)。
+cp "$SRC/quad_square_graded.peec" "$WORK/"
+run quad_square_graded.peec
+chk "graded quad Rin (DC)" "$(getR)" 1.724138e-4 0.001
+lgq=$(getL)
+# 同一形状の plate 版 (矩形リボン閉形式 = 別経路) と L を比較 :
+# グレーディングが多角形経路と矩形経路で同一の格子を作ることの番人
+sed 's|^quad = .*|plate = 0 0 0  0.2 0 0  0 0.2 0  1e-4 5.8e7 8 8|' \
+	"$SRC/quad_square_graded.peec" > "$WORK/plate_graded_ref.peec"
+run plate_graded_ref.peec
+chk "graded quad L vs plate" "$lgq" "$(getL)" 0.001
+# 体積セル (ndivt) と長さ方向グレーディングの併用でも R_dc が保たれること
+awk '{print} /^title = /{print "grading = 1"}' "$SRC/plate_thick.peec" > "$WORK/plate_thick_g.peec"
+run plate_thick_g.peec
+chk "graded thick plate R" "$(getR)" 8.6206897e-4 1e-4
 
 echo "--- multi-port S parameters"
 # (q) 抵抗性 T 型 2 ポート : Z=[[75,50],[50,75]], Z0=50 -> S11=1/21, S21=8/21 (実数)
