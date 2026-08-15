@@ -515,6 +515,9 @@ int input_data(FILE *fp, peec_t *p)
 				return 1;
 			}
 		}
+		else if (!strcmp(strkey, "grading")) {
+			p->grading = atoi(token[2]);
+		}
 		else if (!strcmp(strkey, "groundplane")) {
 			p->gp = 1;
 			p->gpz = atof(token[2]);

@@ -76,6 +76,7 @@ typedef struct {
 	double radius;
 	int    ndiva, ndivb;          // quad の分割数 / disk は (nring, nsec)
 	double thick, sigma;
+	int    grading;               // 1 = 縁寄せ格子 (wire_build が p->grading を写す)
 } panel_t;
 
 // 平面矩形導体 : o + s*ea + t*eb (s, t は 0..1)
@@ -193,6 +194,7 @@ typedef struct {
 	double pwamp, pwphase;        // 振幅 [V/m] と位相 [deg]
 	int    tran;                  // transient = 1 : 過渡応答 (掃引の逆フーリエ変換)
 	double tranatt;               // 帯域端でのガウス励振の減衰 [dB] (既定 40)
+	int    grading;               // grading = 1 : 面格子の縁寄せ (plate/quad 余弦、disk 正弦)
 
 	// 結果
 	d_complex_t *zin;             // [nport * nfreq] 各ポートの入力インピーダンス
