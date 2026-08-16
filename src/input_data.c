@@ -51,6 +51,7 @@ int input_data(FILE *fp, peec_t *p)
 	p->gmin = 0;
 	p->refnode = -1;
 	p->tranatt = 40;              // 過渡応答 : 帯域端でのガウス励振の減衰 [dB]
+	p->ctol = 1e-6;               // 圧縮 (compression) の ACA 相対許容誤差
 
 	// read
 	while (fgets(strline, sizeof(strline), fp) != NULL) {
@@ -530,6 +531,15 @@ int input_data(FILE *fp, peec_t *p)
 		}
 		else if (!strcmp(strkey, "grading")) {
 			p->grading = atoi(token[2]);
+		}
+		else if (!strcmp(strkey, "compression")) {
+			// compression = 1 [tol] : 部分インダクタンスを H 行列で圧縮
+			p->compress = atoi(token[2]);
+			if (ntoken >= 4) p->ctol = atof(token[3]);
+			if (p->ctol <= 0) {
+				printf(errfmt2, "compression");
+				return 1;
+			}
 		}
 		else if (!strcmp(strkey, "groundplane")) {
 			p->gp = 1;

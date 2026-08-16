@@ -203,6 +203,9 @@ typedef struct {
 	int    tran;                  // transient = 1 : 過渡応答 (掃引の逆フーリエ変換)
 	double tranatt;               // 帯域端でのガウス励振の減衰 [dB] (既定 40)
 	int    grading;               // grading = 1 : 面格子の縁寄せ (plate/quad 余弦、disk 正弦)
+	int    compress;              // compression = 1 : 部分インダクタンスを H 行列で圧縮
+	double ctol;                  // ACA の相対許容誤差 (既定 1e-6)
+	struct hmat_t *hlp;           // 圧縮された Lp (compress = 1 のときのみ)
 
 	// 結果
 	d_complex_t *zin;             // [nport * nfreq] 各ポートの入力インピーダンス
@@ -263,8 +266,24 @@ double poly_potential(const seg_t *s, const double *pt);
 double poly_static(const seg_t *s1, const seg_t *s2, int nsub, int n7);
 d_complex_t poly_corr(const seg_t *s1, const seg_t *s2, double kw);
 
+// hmatrix.c — クラスタツリー + ACA による低ランク圧縮
+// (前方宣言。実体は hmatrix.c 内。peec_t は不完全型のポインタで持つ)
+struct hmat_t;
+struct hmat_t *hmat_build(peec_t *p, double f, FILE *fp_log);
+void hmat_free(struct hmat_t *h);
+// y = Lp x (圧縮された部分インダクタンス行列。ブロック順は決定的でスレッド不変)
+void hmat_matvec(const struct hmat_t *h, const d_complex_t *x, d_complex_t *y);
+// 近傍 (非圧縮) ブロックの要素を列挙する : ILU(0) のパターン構築に使う。
+// cb(i, j, v, arg) が呼ばれる (i, j は元の区間番号)。
+void hmat_near_each(const struct hmat_t *h,
+	void (*cb)(int i, int j, d_complex_t v, void *arg), void *arg);
+double hmat_memory_mb(const struct hmat_t *h);
+double hmat_dense_mb(int n);
+
 // partial.c
 void seg_mirror(const seg_t *s, double gpz, seg_t *out);
+// 部分インダクタンス行列の 1 要素 (i, j は区間番号)。圧縮の ACA から呼ぶ。
+d_complex_t lp_entry(const peec_t *p, int i, int j, double kw);
 double neumann_self(double l, double a);
 double neumann_pair(const seg_t *s1, const seg_t *s2, double a1, double a2);
 d_complex_t neumann_self_k(const seg_t *s, double a, double kw);
