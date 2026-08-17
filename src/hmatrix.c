@@ -774,3 +774,30 @@ void hmat_near_each(const struct hmat_t *h,
 		}
 	}
 }
+
+/*
+葉クラスタの列挙 (前処理の構築用)
+
+葉は perm 上の [0, n) を重複なく分割する。葉 r について
+  *idx = そのセル番号の配列 (元の番号)、戻り値 = 対角ブロック (m x m 行優先)
+を返す。対角ブロック (a, a) は dist = 0 で許容条件を満たさないため必ず近傍
+ブロックとして密に持たれている (= 近似されていない)。
+*/
+int hmat_nleaf(const struct hmat_t *h)
+{
+	return (h != NULL) ? h->nleaf : 0;
+}
+
+const d_complex_t *hmat_leaf_block(const struct hmat_t *h, int r,
+	const int **idx, int *m)
+{
+	const int a = h->leafid[r];
+	*idx = &h->perm[h->ct.lo[a]];
+	*m = h->ct.hi[a] - h->ct.lo[a];
+	for (int e = h->rnoff[r]; e < h->rnoff[r + 1]; e++) {
+		const int q = h->rnidx[e];
+		if ((h->nr[q] == a) && (h->nc2[q] == a)) return h->nd[q];
+	}
+
+	return NULL;
+}

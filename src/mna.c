@@ -114,26 +114,50 @@ static d_complex_t zint_diel(const seg_t *s, double omega, double f)
 	return d_rmul(1 / omega, d_inv(d_complex(s->gexc, s->cexc)));
 }
 
+/*
+スタンプの行き先
+
+密行列 (従来) と三つ組リスト (compression = 1 の行列フリー経路) の両方に
+同じ組み立てコードから書けるようにする。sp != NULL のときは Lp ブロックを
+除いた疎な部分だけを三つ組で集める (Lp は H 行列が持つ)。
+*/
+typedef struct {
+	d_complex_t *a;               // 密行列 (NULL なら疎リスト)
+	int          n;
+	mna_sparse_t *sp;
+} sink_t;
+
 // a[i*n+j] += v (i, j < 0 は基準ノード : スキップ)
-static void stamp(d_complex_t *a, int n, int i, int j, d_complex_t v)
+static void stamp(sink_t *s, int i, int j, d_complex_t v)
 {
-	if ((i >= 0) && (j >= 0)) {
-		a[(size_t)i * n + j] = d_add(a[(size_t)i * n + j], v);
+	if ((i < 0) || (j < 0)) return;
+	if (s->a != NULL) {
+		s->a[(size_t)i * s->n + j] = d_add(s->a[(size_t)i * s->n + j], v);
+		return;
 	}
+	mna_sparse_t *sp = s->sp;
+	if (sp->nnz >= sp->cap) {
+		sp->cap = sp->cap ? (2 * sp->cap) : 1024;
+		sp->ri  = (int *)realloc(sp->ri, (size_t)sp->cap * sizeof(int));
+		sp->ci  = (int *)realloc(sp->ci, (size_t)sp->cap * sizeof(int));
+		sp->val = (d_complex_t *)realloc(sp->val, (size_t)sp->cap * sizeof(d_complex_t));
+	}
+	sp->ri[sp->nnz] = i;
+	sp->ci[sp->nnz] = j;
+	sp->val[sp->nnz] = v;
+	sp->nnz++;
 }
 
-void mna_assemble(const peec_t *p, double f, d_complex_t *a)
+// 共通の組み立て。skiplp = 1 なら密な Lp ブロックを飛ばす
+static void assemble(const peec_t *p, double f, sink_t *s, int skiplp)
 {
-	const int n = p->nunknown;
 	const double omega = 2 * PI * f;
 	const int *map = p->nodemap;
-
-	memset(a, 0, (size_t)n * n * sizeof(d_complex_t));
 
 	// gmin (指定時のみ : 全ノード対地コンダクタンス)
 	if (p->gmin > 0) {
 		for (int i = 0; i < p->nnode; i++) {
-			stamp(a, n, i, i, d_complex(p->gmin, 0));
+			stamp(s, i, i, d_complex(p->gmin, 0));
 		}
 	}
 
@@ -142,10 +166,10 @@ void mna_assemble(const peec_t *p, double f, d_complex_t *a)
 		const int i1 = map[p->res[i].n1];
 		const int i2 = map[p->res[i].n2];
 		const d_complex_t y = d_complex(1 / p->res[i].val, 0);
-		stamp(a, n, i1, i1, y);
-		stamp(a, n, i2, i2, y);
-		stamp(a, n, i1, i2, d_rmul(-1, y));
-		stamp(a, n, i2, i1, d_rmul(-1, y));
+		stamp(s, i1, i1, y);
+		stamp(s, i2, i2, y);
+		stamp(s, i1, i2, d_rmul(-1, y));
+		stamp(s, i2, i1, d_rmul(-1, y));
 	}
 
 	// capacitor
@@ -153,10 +177,10 @@ void mna_assemble(const peec_t *p, double f, d_complex_t *a)
 		const int i1 = map[p->cap[i].n1];
 		const int i2 = map[p->cap[i].n2];
 		const d_complex_t y = d_complex(0, omega * p->cap[i].val);
-		stamp(a, n, i1, i1, y);
-		stamp(a, n, i2, i2, y);
-		stamp(a, n, i1, i2, d_rmul(-1, y));
-		stamp(a, n, i2, i1, d_rmul(-1, y));
+		stamp(s, i1, i1, y);
+		stamp(s, i2, i2, y);
+		stamp(s, i1, i2, d_rmul(-1, y));
+		stamp(s, i2, i1, d_rmul(-1, y));
 	}
 
 	// inductor (枝電流)
@@ -164,11 +188,11 @@ void mna_assemble(const peec_t *p, double f, d_complex_t *a)
 		const int i1 = map[p->ind[i].n1];
 		const int i2 = map[p->ind[i].n2];
 		const int r = p->offL + i;
-		stamp(a, n, i1, r, d_complex(1, 0));
-		stamp(a, n, r, i1, d_complex(1, 0));
-		stamp(a, n, i2, r, d_complex(-1, 0));
-		stamp(a, n, r, i2, d_complex(-1, 0));
-		stamp(a, n, r, r, d_complex(0, -omega * p->ind[i].val));
+		stamp(s, i1, r, d_complex(1, 0));
+		stamp(s, r, i1, d_complex(1, 0));
+		stamp(s, i2, r, d_complex(-1, 0));
+		stamp(s, r, i2, d_complex(-1, 0));
+		stamp(s, r, r, d_complex(0, -omega * p->ind[i].val));
 	}
 
 	// mutual (M = k sqrt(L1 L2)、ドットは各 inductor の n1 側)
@@ -176,8 +200,8 @@ void mna_assemble(const peec_t *p, double f, d_complex_t *a)
 		const int r1 = p->offL + p->mut[i].l1;
 		const int r2 = p->offL + p->mut[i].l2;
 		const double m = p->mut[i].k * sqrt(p->ind[p->mut[i].l1].val * p->ind[p->mut[i].l2].val);
-		stamp(a, n, r1, r2, d_complex(0, -omega * m));
-		stamp(a, n, r2, r1, d_complex(0, -omega * m));
+		stamp(s, r1, r2, d_complex(0, -omega * m));
+		stamp(s, r2, r1, d_complex(0, -omega * m));
 	}
 
 	// 電圧源 (枝電流、右辺は mna_rhs_sources で設定。ポート解析時は短絡として働く)
@@ -186,10 +210,10 @@ void mna_assemble(const peec_t *p, double f, d_complex_t *a)
 		const int i1 = map[p->src[i].n1];
 		const int i2 = map[p->src[i].n2];
 		const int r = p->offV + p->src[i].ibr;
-		stamp(a, n, i1, r, d_complex(1, 0));
-		stamp(a, n, r, i1, d_complex(1, 0));
-		stamp(a, n, i2, r, d_complex(-1, 0));
-		stamp(a, n, r, i2, d_complex(-1, 0));
+		stamp(s, i1, r, d_complex(1, 0));
+		stamp(s, r, i1, d_complex(1, 0));
+		stamp(s, i2, r, d_complex(-1, 0));
+		stamp(s, r, i2, d_complex(-1, 0));
 	}
 
 	// ワイヤ区間 (枝電流 + 密な相互インダクタンスブロック)
@@ -197,10 +221,10 @@ void mna_assemble(const peec_t *p, double f, d_complex_t *a)
 		const int i1 = map[p->seg[k].n1];
 		const int i2 = map[p->seg[k].n2];
 		const int rk = p->offS + k;
-		stamp(a, n, i1, rk, d_complex(1, 0));
-		stamp(a, n, rk, i1, d_complex(1, 0));
-		stamp(a, n, i2, rk, d_complex(-1, 0));
-		stamp(a, n, rk, i2, d_complex(-1, 0));
+		stamp(s, i1, rk, d_complex(1, 0));
+		stamp(s, rk, i1, d_complex(1, 0));
+		stamp(s, i2, rk, d_complex(-1, 0));
+		stamp(s, rk, i2, d_complex(-1, 0));
 		// 内部インピーダンス : 既定は DC 抵抗、skineffect = 1 で表皮効果 + 内部 L。
 		// 誘電体セルは過剰分 (epsr* - 1) の直列インピーダンス (zint_diel)
 		const d_complex_t zint = p->seg[k].diel
@@ -208,10 +232,11 @@ void mna_assemble(const peec_t *p, double f, d_complex_t *a)
 			: p->skin
 			? zint_seg(&p->seg[k], f)
 			: d_complex(p->seg[k].res, 0);
-		stamp(a, n, rk, rk, d_rmul(-1, zint));
+		stamp(s, rk, rk, d_rmul(-1, zint));
+		if (skiplp) continue;
 		for (int m = 0; m < p->nseg; m++) {
 			// -j omega Lp (retardation = 1 のとき Lp は複素)
-			stamp(a, n, rk, p->offS + m,
+			stamp(s, rk, p->offS + m,
 				d_mul(d_complex(0, -omega), p->lp[(size_t)k * p->nseg + m]));
 		}
 	}
@@ -223,10 +248,74 @@ void mna_assemble(const peec_t *p, double f, d_complex_t *a)
 			const int mi = map[p->cellid[i]];
 			for (int j = 0; j < p->ncell; j++) {
 				const int mj = map[p->cellid[j]];
-				stamp(a, n, mi, mj,
+				stamp(s, mi, mj,
 					d_mul(d_complex(0, omega), p->cmat[(size_t)i * p->ncell + j]));
 			}
 		}
+	}
+}
+
+// 密行列に組み立てる (従来経路)
+void mna_assemble(const peec_t *p, double f, d_complex_t *a)
+{
+	sink_t s;
+	s.a = a;
+	s.n = p->nunknown;
+	s.sp = NULL;
+	memset(a, 0, (size_t)p->nunknown * p->nunknown * sizeof(d_complex_t));
+	assemble(p, f, &s, 0);
+}
+
+/*
+Lp ブロックを除いた疎な部分を三つ組で集める (compression = 1)
+
+Lp を除くと非零は要素あたり数個しか無い (接続行列 + 素子スタンプ + 内部
+インピーダンスの対角) ので、O(N) で持てる。同じ (i, j) が複数回現れても
+mna_apply() が加算するだけなので、重複は問題にならない。
+*/
+void mna_sparse(const peec_t *p, double f, mna_sparse_t *sp)
+{
+	sink_t s;
+	s.a = NULL;
+	s.n = p->nunknown;
+	s.sp = sp;
+	sp->nnz = 0;
+	assemble(p, f, &s, 1);
+}
+
+void mna_sparse_free(mna_sparse_t *sp)
+{
+	free(sp->ri);
+	free(sp->ci);
+	free(sp->val);
+	memset(sp, 0, sizeof(mna_sparse_t));
+}
+
+/*
+行列フリーの行列ベクトル積 y = A x (compression = 1)
+
+疎な部分は三つ組を足し込み、区間電流ブロックだけ H 行列に任せる :
+  y[offS + k] += -j omega sum_m Lp[k][m] x[offS + m]
+
+work は長さ nseg の作業領域 (呼び出し側が確保して使い回す)。
+三つ組の加算順は登録順で固定、H 行列側もスレッド数不変なので、結果は
+スレッド数によらずビット単位で一致する。
+*/
+void mna_apply(const peec_t *p, const mna_sparse_t *sp, const struct hmat_t *h,
+	double f, const d_complex_t *x, d_complex_t *y, d_complex_t *work)
+{
+	const int n = p->nunknown;
+
+	memset(y, 0, (size_t)n * sizeof(d_complex_t));
+	for (int e = 0; e < sp->nnz; e++) {
+		y[sp->ri[e]] = d_add(y[sp->ri[e]], d_mul(sp->val[e], x[sp->ci[e]]));
+	}
+	if ((h == NULL) || (p->nseg <= 0)) return;
+
+	hmat_matvec(h, &x[p->offS], work);
+	const d_complex_t jw = d_complex(0, -2 * PI * f);
+	for (int k = 0; k < p->nseg; k++) {
+		y[p->offS + k] = d_add(y[p->offS + k], d_mul(jw, work[k]));
 	}
 }
 

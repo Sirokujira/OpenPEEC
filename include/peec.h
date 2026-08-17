@@ -273,10 +273,10 @@ struct hmat_t *hmat_build(peec_t *p, double f, FILE *fp_log);
 void hmat_free(struct hmat_t *h);
 // y = Lp x (圧縮された部分インダクタンス行列。ブロック順は決定的でスレッド不変)
 void hmat_matvec(const struct hmat_t *h, const d_complex_t *x, d_complex_t *y);
-// 近傍 (非圧縮) ブロックの要素を列挙する : ILU(0) のパターン構築に使う。
-// cb(i, j, v, arg) が呼ばれる (i, j は元の区間番号)。
-void hmat_near_each(const struct hmat_t *h,
-	void (*cb)(int i, int j, d_complex_t v, void *arg), void *arg);
+// 葉クラスタの列挙 (前処理用) : 葉 r の対角ブロック (m x m 行優先) を返す
+int  hmat_nleaf(const struct hmat_t *h);
+const d_complex_t *hmat_leaf_block(const struct hmat_t *h, int r,
+	const int **idx, int *m);
 double hmat_memory_mb(const struct hmat_t *h);
 double hmat_dense_mb(int n);
 
@@ -300,8 +300,21 @@ d_complex_t zint_bar(double len, double area, double perim, double sigma, double
 d_complex_t zint_seg(const seg_t *s, double freq);
 
 // mna.c
+// Lp ブロックを除いた MNA の疎な部分 (三つ組)。compression = 1 の行列フリー
+// 経路で使う。同一 (i, j) の重複は加算として扱う。
+typedef struct {
+	int *ri, *ci;                 // [nnz] 行・列
+	d_complex_t *val;             // [nnz]
+	int  nnz, cap;
+} mna_sparse_t;
+
 int  mna_numbering(peec_t *p, FILE *fp_log);
 void mna_assemble(const peec_t *p, double f, d_complex_t *a);
+void mna_sparse(const peec_t *p, double f, mna_sparse_t *sp);
+void mna_sparse_free(mna_sparse_t *sp);
+// 行列フリーの y = A x (疎部 + H 行列の Lp)。work は長さ nseg
+void mna_apply(const peec_t *p, const mna_sparse_t *sp, const struct hmat_t *h,
+	double f, const d_complex_t *x, d_complex_t *y, d_complex_t *work);
 void mna_rhs_port(const peec_t *p, int iport, d_complex_t *b);
 void mna_rhs_sources(const peec_t *p, d_complex_t *b);
 void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b);
@@ -310,9 +323,20 @@ void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b);
 int  lu_decomp(int n, d_complex_t *a, int *piv);
 void lu_solve(int n, const d_complex_t *a, const int *piv, d_complex_t *b);
 
+// precond.c — 葉ブロック消去 + 回路 Schur 補元の前処理 (compression = 1)
+struct precond_t;
+struct precond_t *pc_build(const peec_t *p, const mna_sparse_t *sp,
+	const struct hmat_t *h, double f);
+void pc_free(struct precond_t *pc);
+void pc_apply(const struct precond_t *pc, d_complex_t *b);   // b <- M^-1 b
+double pc_memory_mb(const struct precond_t *pc);
+
 // iterative.c
 int  gmres_solve(int n, const d_complex_t *a, const d_complex_t *alu, const int *piv,
 	d_complex_t *b, double tol);
+// 行列フリー GMRES (compression = 1)。収束すれば反復数、しなければ -1
+int  gmres_hmat(const peec_t *p, const mna_sparse_t *sp, const struct hmat_t *h,
+	double f, const struct precond_t *pc, d_complex_t *b, double tol);
 
 // solve.c
 int  solve(peec_t *p, FILE *fp_log);

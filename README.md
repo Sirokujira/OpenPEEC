@@ -221,6 +221,17 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh bin/peec /tmp/peec-san
   (収束判定 1e-10、実測差 ~1e-10 以下)。未知数 1825・50 周波数の掃引で
   solve 62.9 s → 6.2 s (LU 1 回、平均 5.8 反復)。遅延あり (行列が毎周波数
   変わる場合) でも使えます。既定 (省略時 0) は従来どおりです。
+- **H 行列圧縮 (`compression = 1 [tol]`)** : 密行列を一切作らない
+  行列フリー経路です。部分インダクタンス Lp をクラスタツリー + ACA
+  (Adaptive Cross Approximation) で階層的低ランク圧縮し、MNA の疎な部分は
+  三つ組で持ち、葉ブロック消去 + 回路 Schur 補元を前処理とする GMRES で
+  解きます。ACA の相対許容誤差 `tol` (省略時 1e-6) が Zin にほぼそのまま
+  伝わります (実測 : tol 1e-6 で ~3e-7、1e-8 で ~5e-10)。6384 セルの平板で
+  **solve 12 分 → 52 秒 (14 倍)、メモリ 2.0 GB → 0.34 GB (6 倍)**。
+  自己項・隣接項 (近傍ブロック) は一切近似されません。段階 1 の制限 :
+  誘導性 PEEC のみ (`capacitance = 1` とは併用不可 — 節点容量 C = P⁻¹ が
+  密な逆行列を持ち込むため明示的にエラーにします)。`acceleration` とも
+  排他です。結果はスレッド数に依らずビット単位で一致します。
 
 ## Usage / 実行
 
@@ -304,6 +315,7 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `capacitance` | `capacitance = 1` | 1 で容量性 PEEC (電位係数) を有効化 (省略時 0) |
 | `retardation` | `retardation = 1` | 1 で遅延 (フルウェーブ PEEC) を有効化 (省略時 0) |
 | `acceleration` | `acceleration = 1` | 1 で掃引 LU 再利用の GMRES (省略時 0 = 毎周波数 LU)。結果は密 LU と実質同一 |
+| `compression` | `compression = 1 [tol]` | 1 で Lp の H 行列圧縮 + 行列フリー GMRES (省略時 0 = 密行列)。tol は ACA の相対許容誤差 (省略時 1e-6) で Zin にほぼそのまま伝わる。`capacitance = 1`・`acceleration = 1` とは併用不可 |
 | `distribution` | `distribution = 1` | 1 で電流・電荷分布を `dist.csv` に出力 (省略時 0)。多ポートでは「ポート j に 1A、他は開放」の分布をポートごとに出す |
 
 - 導体と回路素子の接続は `node` キーで行います。導体端点 (面導体は格子点)
@@ -349,6 +361,10 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `dipole_full.peec` + `acceleration=1` | 掃引 LU 再利用 GMRES が密 LU と一致 (フル PEEC 掃引) | 1e-8 |
 | `dipole_halfwave.peec` + `acceleration=1` | 遅延あり (行列が毎周波数変わる) でも密 LU と一致 | 1e-8 |
 | `dipole_full.peec` + `acceleration=1` スレッド数不変性 | GMRES でも `-n 1` と `-n 4` が完全一致 | 完全一致 |
+| `compress_wire.peec` 圧縮の単線 (ndiv = 200) | H 行列 + ACA + 前処理でも解析解 L = 1.32038 µH に一致 (不変条件 1 により分割数に依存しない) | 0.1% |
+| `compress_plate.peec` 圧縮の面導体 (直交セル混在) | `compression` キーを外した密経路と Rin / L が一致 (実測差 ~3e-7)。直交セルの厳密な 0 で素朴な ACA が破綻する形の番人 | 0.1% |
+| `compress_plate.peec` スレッド数不変性 | 圧縮経路でも `-n 1` と `-n 4` が完全一致 | 完全一致 |
+| `compress_plate.peec` + `capacitance=1` | 併用は明示的に拒否されること (C = P⁻¹ が密な逆行列を持ち込む) | エラー判定 |
 | `plate_strip.peec` 帯のインダクタンス | 面積分 vs GMD 近似 → (μ0l/2π)[ln(2l/w)+0.5] = 1.15966 µH | 1% |
 | `plate_thick.peec` 厚板の帯 (体積セル) | Hoer–Love 閉形式 vs Grover 角線式 → 1.12374 µH、R_dc = l/(σwt) = 0.862069 mΩ (層数 1/2/4 で厳密に不変) | 0.5% / 0.1% |
 | `plate_skin_layers.peec` 厚み方向の表皮効果 | 対称サンドイッチの R_ac/R_dc → 1D スラブ解 Re[(1+j)X coth((1+j)X)] = 1.897806 (X = t/2δ = 2)。層数 3/6/12 で O(層厚²) 収束 | 3.5% |

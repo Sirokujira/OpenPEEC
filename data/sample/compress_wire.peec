@@ -1,0 +1,22 @@
+# 検証 : H 行列圧縮 (compression = 1) の単線ワイヤ
+#   l = 1 m, a = 1 mm, sigma = 5.8e7 S/m (銅)、ndiv = 200
+#
+#   期待値は wire_single.peec と同じ解析式 (コード非依存) :
+#     Lp = (mu0 l / 2 pi) [asinh(l/a) - sqrt(1+(a/l)^2) + a/l] = 1.320380e-6 H
+#     Rin (DC) = l / (sigma pi a^2) = 5.48810e-3 ohm
+#
+#   細線カーネルの統一 (不変条件 1) により L は分割数に依存しないので、
+#   ndiv = 200 でも同じ値になる。200 セルは葉サイズ (32) を超えるので
+#   クラスタツリーが実際に分割され、遠方ブロックが ACA で圧縮される。
+#   直線ワイヤは共線 (t1・t2 = 1) なので、ここでは ACA の基本経路と
+#   前処理 (葉ブロック消去 + Schur) を判定する。直交セルの混在は
+#   compress_plate 側が判定する。
+OpenPEEC 1 0
+title = compressed straight wire (l=1m a=1mm ndiv=200)
+compression = 1
+node = 1 0 0 0
+node = 2 0 0 1
+wire = 0 0 0 0 0 1 1e-3 5.8e7 200
+port = 1 2 50
+frequency = 1e6 1e6 0
+end

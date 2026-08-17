@@ -705,6 +705,50 @@ awk '{print} /^title = /{print "grading = 1"}' "$SRC/plate_thick.peec" > "$WORK/
 run plate_thick_g.peec
 chk "graded thick plate R" "$(getR)" 8.6206897e-4 1e-4
 
+echo "--- H-matrix compression (compression = 1)"
+# (av) 単線ワイヤ (ndiv=200) : 解析解 (wire_single と同じ式) に一致すること。
+#      細線カーネルの統一 (不変条件 1) により L は分割数に依存しないので、
+#      期待値はコード非依存のまま。木が実際に分割され ACA + 前処理を通る。
+cp "$SRC/compress_wire.peec" "$WORK/"
+run compress_wire.peec
+chk "compress wire L" "$(getL)" 1.320380e-6 0.001
+chk "compress wire Rin (DC)" "$(getR)" 5.48810e-3 0.005
+
+# (aw) 直交セル混在の面導体 : compression キーだけを外した密経路との相互検証。
+#      格子状の面は Lp に厳密な 0 (直交セル) を大量に含み、素朴な部分ピボット
+#      ACA が破綻する形 (ブロック誤差 0.76 がランクに依存しない) なので、
+#      hmatrix.c の「未出現行からの再開」の番人になる。実測差 ~3e-7。
+cp "$SRC/compress_plate.peec" "$WORK/"
+run compress_plate.peec
+cr=$(getR)
+cx=$(getL)
+sed '/^compression = /d' "$SRC/compress_plate.peec" > "$WORK/compress_plate_ref.peec"
+run compress_plate_ref.peec
+chk "compress plate Rin" "$cr" "$(getR)" 0.001
+chk "compress plate L" "$cx" "$(getL)" 0.001
+
+# 圧縮経路もスレッド数に依らずビット単位で一致すること (H 行列の matvec は
+# 葉ごと、前処理は直列、GMRES の内積は直列)
+(cd "$WORK" && "$PEEC" -n 1 compress_plate.peec > /dev/null)
+cp "$csv" "$WORK/zin_comp_n1.csv"
+(cd "$WORK" && "$PEEC" -n 4 compress_plate.peec > /dev/null)
+if cmp -s "$WORK/zin_comp_n1.csv" "$csv"; then
+	printf "%-24s -> OK (-n 1 と -n 4 が完全一致)\n" "compress thread invar."
+else
+	printf "%-24s -> NG (-n 1 と -n 4 が不一致)\n" "compress thread invar." >&2
+	status=1
+fi
+
+# capacitance = 1 との併用は拒否されること (cmat = P^-1 が密な逆行列を
+# 持ち込むため、段階 1 では静かに劣化させず明示的にエラーにする)
+awk '{print} /^title = /{print "capacitance = 1"}' "$SRC/compress_plate.peec" > "$WORK/compress_cap.peec"
+if (cd "$WORK" && "$PEEC" -n 1 compress_cap.peec > compress_cap.out 2>&1); then
+	printf "%-24s -> NG (compression + capacitance must be rejected)\n" "compression guard" >&2
+	status=1
+else
+	printf "%-24s -> OK (compression + capacitance rejected)\n" "compression guard"
+fi
+
 echo "--- multi-port S parameters"
 # (q) 抵抗性 T 型 2 ポート : Z=[[75,50],[50,75]], Z0=50 -> S11=1/21, S21=8/21 (実数)
 cp "$SRC/tnetwork_spara.peec" "$WORK/"

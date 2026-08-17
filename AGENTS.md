@@ -62,7 +62,9 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/pe
 | `src/skin.c` | 表皮効果 (丸線は Bessel、角線は合成式) |
 | `src/mna.c` | MNA 番号付けとスタンプ |
 | `src/lu.c` | 複素 LU 分解 (部分ピボット) |
-| `src/iterative.c` | 掃引 LU 再利用の GMRES (acceleration = 1) |
+| `src/iterative.c` | GMRES (acceleration = 1 の掃引 LU 再利用と compression = 1 の行列フリー) |
+| `src/hmatrix.c` | Lp の H 行列圧縮 (クラスタツリー + ACA、compression = 1) |
+| `src/precond.c` | 葉ブロック消去 + 回路 Schur 補元の前処理 (compression = 1) |
 | `src/solve.c` | 周波数掃引、Z → S 変換 |
 | `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、`dist.csv` |
 | `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率) |
@@ -197,10 +199,13 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
 ## 並列化とスレッド数不変性
 
 OpenMP で並列化しているのは `lp_fill` (partial.c)、`pot_fill` (potential.c)、
-`lu_decomp` の残余行列更新 (lu.c)、GMRES の行列ベクトル積 (iterative.c) の
-4 箇所。**いずれも要素・行ごとに独立で、順序依存の加算 (リダクション) を
-持たない** (GMRES の内積・Gram-Schmidt は直列)。スレッド数を変えても結果は
-ビット単位で一致する。
+`lu_decomp` の残余行列更新 (lu.c)、GMRES の行列ベクトル積 (iterative.c)、
+H 行列のブロック充填と matvec (hmatrix.c)、前処理の葉 LU (precond.c) の
+6 箇所。**いずれも要素・行・ブロックごとに独立で、順序依存の加算
+(リダクション) を持たない** (GMRES の内積・Gram-Schmidt は直列。H 行列の
+matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化する。ブロックの
+行区間は木の階層をまたいで重なるので、行クラスタ単位の並列化は競合する —
+実際に踏んだ)。スレッド数を変えても結果はビット単位で一致する。
 
 - 並列ループ内で共有配列に `+=` しない (`pot_fill` は一時配列に出してから直列で集約)。
 - `peec_check.sh` が `-n 1` と `-n 4` の `zin.csv` 完全一致を判定している。
