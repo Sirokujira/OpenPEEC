@@ -32,9 +32,12 @@ typedef struct {
 	long   itsum;                 // GMRES の総反復数
 } accel_t;
 
-// compression = 1 の状態 (疎部・前処理・統計)
+// compression = 1 の状態 (疎部・圧縮ブロック・前処理・統計)
 typedef struct {
 	mna_sparse_t sp;
+	hblock_t blk[HBLK_MAX];       // Lp と (容量性なら) P
+	int    nblk;
+	struct hmat_t *hpot;          // 電位係数 P の H 行列 (peec_t の hlp とは別)
 	struct precond_t *pc;
 	long   itsum;                 // GMRES の総反復数
 	int    nrhs;                  // 解いた右辺の数
@@ -73,7 +76,7 @@ static int lin_rhs(const peec_t *p, double f, comp_t *cp, accel_t *ac,
 	const d_complex_t *a, const int *piv, d_complex_t *b, FILE *fp_log)
 {
 	if (p->compress) {
-		const int it = gmres_hmat(p, &cp->sp, p->hlp, f, cp->pc, b, ACCEL_TOL);
+		const int it = gmres_hmat(p, &cp->sp, cp->blk, cp->nblk, cp->pc, b, ACCEL_TOL);
 		if (it < 0) {
 			printf("*** compression : GMRES did not converge at f = %.5e Hz\n", f);
 			fprintf(fp_log, "*** compression : GMRES did not converge at f = %.5e Hz\n", f);
@@ -238,26 +241,51 @@ int solve(peec_t *p, FILE *fp_log)
 
 		// 遅延ありのときは部分要素が周波数依存になるので毎回作り直す
 		if (p->retardation) {
+			// 圧縮経路は密な Lp も C = P^-1 も作らない (H 行列が持つ)
 			if (!comp) {
 				lp_fill(p, f, fp_log);
+				if (pot_fill(p, f, fp_log)) goto done;
 			}
-			if (pot_fill(p, f, fp_log)) goto done;
 		}
 
 		if (comp) {
 			// H 行列は静的なら初回だけ、遅延ありなら周波数ごとに作る
+			// (遅延ありではカーネルが周波数依存になる)
 			if ((p->hlp == NULL) || p->retardation) {
 				hmat_free(p->hlp);
 				p->hlp = hmat_build(p, f, fp_log);
 				if (p->hlp == NULL) {
-					printf("*** compression : H-matrix build failed at f = %.5e Hz\n", f);
-					fprintf(fp_log, "*** compression : H-matrix build failed at f = %.5e Hz\n", f);
+					printf("*** compression : Lp H-matrix build failed at f = %.5e Hz\n", f);
+					fprintf(fp_log, "*** compression : Lp H-matrix build failed at f = %.5e Hz\n", f);
 					goto done;
 				}
 			}
+			cp.nblk = 0;
+			cp.blk[cp.nblk].off = p->offS;
+			cp.blk[cp.nblk].n = p->nseg;
+			cp.blk[cp.nblk].h = p->hlp;
+			cp.blk[cp.nblk].scale = d_complex(0, -2 * PI * f);
+			cp.nblk++;
+			// 容量性 PEEC : 電荷ブロック (カーネル P、係数 1)
+			if (p->capacitance && (p->ncell > 0)) {
+				if ((cp.hpot == NULL) || p->retardation) {
+					hmat_free(cp.hpot);
+					cp.hpot = hmat_build_pot(p, f, fp_log);
+					if (cp.hpot == NULL) {
+						printf("*** compression : P H-matrix build failed at f = %.5e Hz\n", f);
+						fprintf(fp_log, "*** compression : P H-matrix build failed at f = %.5e Hz\n", f);
+						goto done;
+					}
+				}
+				cp.blk[cp.nblk].off = p->offQ;
+				cp.blk[cp.nblk].n = p->ncell;
+				cp.blk[cp.nblk].h = cp.hpot;
+				cp.blk[cp.nblk].scale = d_complex(1, 0);
+				cp.nblk++;
+			}
 			mna_sparse(p, f, &cp.sp);
 			pc_free(cp.pc);
-			cp.pc = pc_build(p, &cp.sp, p->hlp, f);
+			cp.pc = pc_build(p, &cp.sp, cp.blk, cp.nblk);
 			if (cp.pc == NULL) {
 				printf("*** compression : preconditioner failed at f = %.5e Hz (floating node?)\n", f);
 				fprintf(fp_log, "*** compression : preconditioner failed at f = %.5e Hz\n", f);
@@ -313,14 +341,21 @@ int solve(peec_t *p, FILE *fp_log)
 					p->segi[DIDX(p, ifreq, j, m)] = b[p->offS + m];
 				}
 			}
-			// セル電荷 : q = C v (v は各セルのノード電位、基準ノードは 0V)
+			// セル電荷。圧縮経路では電荷が未知数そのものなので直接読む。
+			// 密経路は q = C v (v は各セルのノード電位、基準ノードは 0V)
 			if (p->cellq != NULL) {
 				for (int m = 0; m < p->ncell; m++) {
-					d_complex_t q = d_complex(0, 0);
-					for (int l = 0; l < p->ncell; l++) {
-						const int im = p->nodemap[p->cellid[l]];
-						const d_complex_t v = (im < 0) ? d_complex(0, 0) : b[im];
-						q = d_add(q, d_mul(p->cmat[(size_t)m * p->ncell + l], v));
+					d_complex_t q;
+					if (comp) {
+						q = b[p->offQ + m];
+					}
+					else {
+						q = d_complex(0, 0);
+						for (int l = 0; l < p->ncell; l++) {
+							const int im = p->nodemap[p->cellid[l]];
+							const d_complex_t v = (im < 0) ? d_complex(0, 0) : b[im];
+							q = d_add(q, d_mul(p->cmat[(size_t)m * p->ncell + l], v));
+						}
 					}
 					p->cellq[QIDX(p, ifreq, j, m)] = q;
 				}
@@ -368,8 +403,10 @@ int solve(peec_t *p, FILE *fp_log)
 	}
 	// compression の統計 (反復数とメモリ : 密行列 (MNA + Lp) との比較)
 	if (comp && (cp.nrhs > 0)) {
-		const double hm = hmat_memory_mb(p->hlp) + pc_memory_mb(cp.pc);
-		const double dm = hmat_dense_mb(n) + hmat_dense_mb(p->nseg);
+		const double hm = hmat_memory_mb(p->hlp) + hmat_memory_mb(cp.hpot)
+			+ pc_memory_mb(cp.pc);
+		const double dm = hmat_dense_mb(n) + hmat_dense_mb(p->nseg)
+			+ (p->capacitance ? hmat_dense_mb(p->ncell) : 0);
 		fprintf(fp_log, "compression : %d GMRES solves (avg %.1f iterations), %.2f MB (dense MNA + Lp %.2f MB, %.1fx)\n",
 			cp.nrhs, (double)cp.itsum / cp.nrhs, hm, dm, (hm > 0) ? (dm / hm) : 0);
 	}
@@ -387,6 +424,7 @@ done:
 	free(ac.apiv);
 	mna_sparse_free(&cp.sp);
 	pc_free(cp.pc);
+	hmat_free(cp.hpot);
 
 	return ret;
 }

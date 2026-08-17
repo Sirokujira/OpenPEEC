@@ -1,0 +1,29 @@
+# 検証 : 容量性 PEEC の H 行列圧縮 (compression = 1 + capacitance = 1)
+#   0.1 x 0.1 m の正方シート (t = 0.1 mm、銅)、12 x 12 格子、対角給電
+#   f = 1 MHz、電流セル 312 / 電荷セル 169 (どちらも葉 32 を超える)
+#
+#   圧縮経路は節点容量 C = P^-1 を作らず、電荷 q を陽な未知数にする :
+#     KCL 行   : ... + jw q_i = 0
+#     電荷行 i : sum_j P(i,j) q_j - v_i = 0
+#   電荷行から q = P^-1 v なので、KCL には密経路と同じ jw (C v)_i が入る。
+#   したがって**近似が無ければ両経路は厳密に同じ系**で、ACA の許容誤差
+#   ctol だけが差になる。
+#
+#   期待値 : 同一入力から compression キーだけを外した密経路との相互検証
+#   (peec_check.sh が sed で外して両方実行し、Rin / Xin を比較する)。
+#   密経路の容量そのものは plate_cap 等の解析解判定が別途裏付けている。
+#   実測差は 8x8 で 2.5e-10 (全ブロックが近傍 = 無近似)、この 12x12 では
+#   遠方ブロックが立つので ctol = 1e-6 相当まで上がる。許容 0.1% は十分な余裕。
+#
+#   このケースは電位係数 P 側の H 行列 (pot_entry / hmat_build_pot) と、
+#   前処理が 2 つの圧縮ブロック (Lp と P) を同時に消去できることの番人。
+OpenPEEC 1 0
+title = compressed capacitive sheet (12x12, charge unknowns)
+capacitance = 1
+compression = 1
+plate = 0 0 0  0.1 0 0  0 0.1 0  1e-4 5.8e7 12 12
+node = 1 0 0 0
+node = 2 0.1 0.1 0
+port = 1 2 50
+frequency = 1e6 1e6 0
+end

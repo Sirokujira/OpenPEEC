@@ -83,6 +83,29 @@ int mna_numbering(peec_t *p, FILE *fp_log)
 	p->offS = p->offV + nvsrc;
 	p->nunknown = p->offS + p->nseg;
 
+	/*
+	圧縮経路 (compression = 1) の容量性 PEEC は電荷 q を陽な未知数にする。
+
+	密経路は節点ブロックに jw C (C = P^-1) を積むが、P の逆行列は密で
+	O(ncell^2) のメモリと O(ncell^3) の時間を要し、圧縮の意味が無くなる。
+	そこで逆行列を作らず、電荷を未知数に足して
+
+	  KCL 行   : ... + jw q_i = 0
+	  電荷行 i : sum_j P(i,j) q_j - v_i = 0
+
+	と組む。電荷行から q = P^-1 v なので KCL には jw (C v)_i が入り、
+	密経路と同じ系になる (基準ノードは v = 0 として列が落ちるだけ)。
+	P は H 行列で持てるので密な逆行列は現れない。
+	*/
+	p->offQ = p->nunknown;
+	if (p->compress && p->capacitance && (p->nchg > 0)) {
+		if (pot_cells(p)) {
+			printf("%s\n", "*** memory allocation error (potential cells)");
+			return 1;
+		}
+		p->nunknown = p->offQ + p->ncell;
+	}
+
 	fprintf(fp_log, "MNA : %d nodes (reference = node %d), %d unknowns\n",
 		p->nnode + 1, p->refnode, p->nunknown);
 
@@ -148,10 +171,11 @@ static void stamp(sink_t *s, int i, int j, d_complex_t v)
 	sp->nnz++;
 }
 
-// 共通の組み立て。skiplp = 1 なら密な Lp ブロックを飛ばす
+// 共通の組み立て。skiplp = 1 なら密なカーネルブロック (Lp / P) を飛ばす
 static void assemble(const peec_t *p, double f, sink_t *s, int skiplp)
 {
 	const double omega = 2 * PI * f;
+	const double kw = p->retardation ? (2 * PI * f / C0) : 0;
 	const int *map = p->nodemap;
 
 	// gmin (指定時のみ : 全ノード対地コンダクタンス)
@@ -241,15 +265,32 @@ static void assemble(const peec_t *p, double f, sink_t *s, int skiplp)
 		}
 	}
 
-	// 容量性 PEEC : 節点ブロックに j omega C を加える
+	// 容量性 PEEC
 	// (基準ノードは電位 0 なので stamp() 側で行・列とも落ちる)
 	if (p->capacitance && (p->ncell > 0)) {
-		for (int i = 0; i < p->ncell; i++) {
-			const int mi = map[p->cellid[i]];
-			for (int j = 0; j < p->ncell; j++) {
-				const int mj = map[p->cellid[j]];
-				stamp(s, mi, mj,
-					d_mul(d_complex(0, omega), p->cmat[(size_t)i * p->ncell + j]));
+		if (p->offQ < p->nunknown) {
+			// 電荷を陽な未知数にする (圧縮経路)。P ブロックは密なので
+			// skiplp のときは H 行列に任せて飛ばす。
+			for (int i = 0; i < p->ncell; i++) {
+				const int mi = map[p->cellid[i]];
+				const int ri = p->offQ + i;
+				stamp(s, mi, ri, d_complex(0, omega));      // KCL に + jw q
+				stamp(s, ri, mi, d_complex(-1, 0));         // 電荷行の - v
+				if (skiplp) continue;
+				for (int j = 0; j < p->ncell; j++) {
+					stamp(s, ri, p->offQ + j, pot_entry(p, i, j, kw));
+				}
+			}
+		}
+		else {
+			// 密経路 : 節点ブロックに j omega C (C = P^-1)
+			for (int i = 0; i < p->ncell; i++) {
+				const int mi = map[p->cellid[i]];
+				for (int j = 0; j < p->ncell; j++) {
+					const int mj = map[p->cellid[j]];
+					stamp(s, mi, mj,
+						d_mul(d_complex(0, omega), p->cmat[(size_t)i * p->ncell + j]));
+				}
 			}
 		}
 	}
@@ -294,15 +335,18 @@ void mna_sparse_free(mna_sparse_t *sp)
 /*
 行列フリーの行列ベクトル積 y = A x (compression = 1)
 
-疎な部分は三つ組を足し込み、区間電流ブロックだけ H 行列に任せる :
-  y[offS + k] += -j omega sum_m Lp[k][m] x[offS + m]
+疎な部分は三つ組を足し込み、密なカーネルブロックは H 行列に任せる :
+  区間電流 : y[offS + k] += -j omega sum_m Lp[k][m] x[offS + m]
+  電荷     : y[offQ + i] +=          sum_j P[i][j]  x[offQ + j]
 
-work は長さ nseg の作業領域 (呼び出し側が確保して使い回す)。
+blk[] が「未知数の塊 (先頭 off、個数 n) + そのカーネルの H 行列 + 係数」を
+表す。work は max(blk[].n) 以上の作業領域 (呼び出し側が使い回す)。
 三つ組の加算順は登録順で固定、H 行列側もスレッド数不変なので、結果は
 スレッド数によらずビット単位で一致する。
 */
-void mna_apply(const peec_t *p, const mna_sparse_t *sp, const struct hmat_t *h,
-	double f, const d_complex_t *x, d_complex_t *y, d_complex_t *work)
+void mna_apply(const peec_t *p, const mna_sparse_t *sp,
+	const hblock_t *blk, int nblk,
+	const d_complex_t *x, d_complex_t *y, d_complex_t *work)
 {
 	const int n = p->nunknown;
 
@@ -310,12 +354,12 @@ void mna_apply(const peec_t *p, const mna_sparse_t *sp, const struct hmat_t *h,
 	for (int e = 0; e < sp->nnz; e++) {
 		y[sp->ri[e]] = d_add(y[sp->ri[e]], d_mul(sp->val[e], x[sp->ci[e]]));
 	}
-	if ((h == NULL) || (p->nseg <= 0)) return;
-
-	hmat_matvec(h, &x[p->offS], work);
-	const d_complex_t jw = d_complex(0, -2 * PI * f);
-	for (int k = 0; k < p->nseg; k++) {
-		y[p->offS + k] = d_add(y[p->offS + k], d_mul(jw, work[k]));
+	for (int b = 0; b < nblk; b++) {
+		if ((blk[b].h == NULL) || (blk[b].n <= 0)) continue;
+		hmat_matvec(blk[b].h, &x[blk[b].off], work);
+		for (int k = 0; k < blk[b].n; k++) {
+			y[blk[b].off + k] = d_add(y[blk[b].off + k], d_mul(blk[b].scale, work[k]));
+		}
 	}
 }
 

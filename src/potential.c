@@ -61,17 +61,144 @@ static int build_cells(peec_t *p)
 	return 0;
 }
 
+/*
+セル -> 電荷サブセルの索引 (圧縮経路で 1 要素ずつ評価するのに要る)
+
+密経路は nchg x nchg の ig を作ってから集約するが、圧縮経路では
+P(n, m) を単独で求めたいので、セルに属するサブセルを引けるようにする。
+サブセル数はノードに集まる区間数 (線導体) か 1 (面導体の双対矩形) なので
+数個で、1 要素の評価コストは数回の二重積分に収まる。
+*/
+static int build_cellsub(peec_t *p)
+{
+	const int nh = p->nchg;
+	const int nc = p->ncell;
+
+	p->csoff = (int *)calloc((size_t)(nc + 1), sizeof(int));
+	p->csidx = (int *)malloc((size_t)(nh > 0 ? nh : 1) * sizeof(int));
+	p->cpt = (double *)malloc((size_t)(nc > 0 ? nc : 1) * 3 * sizeof(double));
+	if ((p->csoff == NULL) || (p->csidx == NULL) || (p->cpt == NULL)) return 1;
+
+	for (int h = 0; h < nh; h++) {
+		p->csoff[p->cellof[h] + 1]++;
+	}
+	for (int i = 0; i < nc; i++) {
+		p->csoff[i + 1] += p->csoff[i];
+	}
+	{
+		int *fill = (int *)malloc((size_t)(nc + 1) * sizeof(int));
+		if (fill == NULL) return 1;
+		memcpy(fill, p->csoff, (size_t)(nc + 1) * sizeof(int));
+		for (int h = 0; h < nh; h++) {
+			p->csidx[fill[p->cellof[h]]++] = h;
+		}
+		free(fill);
+	}
+
+	// セルの代表点 : サブセル中点を長さで重み付けした重心 (クラスタツリー用)
+	for (int i = 0; i < nc; i++) {
+		double w = 0, x[3] = {0, 0, 0};
+		for (int e = p->csoff[i]; e < p->csoff[i + 1]; e++) {
+			const seg_t *s = &p->chg[p->csidx[e]];
+			for (int c = 0; c < 3; c++) {
+				x[c] += s->len * 0.5 * (s->x1[c] + s->x2[c]);
+			}
+			w += s->len;
+		}
+		for (int c = 0; c < 3; c++) {
+			p->cpt[(3 * i) + c] = (w > 0) ? (x[c] / w) : 0;
+		}
+	}
+
+	return 0;
+}
+
+/*
+電位係数行列の 1 要素 P(i, j)
+
+  P(i, j) = 1/(4 pi eps0 Ai Aj) * sum_{p in i} sum_{q in j} I(p, q)
+
+pot_fill() の集約と同じ式で、地板の鏡像減算も同じ規約 (不変条件 8)。
+密経路と圧縮経路が同じ関数を通るので構造的にビット一致する。
+*/
+d_complex_t pot_entry(const peec_t *p, int i, int j, double kw)
+{
+	d_complex_t s = d_complex(0, 0);
+
+	for (int e = p->csoff[i]; e < p->csoff[i + 1]; e++) {
+		const int h1 = p->csidx[e];
+		for (int g = p->csoff[j]; g < p->csoff[j + 1]; g++) {
+			const int h2 = p->csidx[g];
+			// 密経路は上三角を評価して写すので、ここでも順序を正規化する
+			const int a = (h1 <= h2) ? h1 : h2;
+			const int b = (h1 <= h2) ? h2 : h1;
+			d_complex_t v = (a == b)
+				? neumann_self_k(&p->chg[a], p->chg[a].aP, kw)
+				: neumann_pair_k(&p->chg[a], &p->chg[b],
+				                 p->chg[a].aP, p->chg[b].aP, kw);
+			if (p->gp) {
+				seg_t m2;
+				seg_mirror(&p->chg[b], p->gpz, &m2);
+				v = d_sub(v, neumann_pair_k(&p->chg[a], &m2,
+					p->chg[a].aP, p->chg[b].aP, kw));
+			}
+			s = d_add(s, v);
+		}
+	}
+
+	return d_rmul(1 / (4 * PI * EPS0 * p->carea[i] * p->carea[j]), s);
+}
+
+static d_complex_t pot_entry_cb(void *ctx, int i, int j, double kw)
+{
+	return pot_entry((const peec_t *)ctx, i, j, kw);
+}
+
+// 電位係数 P を H 行列で圧縮する (compression = 1 かつ capacitance = 1)
+struct hmat_t *hmat_build_pot(peec_t *p, double f, FILE *fp_log)
+{
+	if (pot_cells(p)) return NULL;
+	if (p->ncell <= 0) return NULL;
+	const double kw = p->retardation ? (2 * PI * f / C0) : 0;
+
+	return hmat_build_gen(p->ncell, p->cpt, pot_entry_cb, p, kw, p->ctol, "P", fp_log);
+}
+
+// 容量セルの構成 (幾何のみなので 1 回だけ)。密・圧縮の両経路から呼ぶ。
+int pot_cells(peec_t *p)
+{
+	if (p->cellof != NULL) return 0;
+	if (p->nchg <= 0) return 1;
+	if (build_cells(p)) return 1;
+
+	return build_cellsub(p);
+}
+
 int pot_fill(peec_t *p, double f, FILE *fp_log)
 {
 	const char errmem[] = "*** memory allocation error (potential)";
 
 	if (!p->capacitance || (p->nchg <= 0)) return 0;
 
-	if (p->cellof == NULL) {
-		if (build_cells(p)) {
-			printf("%s\n", errmem);
-			return 1;
+	if (pot_cells(p)) {
+		printf("%s\n", errmem);
+		return 1;
+	}
+
+	/*
+	圧縮経路は密な P も C = P^-1 も作らない (電荷が未知数で、P は H 行列)。
+	総容量 Ctotal = 1^T P^-1 1 は逆行列を要するのでここでは出さない
+	(必要なら compression を外して求める)。
+	*/
+	if (p->compress) {
+		if (!p->clogged) {
+			p->clogged = 1;
+			printf("PEEC: capacitive cells = %d (compressed : charge unknowns)\n", p->ncell);
+			fprintf(fp_log, "PEEC: capacitive cells = %d (compressed : charge unknowns)\n",
+				p->ncell);
+			fflush(fp_log);
 		}
+		return 0;
 	}
 
 	const int nh = p->nchg;

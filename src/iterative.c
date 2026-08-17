@@ -255,9 +255,9 @@ int gmres_solve(int n, const d_complex_t *a, const d_complex_t *alu, const int *
 typedef struct {
 	const peec_t *p;
 	const mna_sparse_t *sp;
-	const struct hmat_t *h;
-	double f;
-	d_complex_t *work;            // [nseg]
+	const hblock_t *blk;
+	int nblk;
+	d_complex_t *work;            // [max blk[].n]
 } hmat_a_t;
 
 typedef struct {
@@ -267,7 +267,7 @@ typedef struct {
 static void hmat_aop(void *ctx, const d_complex_t *x, d_complex_t *y)
 {
 	const hmat_a_t *c = (const hmat_a_t *)ctx;
-	mna_apply(c->p, c->sp, c->h, c->f, x, y, c->work);
+	mna_apply(c->p, c->sp, c->blk, c->nblk, x, y, c->work);
 }
 
 static void hmat_mop(void *ctx, d_complex_t *z)
@@ -282,18 +282,22 @@ static void hmat_mop(void *ctx, d_complex_t *z)
 
 戻り値 : 総反復数 (>= 1、収束時。b に解を上書き) / -1 = 未収束 (b は不定)
 */
-int gmres_hmat(const peec_t *p, const mna_sparse_t *sp, const struct hmat_t *h,
-	double f, const struct precond_t *pc, d_complex_t *b, double tol)
+int gmres_hmat(const peec_t *p, const mna_sparse_t *sp,
+	const hblock_t *blk, int nblk,
+	const struct precond_t *pc, d_complex_t *b, double tol)
 {
 	const int n = p->nunknown;
 	hmat_a_t ac;
 	hmat_m_t mc;
+	int maxn = 1;
+	for (int i = 0; i < nblk; i++) {
+		if (blk[i].n > maxn) maxn = blk[i].n;
+	}
 	ac.p = p;
 	ac.sp = sp;
-	ac.h = h;
-	ac.f = f;
-	ac.work = (d_complex_t *)malloc((size_t)(p->nseg > 0 ? p->nseg : 1)
-		* sizeof(d_complex_t));
+	ac.blk = blk;
+	ac.nblk = nblk;
+	ac.work = (d_complex_t *)malloc((size_t)maxn * sizeof(d_complex_t));
 	mc.pc = pc;
 
 	d_complex_t *x = (d_complex_t *)calloc((size_t)n, sizeof(d_complex_t));
