@@ -82,7 +82,10 @@ int main(int argc, char *argv[])
 	}
 	// 準静的な部分要素をここで 1 回作る (容量セル数は MNA 番号付けに必要)。
 	// 遅延ありのときは solve() が周波数ごとに作り直す。
-	lp_fill(&peec, 0, fp_log);
+	// compression = 1 は密な Lp を作らない (H 行列は solve() が組む)。
+	if (!peec.compress) {
+		lp_fill(&peec, 0, fp_log);
+	}
 	if (pot_fill(&peec, 0, fp_log)) {
 		peec_free(&peec);
 		fclose(fp_log);

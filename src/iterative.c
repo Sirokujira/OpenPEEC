@@ -1,16 +1,23 @@
 /*
 iterative.c
 
-周波数掃引の反復解法 (acceleration = 1 のときのみ使用)
+周波数掃引の反復解法 (acceleration = 1) と行列フリー解法 (compression = 1)
 
-掃引では隣接周波数の MNA 行列 A(f) = S + j omega T が近いことを利用して、
-直近に LU 分解した行列 M = A(f_LU) を右前処理に使う GMRES で解く :
+acceleration = 1 : 掃引では隣接周波数の MNA 行列 A(f) = S + j omega T が
+近いことを利用して、直近に LU 分解した行列 M = A(f_LU) を右前処理に使う
+GMRES で解く :
 
   A M^-1 u = b,   x = M^-1 u
 
 収束しない (= 前処理が古い) ときは呼び出し側 (solve.c) が現在の周波数で
 LU を取り直す。最悪でも従来の毎周波数 LU と同等で、掃引点が密なほど
 LU の回数が減り、O(n^3) が O(反復 x n^2) に置き換わる。
+
+compression = 1 : 密行列を一切持たず、行列ベクトル積を疎部 (mna_apply) +
+H 行列 (hmat_matvec) で、前処理を葉ブロック消去 + Schur 補元 (precond.c)
+で行う。前処理が周波数ごとに作り直されるので通常は 1 サイクルで収束するが、
+念のため GMRES(GMRES_MAXIT) のリスタートを GMRES_CYCLES 回まで許す
+(基底のメモリを GMRES_MAXIT x n に抑えるため)。
 
 スレッド数不変性 : 行列ベクトル積は行ごとに独立 (各行の内積は直列)、
 Gram-Schmidt / ノルム / Givens 回転はすべて直列なので、結果はスレッド数に
@@ -19,7 +26,8 @@ Gram-Schmidt / ノルム / Givens 回転はすべて直列なので、結果は�
 
 #include "peec.h"
 
-#define GMRES_MAXIT 60
+#define GMRES_MAXIT  60
+#define GMRES_CYCLES 10
 
 // conj(u)・v (複素内積、直列)
 static d_complex_t zdotc(int n, const d_complex_t *u, const d_complex_t *v)
@@ -61,17 +69,21 @@ static void zmatvec(int n, const d_complex_t *a, const d_complex_t *x, d_complex
 }
 
 /*
-右前処理 GMRES (再スタートなし、最大 GMRES_MAXIT 反復)
+右前処理 GMRES の 1 サイクル (最大 GMRES_MAXIT 反復)
 
-  a    : 現在の周波数の MNA 行列 (n x n、未分解のまま)
-  alu  : 前処理の LU 因子 (lu_decomp 済み) と piv
-  b    : 入力 = 右辺 / 出力 = 解 (収束したときのみ上書き)
-  tol  : 相対残差の収束判定
+  aop(actx, x, y) : y = A x
+  mop(mctx, z)    : z <- M^-1 z (in-place)
+  r    : 初期残差 (呼び出し側が b - A x0 を渡す)
+  x    : 出力。このサイクルの補正 M^-1 V y を**常に**書く (未収束でも
+         最小二乗解を返すので、リスタートの初期値に使える)
+  tolabs : 残差の絶対収束判定 (相対判定は呼び出し側が ||b|| を掛けて渡す)
 
-戻り値 : 反復回数 (>= 1) / -1 = 未収束 (b は変更しない)
+戻り値 : 反復回数 (>= 1、収束時) / -1 = このサイクルでは未収束
 */
-int gmres_solve(int n, const d_complex_t *a, const d_complex_t *alu, const int *piv,
-	d_complex_t *b, double tol)
+static int gmres_cycle(int n,
+	void (*aop)(void *ctx, const d_complex_t *x, d_complex_t *y), void *actx,
+	void (*mop)(void *ctx, d_complex_t *z), void *mctx,
+	const d_complex_t *r, d_complex_t *x, double tolabs)
 {
 	const int m = GMRES_MAXIT;
 	// Krylov 基底 V[(m+1) x n]、Hessenberg h[(m+1) x m]、Givens 係数、右辺 g
@@ -89,16 +101,16 @@ int gmres_solve(int n, const d_complex_t *a, const d_complex_t *alu, const int *
 		return -1;
 	}
 
-	// 初期残差 = b (x0 = 0)
-	const double beta = znorm(n, b);
+	const double beta = znorm(n, r);
 	int iters = -1;
 	if (beta <= 0) {
-		// 右辺 0 : 解も 0
+		// 残差 0 : 補正も 0
+		memset(x, 0, (size_t)n * sizeof(d_complex_t));
 		free(v); free(w); free(z); free(h); free(cs); free(sn); free(g); free(y);
 		return 1;
 	}
 	for (int i = 0; i < n; i++) {
-		v[i] = d_rmul(1 / beta, b[i]);
+		v[i] = d_rmul(1 / beta, r[i]);
 	}
 	g[0] = d_complex(beta, 0);
 
@@ -106,8 +118,8 @@ int gmres_solve(int n, const d_complex_t *a, const d_complex_t *alu, const int *
 	for (j = 0; j < m; j++) {
 		// w = A M^-1 v_j
 		memcpy(z, &v[(size_t)j * n], (size_t)n * sizeof(d_complex_t));
-		lu_solve(n, alu, piv, z);
-		zmatvec(n, a, z, w);
+		mop(mctx, z);
+		aop(actx, z, w);
 
 		// 修正 Gram-Schmidt (直列)
 		for (int i = 0; i <= j; i++) {
@@ -150,16 +162,18 @@ int gmres_solve(int n, const d_complex_t *a, const d_complex_t *alu, const int *
 		g[j + 1] = d_rmul(-1, d_mul(sn[j], g[j]));
 		g[j] = d_mul(d_complex(cs[j].r, -cs[j].i), g[j]);
 
-		// 相対残差
-		if (d_abs(g[j + 1]) <= tol * beta) {
+		// 残差の絶対値で判定
+		if (d_abs(g[j + 1]) <= tolabs) {
 			iters = j + 1;
 			break;
 		}
 	}
 
-	if (iters > 0) {
+	// 完了した反復数 k での最小二乗解 (未収束でもリスタート用に返す)
+	const int k = (iters > 0) ? iters : j;
+	memset(x, 0, (size_t)n * sizeof(d_complex_t));
+	if (k > 0) {
 		// 後退代入 y = H^-1 g
-		const int k = iters;
 		for (int i = k - 1; i >= 0; i--) {
 			d_complex_t s = g[i];
 			for (int l = i + 1; l < k; l++) {
@@ -168,17 +182,169 @@ int gmres_solve(int n, const d_complex_t *a, const d_complex_t *alu, const int *
 			y[i] = d_div(s, h[i + ((size_t)i * (m + 1))]);
 		}
 		// u = V y、x = M^-1 u
-		memset(z, 0, (size_t)n * sizeof(d_complex_t));
 		for (int l = 0; l < k; l++) {
 			for (int i = 0; i < n; i++) {
-				z[i] = d_add(z[i], d_mul(y[l], v[(size_t)l * n + i]));
+				x[i] = d_add(x[i], d_mul(y[l], v[(size_t)l * n + i]));
 			}
 		}
-		lu_solve(n, alu, piv, z);
-		memcpy(b, z, (size_t)n * sizeof(d_complex_t));
+		mop(mctx, x);
 	}
 
 	free(v); free(w); free(z); free(h); free(cs); free(sn); free(g); free(y);
 
 	return iters;
+}
+
+// ── 密行列 + LU 前処理 (acceleration = 1) ─────────────────────────
+typedef struct {
+	int n;
+	const d_complex_t *a;
+} dense_a_t;
+
+typedef struct {
+	int n;
+	const d_complex_t *alu;
+	const int *piv;
+} dense_m_t;
+
+static void dense_aop(void *ctx, const d_complex_t *x, d_complex_t *y)
+{
+	const dense_a_t *c = (const dense_a_t *)ctx;
+	zmatvec(c->n, c->a, x, y);
+}
+
+static void dense_mop(void *ctx, d_complex_t *z)
+{
+	const dense_m_t *c = (const dense_m_t *)ctx;
+	lu_solve(c->n, c->alu, c->piv, z);
+}
+
+/*
+右前処理 GMRES (1 サイクルのみ、従来の acceleration = 1 用)
+
+  b : 入力 = 右辺 / 出力 = 解 (収束したときのみ上書き)
+
+戻り値 : 反復回数 (>= 1) / -1 = 未収束 (b は変更しない。呼び出し側が
+現在の周波数で LU を取り直す)
+*/
+int gmres_solve(int n, const d_complex_t *a, const d_complex_t *alu, const int *piv,
+	d_complex_t *b, double tol)
+{
+	dense_a_t ac;
+	dense_m_t mc;
+	ac.n = n;
+	ac.a = a;
+	mc.n = n;
+	mc.alu = alu;
+	mc.piv = piv;
+
+	d_complex_t *x = (d_complex_t *)malloc((size_t)n * sizeof(d_complex_t));
+	if (x == NULL) return -1;
+	const double beta = znorm(n, b);
+	const int it = gmres_cycle(n, dense_aop, &ac, dense_mop, &mc,
+		b, x, tol * beta);
+	if (it > 0) {
+		memcpy(b, x, (size_t)n * sizeof(d_complex_t));
+	}
+	free(x);
+
+	return it;
+}
+
+// ── 行列フリー + 葉ブロック前処理 (compression = 1) ────────────────
+typedef struct {
+	const peec_t *p;
+	const mna_sparse_t *sp;
+	const struct hmat_t *h;
+	double f;
+	d_complex_t *work;            // [nseg]
+} hmat_a_t;
+
+typedef struct {
+	const struct precond_t *pc;
+} hmat_m_t;
+
+static void hmat_aop(void *ctx, const d_complex_t *x, d_complex_t *y)
+{
+	const hmat_a_t *c = (const hmat_a_t *)ctx;
+	mna_apply(c->p, c->sp, c->h, c->f, x, y, c->work);
+}
+
+static void hmat_mop(void *ctx, d_complex_t *z)
+{
+	const hmat_m_t *c = (const hmat_m_t *)ctx;
+	pc_apply(c->pc, z);
+}
+
+/*
+行列フリー GMRES (compression = 1)。リスタートごとに真の残差 r = b - A x を
+取り直すので、サイクル内の残差推定の丸めが蓄積しない。
+
+戻り値 : 総反復数 (>= 1、収束時。b に解を上書き) / -1 = 未収束 (b は不定)
+*/
+int gmres_hmat(const peec_t *p, const mna_sparse_t *sp, const struct hmat_t *h,
+	double f, const struct precond_t *pc, d_complex_t *b, double tol)
+{
+	const int n = p->nunknown;
+	hmat_a_t ac;
+	hmat_m_t mc;
+	ac.p = p;
+	ac.sp = sp;
+	ac.h = h;
+	ac.f = f;
+	ac.work = (d_complex_t *)malloc((size_t)(p->nseg > 0 ? p->nseg : 1)
+		* sizeof(d_complex_t));
+	mc.pc = pc;
+
+	d_complex_t *x = (d_complex_t *)calloc((size_t)n, sizeof(d_complex_t));
+	d_complex_t *dx = (d_complex_t *)malloc((size_t)n * sizeof(d_complex_t));
+	d_complex_t *r = (d_complex_t *)malloc((size_t)n * sizeof(d_complex_t));
+	if ((ac.work == NULL) || (x == NULL) || (dx == NULL) || (r == NULL)) {
+		free(ac.work); free(x); free(dx); free(r);
+		return -1;
+	}
+
+	const double bnorm = znorm(n, b);
+	if (bnorm <= 0) {
+		// 右辺 0 : 解も 0
+		memset(b, 0, (size_t)n * sizeof(d_complex_t));
+		free(ac.work); free(x); free(dx); free(r);
+		return 1;
+	}
+	const double tolabs = tol * bnorm;
+
+	int total = 0;
+	int done = 0;
+	for (int cyc = 0; (cyc < GMRES_CYCLES) && !done; cyc++) {
+		// 真の残差 r = b - A x (初回は x = 0 なので r = b)
+		if (cyc == 0) {
+			memcpy(r, b, (size_t)n * sizeof(d_complex_t));
+		}
+		else {
+			hmat_aop(&ac, x, r);
+			for (int i = 0; i < n; i++) {
+				r[i] = d_sub(b[i], r[i]);
+			}
+			if (znorm(n, r) <= tolabs) {
+				done = 1;
+				break;
+			}
+		}
+		const int it = gmres_cycle(n, hmat_aop, &ac, hmat_mop, &mc, r, dx, tolabs);
+		for (int i = 0; i < n; i++) {
+			x[i] = d_add(x[i], dx[i]);
+		}
+		total += (it > 0) ? it : GMRES_MAXIT;
+		if (it > 0) done = 1;
+	}
+
+	if (done) {
+		memcpy(b, x, (size_t)n * sizeof(d_complex_t));
+	}
+	free(ac.work);
+	free(x);
+	free(dx);
+	free(r);
+
+	return done ? total : -1;
 }

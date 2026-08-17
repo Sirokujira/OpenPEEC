@@ -51,6 +51,7 @@ int input_data(FILE *fp, peec_t *p)
 	p->gmin = 0;
 	p->refnode = -1;
 	p->tranatt = 40;              // 過渡応答 : 帯域端でのガウス励振の減衰 [dB]
+	p->ctol = 1e-6;               // 圧縮 (compression) の ACA 相対許容誤差
 
 	// read
 	while (fgets(strline, sizeof(strline), fp) != NULL) {
@@ -531,6 +532,15 @@ int input_data(FILE *fp, peec_t *p)
 		else if (!strcmp(strkey, "grading")) {
 			p->grading = atoi(token[2]);
 		}
+		else if (!strcmp(strkey, "compression")) {
+			// compression = 1 [tol] : 部分インダクタンスを H 行列で圧縮
+			p->compress = atoi(token[2]);
+			if (ntoken >= 4) p->ctol = atof(token[3]);
+			if (p->ctol <= 0) {
+				printf(errfmt2, "compression");
+				return 1;
+			}
+		}
 		else if (!strcmp(strkey, "groundplane")) {
 			p->gp = 1;
 			p->gpz = atof(token[2]);
@@ -578,6 +588,21 @@ int input_data(FILE *fp, peec_t *p)
 		printf("%s\n", "*** dielectric requires capacitance = 1");
 		return 1;
 	}
+	// 圧縮 (段階 1) は誘導性 PEEC のみ : cmat = P^-1 が密な逆行列を
+	// 持ち込むため、capacitance = 1 とは併用できない (静かな劣化ではなく
+	// 明示的なエラーにする)。acceleration は密 LU を前提にするので同様。
+	if (p->compress && p->capacitance) {
+		printf("%s\n", "*** compression = 1 requires capacitance = 0 (nodal C = P^-1 is dense)");
+		return 1;
+	}
+	if (p->compress && p->accel) {
+		printf("%s\n", "*** compression = 1 and acceleration = 1 are mutually exclusive");
+		return 1;
+	}
+	if (p->compress && ((p->nwire + p->nplate + p->npanel) <= 0)) {
+		printf("%s\n", "*** compression = 1 requires conductor geometry (wire/bar/plate/quad/disk)");
+		return 1;
+	}
 
 	return 0;
 }
@@ -618,7 +643,8 @@ void peec_free(peec_t *p)
 	free(p->gid);
 	free(p->gxyz);
 
-	// 部分要素 (partial.c / potential.c)
+	// 部分要素 (partial.c / potential.c / hmatrix.c)
+	hmat_free(p->hlp);
 	free(p->lp);
 	free(p->cellid);
 	free(p->cellof);

@@ -361,6 +361,68 @@ void seg_mirror(const seg_t *s, double gpz, seg_t *out)
 	}
 }
 
+/*
+部分インダクタンス行列の 1 要素 Lp[i][j] (kw = 2 pi f/c、0 で準静的)。
+
+lp_fill() のループ本体をそのまま切り出したもので、両者は同じ値を返す
+(圧縮経路 (hmatrix.c の ACA) と密経路がビット単位で一致する根拠)。
+地板 (groundplane) の鏡像減算もここに含まれる。
+*/
+d_complex_t lp_entry(const peec_t *p, int i, int j, double kw)
+{
+	const double coef = MU0 / (4 * PI);
+
+	// lp_fill() は上三角だけを評価して下三角へ写す。求積の次数は引数の順序に
+	// 依存する (外側求積は第 1 引数のセル : 不変条件 (13)) ので、ここでも
+	// i <= j に正規化しないと下三角だけ ~1e-5 ずれる。
+	// I(s1, M s2) = I(M s1, s2) かつ I は対称なので鏡像項も入れ替えてよい。
+	if (i > j) {
+		const int t = i;
+		i = j;
+		j = t;
+	}
+	const seg_t *si = &p->seg[i];
+	const seg_t *sj = &p->seg[j];
+
+	double t1[3];
+	for (int c = 0; c < 3; c++) {
+		t1[c] = (si->x2[c] - si->x1[c]) / si->len;
+	}
+
+	if (i == j) {
+		d_complex_t v = neumann_self_k(si, si->aL, kw);
+		if (p->gp) {
+			seg_t mi;
+			seg_mirror(si, p->gpz, &mi);
+			const double tdm = (t1[0] * t1[0]) + (t1[1] * t1[1]) - (t1[2] * t1[2]);
+			v = d_sub(v, d_rmul(tdm, neumann_pair_k(si, &mi, si->aL, si->aL, kw)));
+		}
+		return d_rmul(coef, v);
+	}
+
+	double t2[3];
+	for (int c = 0; c < 3; c++) {
+		t2[c] = (sj->x2[c] - sj->x1[c]) / sj->len;
+	}
+	const double tdot = dot3(t1, t2);
+	const double tdm = (t1[0] * t2[0]) + (t1[1] * t2[1]) - (t1[2] * t2[2]);
+
+	// 直交するセルの寄与は恒等的に 0 (格子状の面導体では約半数を占める)。
+	// 二重積分を丸ごと省く。地板があるときは鏡像側の係数 tdm も見る
+	// (tdm = tdot - 2 t1z t2z なので tdot = 0 でも 0 とは限らない)。
+	d_complex_t v = d_complex(0, 0);
+	if (tdot != 0) {
+		v = d_rmul(tdot, neumann_pair_k(si, sj, si->aL, sj->aL, kw));
+	}
+	if (p->gp && (tdm != 0)) {
+		seg_t mj;
+		seg_mirror(sj, p->gpz, &mj);
+		v = d_sub(v, d_rmul(tdm, neumann_pair_k(si, &mj, si->aL, sj->aL, kw)));
+	}
+
+	return d_rmul(coef, v);
+}
+
 // 部分インダクタンス行列 (対称密行列)
 // retardation = 0 なら周波数非依存なので 1 回だけ、1 なら周波数ごとに呼ぶ
 void lp_fill(peec_t *p, double f, FILE *fp_log)
@@ -372,8 +434,10 @@ void lp_fill(peec_t *p, double f, FILE *fp_log)
 		p->lp = (d_complex_t *)malloc((size_t)n * n * sizeof(d_complex_t));
 	}
 	const double kw = p->retardation ? (2 * PI * f / C0) : 0;
-	const double coef = MU0 / (4 * PI);
 
+	// 要素の評価は lp_entry() 1 箇所にまとめてある。密経路と圧縮経路
+	// (hmatrix.c の ACA) が同じ関数を呼ぶので、両者は構造的にビット単位で
+	// 一致する (以前は本体を二重に持っていて下三角に ~1e-5 の差が出ていた)。
 	// MSVC の OpenMP 2.0 は for 文内でのインデックス宣言を許さない (C3015) ため
 	// ループ変数は事前に宣言する
 	int i;
@@ -381,37 +445,8 @@ void lp_fill(peec_t *p, double f, FILE *fp_log)
 #pragma omp parallel for schedule(dynamic)
 #endif
 	for (i = 0; i < n; i++) {
-		double t1[3];
-		for (int c = 0; c < 3; c++) {
-			t1[c] = (p->seg[i].x2[c] - p->seg[i].x1[c]) / p->seg[i].len;
-		}
-		d_complex_t vii = neumann_self_k(&p->seg[i], p->seg[i].aL, kw);
-		if (p->gp) {
-			// 地板 : 自己項も自分の鏡像との相互項を減算する
-			// (鏡像の幾何方向は (tx, ty, -tz) なので t・t' = tx^2 + ty^2 - tz^2)
-			seg_t mi;
-			seg_mirror(&p->seg[i], p->gpz, &mi);
-			const double tdm = (t1[0] * t1[0]) + (t1[1] * t1[1]) - (t1[2] * t1[2]);
-			vii = d_sub(vii, d_rmul(tdm,
-				neumann_pair_k(&p->seg[i], &mi, p->seg[i].aL, p->seg[i].aL, kw)));
-		}
-		p->lp[(size_t)i * n + i] = d_rmul(coef, vii);
-		for (int j = i + 1; j < n; j++) {
-			double t2[3];
-			for (int c = 0; c < 3; c++) {
-				t2[c] = (p->seg[j].x2[c] - p->seg[j].x1[c]) / p->seg[j].len;
-			}
-			const double tdot = dot3(t1, t2);
-			d_complex_t vij = d_rmul(tdot,
-				neumann_pair_k(&p->seg[i], &p->seg[j], p->seg[i].aL, p->seg[j].aL, kw));
-			if (p->gp) {
-				seg_t mj;
-				seg_mirror(&p->seg[j], p->gpz, &mj);
-				const double tdm = (t1[0] * t2[0]) + (t1[1] * t2[1]) - (t1[2] * t2[2]);
-				vij = d_sub(vij, d_rmul(tdm,
-					neumann_pair_k(&p->seg[i], &mj, p->seg[i].aL, p->seg[j].aL, kw)));
-			}
-			p->lp[(size_t)i * n + j] = d_rmul(coef, vij);
+		for (int j = i; j < n; j++) {
+			p->lp[(size_t)i * n + j] = lp_entry(p, i, j, kw);
 		}
 	}
 	// 下三角へミラー

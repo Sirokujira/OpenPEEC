@@ -9,6 +9,10 @@ acceleration = 1 のときは、直近に LU 分解した行列を右前処理�
 (iterative.c) で解き、収束しないときだけその周波数で LU を取り直す。
 掃引点が密なほど O(n^3) の LU の回数が減る。既定 (acceleration = 0) は
 従来どおり毎周波数 LU。
+
+compression = 1 のときは密行列を一切作らない : Lp は H 行列 (hmatrix.c)、
+MNA の疎部は三つ組 (mna_sparse)、前処理は葉ブロック消去 + Schur 補元
+(precond.c) で、行列フリーの GMRES (gmres_hmat) で解く。
 */
 
 #include "peec.h"
@@ -28,6 +32,14 @@ typedef struct {
 	long   itsum;                 // GMRES の総反復数
 } accel_t;
 
+// compression = 1 の状態 (疎部・前処理・統計)
+typedef struct {
+	mna_sparse_t sp;
+	struct precond_t *pc;
+	long   itsum;                 // GMRES の総反復数
+	int    nrhs;                  // 解いた右辺の数
+} comp_t;
+
 // 1 本の右辺を解く。戻り値 0 = 正常 / 1 = 特異
 static int accel_rhs(accel_t *ac, d_complex_t *b)
 {
@@ -45,6 +57,42 @@ static int accel_rhs(accel_t *ac, d_complex_t *b)
 		ac->nlu++;
 	}
 	lu_solve(ac->n, ac->alu, ac->apiv, b);
+	return 0;
+}
+
+/*
+1 本の右辺を解く (3 経路の分岐を 1 箇所にまとめる)。
+
+  compression = 1 : 行列フリー GMRES (未収束はエラー)
+  acceleration = 1 : 前処理 LU 再利用の GMRES (accel_rhs)
+  既定             : 密 LU の代入
+
+戻り値 0 = 正常 / 1 = エラー (メッセージは出力済み)
+*/
+static int lin_rhs(const peec_t *p, double f, comp_t *cp, accel_t *ac,
+	const d_complex_t *a, const int *piv, d_complex_t *b, FILE *fp_log)
+{
+	if (p->compress) {
+		const int it = gmres_hmat(p, &cp->sp, p->hlp, f, cp->pc, b, ACCEL_TOL);
+		if (it < 0) {
+			printf("*** compression : GMRES did not converge at f = %.5e Hz\n", f);
+			fprintf(fp_log, "*** compression : GMRES did not converge at f = %.5e Hz\n", f);
+			return 1;
+		}
+		cp->itsum += it;
+		cp->nrhs++;
+		return 0;
+	}
+	if (p->accel) {
+		if (accel_rhs(ac, b)) {
+			printf("*** singular matrix at f = %.5e Hz\n", f);
+			fprintf(fp_log, "*** singular matrix at f = %.5e Hz\n", f);
+			return 1;
+		}
+		return 0;
+	}
+	lu_solve(p->nunknown, a, piv, b);
+
 	return 0;
 }
 
@@ -120,10 +168,17 @@ static int z_to_s(peec_t *p, int ifreq, d_complex_t *m, d_complex_t *minv,
 int solve(peec_t *p, FILE *fp_log)
 {
 	const int n = p->nunknown;
+	const int comp = p->compress;
+	int ret = 1;
 
-	d_complex_t *a = (d_complex_t *)malloc((size_t)n * n * sizeof(d_complex_t));
+	// 密行列は compression = 1 では確保しない (それが目的)
+	d_complex_t *a = NULL;
+	int *piv = NULL;
+	if (!comp) {
+		a = (d_complex_t *)malloc((size_t)n * n * sizeof(d_complex_t));
+		piv = (int *)malloc((size_t)n * sizeof(int));
+	}
 	d_complex_t *b = (d_complex_t *)malloc((size_t)n * sizeof(d_complex_t));
-	int *piv = (int *)malloc((size_t)n * sizeof(int));
 	p->zin = (d_complex_t *)malloc((size_t)p->nport * p->nfreq * sizeof(d_complex_t));
 
 	// 多ポートの Z / S 行列と、Z -> S 変換の作業領域
@@ -165,15 +220,17 @@ int solve(peec_t *p, FILE *fp_log)
 		ac.apiv = (int *)malloc((size_t)n * sizeof(int));
 	}
 
-	if ((a == NULL) || (b == NULL) || (piv == NULL) || (p->zin == NULL) ||
+	// compression = 1 : 疎部と前処理 (周波数ごとに作り直す)
+	comp_t cp;
+	memset(&cp, 0, sizeof(comp_t));
+
+	if ((b == NULL) || (p->zin == NULL) ||
+	    (!comp && ((a == NULL) || (piv == NULL))) ||
 	    (p->zmat == NULL) || (p->smat == NULL) ||
 	    (sm == NULL) || (sinv == NULL) || (scol == NULL) || (spiv == NULL) ||
 	    (p->accel && ((ac.alu == NULL) || (ac.apiv == NULL)))) {
 		printf("%s\n", "*** memory allocation error (matrix)");
-		free(a); free(b); free(piv);
-		free(sm); free(sinv); free(scol); free(spiv);
-		free(ac.alu); free(ac.apiv);
-		return 1;
+		goto done;
 	}
 
 	for (int ifreq = 0; ifreq < p->nfreq; ifreq++) {
@@ -181,39 +238,55 @@ int solve(peec_t *p, FILE *fp_log)
 
 		// 遅延ありのときは部分要素が周波数依存になるので毎回作り直す
 		if (p->retardation) {
-			lp_fill(p, f, fp_log);
-			if (pot_fill(p, f, fp_log)) {
-				free(a); free(b); free(piv);
-				free(sm); free(sinv); free(scol); free(spiv);
-				free(ac.alu); free(ac.apiv);
-				return 1;
+			if (!comp) {
+				lp_fill(p, f, fp_log);
 			}
+			if (pot_fill(p, f, fp_log)) goto done;
 		}
 
-		mna_assemble(p, f, a);
-		int ising = -1;
-		if (!p->accel) {
-			ising = lu_decomp(n, a, piv);
-		}
-		else {
-			// 初回だけここで LU。以後は accel_rhs() が GMRES で解き、
-			// 収束しないときだけ取り直す。
-			ac.fresh = 0;
-			if (!ac.havelu) {
-				memcpy(ac.alu, a, (size_t)n * n * sizeof(d_complex_t));
-				ising = lu_decomp(n, ac.alu, ac.apiv);
-				ac.havelu = 1;
-				ac.fresh = 1;
-				ac.nlu++;
+		if (comp) {
+			// H 行列は静的なら初回だけ、遅延ありなら周波数ごとに作る
+			if ((p->hlp == NULL) || p->retardation) {
+				hmat_free(p->hlp);
+				p->hlp = hmat_build(p, f, fp_log);
+				if (p->hlp == NULL) {
+					printf("*** compression : H-matrix build failed at f = %.5e Hz\n", f);
+					fprintf(fp_log, "*** compression : H-matrix build failed at f = %.5e Hz\n", f);
+					goto done;
+				}
+			}
+			mna_sparse(p, f, &cp.sp);
+			pc_free(cp.pc);
+			cp.pc = pc_build(p, &cp.sp, p->hlp, f);
+			if (cp.pc == NULL) {
+				printf("*** compression : preconditioner failed at f = %.5e Hz (floating node?)\n", f);
+				fprintf(fp_log, "*** compression : preconditioner failed at f = %.5e Hz\n", f);
+				goto done;
 			}
 		}
-		if (ising >= 0) {
-			printf("*** singular matrix at f = %.5e Hz (row %d : floating node or ideal voltage source loop?)\n", f, ising);
-			fprintf(fp_log, "*** singular matrix at f = %.5e Hz (row %d)\n", f, ising);
-			free(a); free(b); free(piv);
-			free(sm); free(sinv); free(scol); free(spiv);
-			free(ac.alu); free(ac.apiv);
-			return 1;
+		else {
+			mna_assemble(p, f, a);
+			int ising = -1;
+			if (!p->accel) {
+				ising = lu_decomp(n, a, piv);
+			}
+			else {
+				// 初回だけここで LU。以後は accel_rhs() が GMRES で解き、
+				// 収束しないときだけ取り直す。
+				ac.fresh = 0;
+				if (!ac.havelu) {
+					memcpy(ac.alu, a, (size_t)n * n * sizeof(d_complex_t));
+					ising = lu_decomp(n, ac.alu, ac.apiv);
+					ac.havelu = 1;
+					ac.fresh = 1;
+					ac.nlu++;
+				}
+			}
+			if (ising >= 0) {
+				printf("*** singular matrix at f = %.5e Hz (row %d : floating node or ideal voltage source loop?)\n", f, ising);
+				fprintf(fp_log, "*** singular matrix at f = %.5e Hz (row %d)\n", f, ising);
+				goto done;
+			}
 		}
 
 		// ポート j に 1A を注入し、全ポート i の端子電圧を読む。
@@ -222,17 +295,7 @@ int solve(peec_t *p, FILE *fp_log)
 		// 対角が従来の Zin。
 		for (int j = 0; j < p->nport; j++) {
 			mna_rhs_port(p, j, b);
-			if (!p->accel) {
-				lu_solve(n, a, piv, b);
-			}
-			else if (accel_rhs(&ac, b)) {
-				printf("*** singular matrix at f = %.5e Hz\n", f);
-				fprintf(fp_log, "*** singular matrix at f = %.5e Hz\n", f);
-				free(a); free(b); free(piv);
-				free(sm); free(sinv); free(scol); free(spiv);
-				free(ac.alu); free(ac.apiv);
-				return 1;
-			}
+			if (lin_rhs(p, f, &cp, &ac, a, piv, b, fp_log)) goto done;
 			for (int i = 0; i < p->nport; i++) {
 				const int i1 = p->nodemap[p->port[i].n1];
 				const int i2 = p->nodemap[p->port[i].n2];
@@ -268,27 +331,14 @@ int solve(peec_t *p, FILE *fp_log)
 		if (z_to_s(p, ifreq, sm, sinv, scol, spiv)) {
 			printf("*** singular (Z + Z0) at f = %.5e Hz\n", f);
 			fprintf(fp_log, "*** singular (Z + Z0) at f = %.5e Hz\n", f);
-			free(a); free(b); free(piv);
-			free(sm); free(sinv); free(scol); free(spiv);
-			free(ac.alu); free(ac.apiv);
-			return 1;
+			goto done;
 		}
 
 		// 平面波入射 : ポートには何もスタンプされていない (= 開放) ので、
 		// 端子間電圧がそのまま開放端電圧 Voc になる
 		if (p->voc != NULL) {
 			mna_rhs_planewave(p, f, b);
-			if (!p->accel) {
-				lu_solve(n, a, piv, b);
-			}
-			else if (accel_rhs(&ac, b)) {
-				printf("*** singular matrix at f = %.5e Hz\n", f);
-				fprintf(fp_log, "*** singular matrix at f = %.5e Hz\n", f);
-				free(a); free(b); free(piv);
-				free(sm); free(sinv); free(scol); free(spiv);
-				free(ac.alu); free(ac.apiv);
-				return 1;
-			}
+			if (lin_rhs(p, f, &cp, &ac, a, piv, b, fp_log)) goto done;
 			for (int i = 0; i < p->nport; i++) {
 				const int i1 = p->nodemap[p->port[i].n1];
 				const int i2 = p->nodemap[p->port[i].n2];
@@ -306,17 +356,7 @@ int solve(peec_t *p, FILE *fp_log)
 
 		if (p->nsrc > 0) {
 			mna_rhs_sources(p, b);
-			if (!p->accel) {
-				lu_solve(n, a, piv, b);
-			}
-			else if (accel_rhs(&ac, b)) {
-				printf("*** singular matrix at f = %.5e Hz\n", f);
-				fprintf(fp_log, "*** singular matrix at f = %.5e Hz\n", f);
-				free(a); free(b); free(piv);
-				free(sm); free(sinv); free(scol); free(spiv);
-				free(ac.alu); free(ac.apiv);
-				return 1;
-			}
+			if (lin_rhs(p, f, &cp, &ac, a, piv, b, fp_log)) goto done;
 			print_vnode(p, b, f, fp_log);
 		}
 	}
@@ -326,7 +366,16 @@ int solve(peec_t *p, FILE *fp_log)
 		fprintf(fp_log, "acceleration : %d LU for %d frequencies, %d GMRES solves (avg %.1f iterations)\n",
 			ac.nlu, p->nfreq, ac.ngm, (ac.ngm > 0) ? ((double)ac.itsum / ac.ngm) : 0.0);
 	}
+	// compression の統計 (反復数とメモリ : 密行列 (MNA + Lp) との比較)
+	if (comp && (cp.nrhs > 0)) {
+		const double hm = hmat_memory_mb(p->hlp) + pc_memory_mb(cp.pc);
+		const double dm = hmat_dense_mb(n) + hmat_dense_mb(p->nseg);
+		fprintf(fp_log, "compression : %d GMRES solves (avg %.1f iterations), %.2f MB (dense MNA + Lp %.2f MB, %.1fx)\n",
+			cp.nrhs, (double)cp.itsum / cp.nrhs, hm, dm, (hm > 0) ? (dm / hm) : 0);
+	}
+	ret = 0;
 
+done:
 	free(a);
 	free(b);
 	free(piv);
@@ -336,6 +385,8 @@ int solve(peec_t *p, FILE *fp_log)
 	free(spiv);
 	free(ac.alu);
 	free(ac.apiv);
+	mna_sparse_free(&cp.sp);
+	pc_free(cp.pc);
 
-	return 0;
+	return ret;
 }

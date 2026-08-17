@@ -203,6 +203,9 @@ typedef struct {
 	int    tran;                  // transient = 1 : 過渡応答 (掃引の逆フーリエ変換)
 	double tranatt;               // 帯域端でのガウス励振の減衰 [dB] (既定 40)
 	int    grading;               // grading = 1 : 面格子の縁寄せ (plate/quad 余弦、disk 正弦)
+	int    compress;              // compression = 1 : 部分インダクタンスを H 行列で圧縮
+	double ctol;                  // ACA の相対許容誤差 (既定 1e-6)
+	struct hmat_t *hlp;           // 圧縮された Lp (compress = 1 のときのみ)
 
 	// 結果
 	d_complex_t *zin;             // [nport * nfreq] 各ポートの入力インピーダンス
@@ -263,8 +266,24 @@ double poly_potential(const seg_t *s, const double *pt);
 double poly_static(const seg_t *s1, const seg_t *s2, int nsub, int n7);
 d_complex_t poly_corr(const seg_t *s1, const seg_t *s2, double kw);
 
+// hmatrix.c — クラスタツリー + ACA による低ランク圧縮
+// (前方宣言。実体は hmatrix.c 内。peec_t は不完全型のポインタで持つ)
+struct hmat_t;
+struct hmat_t *hmat_build(peec_t *p, double f, FILE *fp_log);
+void hmat_free(struct hmat_t *h);
+// y = Lp x (圧縮された部分インダクタンス行列。ブロック順は決定的でスレッド不変)
+void hmat_matvec(const struct hmat_t *h, const d_complex_t *x, d_complex_t *y);
+// 葉クラスタの列挙 (前処理用) : 葉 r の対角ブロック (m x m 行優先) を返す
+int  hmat_nleaf(const struct hmat_t *h);
+const d_complex_t *hmat_leaf_block(const struct hmat_t *h, int r,
+	const int **idx, int *m);
+double hmat_memory_mb(const struct hmat_t *h);
+double hmat_dense_mb(int n);
+
 // partial.c
 void seg_mirror(const seg_t *s, double gpz, seg_t *out);
+// 部分インダクタンス行列の 1 要素 (i, j は区間番号)。圧縮の ACA から呼ぶ。
+d_complex_t lp_entry(const peec_t *p, int i, int j, double kw);
 double neumann_self(double l, double a);
 double neumann_pair(const seg_t *s1, const seg_t *s2, double a1, double a2);
 d_complex_t neumann_self_k(const seg_t *s, double a, double kw);
@@ -281,8 +300,21 @@ d_complex_t zint_bar(double len, double area, double perim, double sigma, double
 d_complex_t zint_seg(const seg_t *s, double freq);
 
 // mna.c
+// Lp ブロックを除いた MNA の疎な部分 (三つ組)。compression = 1 の行列フリー
+// 経路で使う。同一 (i, j) の重複は加算として扱う。
+typedef struct {
+	int *ri, *ci;                 // [nnz] 行・列
+	d_complex_t *val;             // [nnz]
+	int  nnz, cap;
+} mna_sparse_t;
+
 int  mna_numbering(peec_t *p, FILE *fp_log);
 void mna_assemble(const peec_t *p, double f, d_complex_t *a);
+void mna_sparse(const peec_t *p, double f, mna_sparse_t *sp);
+void mna_sparse_free(mna_sparse_t *sp);
+// 行列フリーの y = A x (疎部 + H 行列の Lp)。work は長さ nseg
+void mna_apply(const peec_t *p, const mna_sparse_t *sp, const struct hmat_t *h,
+	double f, const d_complex_t *x, d_complex_t *y, d_complex_t *work);
 void mna_rhs_port(const peec_t *p, int iport, d_complex_t *b);
 void mna_rhs_sources(const peec_t *p, d_complex_t *b);
 void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b);
@@ -291,9 +323,20 @@ void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b);
 int  lu_decomp(int n, d_complex_t *a, int *piv);
 void lu_solve(int n, const d_complex_t *a, const int *piv, d_complex_t *b);
 
+// precond.c — 葉ブロック消去 + 回路 Schur 補元の前処理 (compression = 1)
+struct precond_t;
+struct precond_t *pc_build(const peec_t *p, const mna_sparse_t *sp,
+	const struct hmat_t *h, double f);
+void pc_free(struct precond_t *pc);
+void pc_apply(const struct precond_t *pc, d_complex_t *b);   // b <- M^-1 b
+double pc_memory_mb(const struct precond_t *pc);
+
 // iterative.c
 int  gmres_solve(int n, const d_complex_t *a, const d_complex_t *alu, const int *piv,
 	d_complex_t *b, double tol);
+// 行列フリー GMRES (compression = 1)。収束すれば反復数、しなければ -1
+int  gmres_hmat(const peec_t *p, const mna_sparse_t *sp, const struct hmat_t *h,
+	double f, const struct precond_t *pc, d_complex_t *b, double tol);
 
 // solve.c
 int  solve(peec_t *p, FILE *fp_log);
