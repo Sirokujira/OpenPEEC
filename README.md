@@ -59,6 +59,8 @@ same portability rules, no external numerical libraries.
   同じ幾何二重積分から `P = I/(4πε0 L₁L₂)` を作り、節点容量行列
   `C = P⁻¹` を MNA の節点ブロックに `jωC` として加えます。
   対無限遠の総容量 `ΣᵢⱼCᵢⱼ` をログに出力します。
+  `compression = 1` のときは逆行列を作らず、電荷を陽な未知数にした
+  等価な定式化 (`Pq − v = 0`, KCL に `+jωq`) を使います。
 - **表皮効果 (R(f) + 内部 L)** — `skineffect = 1` で有効:
   丸線は内部インピーダンス `Z_int = k/(2πaσ)·I₀(ka)/I₁(ka)`
   (`k = (1+j)/δ`, `δ = √(2/ωμ0σ)`) を各区間に適用します。
@@ -167,9 +169,13 @@ same portability rules, no external numerical libraries.
   多極 Debye・Lorentz などの高次モデルは未対応です。節点の束縛電荷は a–b 面内の双対矩形パネルで表すため、
   側面の束縛電荷は面直位置がセル幅の範囲で近似になります (表面電荷が
   a–b 面に支配的な配置 — 基板・平行平板など — で正確)。
-- 行列は密です。計算量は電流セル数 N と電荷セル数 M に対して
+- 既定では行列は密です。計算量は電流セル数 N と電荷セル数 M に対して
   O(N²+M²) の積分と O((N+M)³) の LU。遅延ありのときはこれが周波数ごとに
   必要になります。地板 (鏡像) は積分回数を 2 倍にします (未知数は不変)。
+  `compression = 1` で部分要素の充填・格納が O(kN log N) に落ちますが、
+  前処理の Schur 補元は回路未知数 (節点 + 枝) の密 LU なので、そこは
+  O(N²) メモリ・O(N³) 時間が残ります (面格子では回路未知数が電流セルの
+  約 1/2 なので実効的に 1 桁前後の削減)。
 
 ## Build / ビルド
 
@@ -228,10 +234,14 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh bin/peec /tmp/peec-san
   解きます。ACA の相対許容誤差 `tol` (省略時 1e-6) が Zin にほぼそのまま
   伝わります (実測 : tol 1e-6 で ~3e-7、1e-8 で ~5e-10)。6384 セルの平板で
   **solve 12 分 → 52 秒 (14 倍)、メモリ 2.0 GB → 0.34 GB (6 倍)**。
-  自己項・隣接項 (近傍ブロック) は一切近似されません。段階 1 の制限 :
-  誘導性 PEEC のみ (`capacitance = 1` とは併用不可 — 節点容量 C = P⁻¹ が
-  密な逆行列を持ち込むため明示的にエラーにします)。`acceleration` とも
-  排他です。結果はスレッド数に依らずビット単位で一致します。
+  自己項・隣接項 (近傍ブロック) は一切近似されません。
+  `capacitance = 1` (容量性・フルウェーブ PEEC) にも対応しており、
+  そのときは電位係数 P も同じ機構で圧縮します。節点容量 C = P⁻¹ は
+  密な逆行列なので作らず、**電荷 q を陽な未知数**にして
+  「KCL に + jωq」「電荷行に Pq − v = 0」と組みます (電荷行から
+  q = P⁻¹v なので密経路と同じ系。近似が入らない規模では両経路の Zin が
+  ビット単位で一致することを検証しています)。`acceleration` とは排他です。
+  結果はスレッド数に依らずビット単位で一致します。
 
 ## Usage / 実行
 
@@ -315,7 +325,7 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `capacitance` | `capacitance = 1` | 1 で容量性 PEEC (電位係数) を有効化 (省略時 0) |
 | `retardation` | `retardation = 1` | 1 で遅延 (フルウェーブ PEEC) を有効化 (省略時 0) |
 | `acceleration` | `acceleration = 1` | 1 で掃引 LU 再利用の GMRES (省略時 0 = 毎周波数 LU)。結果は密 LU と実質同一 |
-| `compression` | `compression = 1 [tol]` | 1 で Lp の H 行列圧縮 + 行列フリー GMRES (省略時 0 = 密行列)。tol は ACA の相対許容誤差 (省略時 1e-6) で Zin にほぼそのまま伝わる。`capacitance = 1`・`acceleration = 1` とは併用不可 |
+| `compression` | `compression = 1 [tol]` | 1 で Lp (と `capacitance = 1` なら P) の H 行列圧縮 + 行列フリー GMRES (省略時 0 = 密行列)。tol は ACA の相対許容誤差 (省略時 1e-6) で Zin にほぼそのまま伝わる。`acceleration = 1` とは併用不可 |
 | `distribution` | `distribution = 1` | 1 で電流・電荷分布を `dist.csv` に出力 (省略時 0)。多ポートでは「ポート j に 1A、他は開放」の分布をポートごとに出す |
 
 - 導体と回路素子の接続は `node` キーで行います。導体端点 (面導体は格子点)
@@ -364,7 +374,8 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `compress_wire.peec` 圧縮の単線 (ndiv = 200) | H 行列 + ACA + 前処理でも解析解 L = 1.32038 µH に一致 (不変条件 1 により分割数に依存しない) | 0.1% |
 | `compress_plate.peec` 圧縮の面導体 (直交セル混在) | `compression` キーを外した密経路と Rin / L が一致 (実測差 ~3e-7)。直交セルの厳密な 0 で素朴な ACA が破綻する形の番人 | 0.1% |
 | `compress_plate.peec` スレッド数不変性 | 圧縮経路でも `-n 1` と `-n 4` が完全一致 | 完全一致 |
-| `compress_plate.peec` + `capacitance=1` | 併用は明示的に拒否されること (C = P⁻¹ が密な逆行列を持ち込む) | エラー判定 |
+| `compress_cap.peec` 容量性の圧縮 (12×12) | 電荷を陽な未知数にする定式化が密経路と Rin / L で一致 (P 側 H 行列と 2 ブロック前処理の番人) | 0.1% |
+| `dipole_full.peec` + `compression=1` | 近似が入らない規模では電荷定式化が密経路と厳密一致 (定式化そのものの番人) | 1e-12 |
 | `plate_strip.peec` 帯のインダクタンス | 面積分 vs GMD 近似 → (μ0l/2π)[ln(2l/w)+0.5] = 1.15966 µH | 1% |
 | `plate_thick.peec` 厚板の帯 (体積セル) | Hoer–Love 閉形式 vs Grover 角線式 → 1.12374 µH、R_dc = l/(σwt) = 0.862069 mΩ (層数 1/2/4 で厳密に不変) | 0.5% / 0.1% |
 | `plate_skin_layers.peec` 厚み方向の表皮効果 | 対称サンドイッチの R_ac/R_dc → 1D スラブ解 Re[(1+j)X coth((1+j)X)] = 1.897806 (X = t/2δ = 2)。層数 3/6/12 で O(層厚²) 収束 | 3.5% |

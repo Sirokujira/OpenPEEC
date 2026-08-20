@@ -49,12 +49,12 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 | `src/surface.c` | 面セル (リボン) の幾何二重積分 |
 | `src/volume.c` | 体積セル (矩形バー) の Hoer–Love 閉形式 (plate の厚み分割) |
 | `src/polygon.c` | 多角形セル (quad/disk パネル) の幾何二重積分 (多角形閉形式) |
-| `src/potential.c` | 電位係数 P と節点容量行列 C = P⁻¹ |
+| `src/potential.c` | 電位係数 P と節点容量行列 C = P⁻¹ (圧縮時は P の要素評価のみ) |
 | `src/skin.c` | 表皮効果 (丸線は Bessel、角線は合成式) |
 | `src/mna.c` | MNA 番号付けとスタンプ |
 | `src/lu.c` | 複素 LU 分解 (部分ピボット) |
 | `src/iterative.c` | GMRES (acceleration = 1 の掃引 LU 再利用と compression = 1 の行列フリー) |
-| `src/hmatrix.c` | Lp の H 行列圧縮 (クラスタツリー + ACA、compression = 1) |
+| `src/hmatrix.c` | Lp / P の H 行列圧縮 (クラスタツリー + ACA、compression = 1) |
 | `src/precond.c` | 葉ブロック消去 + 回路 Schur 補元の前処理 (compression = 1) |
 | `src/solve.c` | 周波数掃引 |
 | `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、`dist.csv` |

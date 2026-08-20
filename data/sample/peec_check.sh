@@ -739,15 +739,36 @@ else
 	status=1
 fi
 
-# capacitance = 1 との併用は拒否されること (cmat = P^-1 が密な逆行列を
-# 持ち込むため、段階 1 では静かに劣化させず明示的にエラーにする)
-awk '{print} /^title = /{print "capacitance = 1"}' "$SRC/compress_plate.peec" > "$WORK/compress_cap.peec"
-if (cd "$WORK" && "$PEEC" -n 1 compress_cap.peec > compress_cap.out 2>&1); then
-	printf "%-24s -> NG (compression + capacitance must be rejected)\n" "compression guard" >&2
-	status=1
-else
-	printf "%-24s -> OK (compression + capacitance rejected)\n" "compression guard"
-fi
+# (ax) 容量性 PEEC の圧縮 : 電荷を陽な未知数にして C = P^-1 を作らない
+#      定式化が密経路と同じ系であること。P 側の H 行列 (pot_entry) と、
+#      前処理が 2 ブロック (Lp と P) を同時に消去できることの番人。
+cp "$SRC/compress_cap.peec" "$WORK/"
+run compress_cap.peec
+kr=$(getR)
+kx=$(getL)
+sed '/^compression = /d' "$SRC/compress_cap.peec" > "$WORK/compress_cap_ref.peec"
+run compress_cap_ref.peec
+chk "compress cap Rin" "$kr" "$(getR)" 0.001
+chk "compress cap L" "$kx" "$(getL)" 0.001
+
+# 近似が入らない規模 (全ブロックが近傍) では電荷定式化は密経路と厳密に
+# 一致するはず : 定式化そのもの (jw q と P q - v = 0) の番人
+awk '{print} /^title = /{print "compression = 1"}' "$SRC/dipole_full.peec" > "$WORK/dipole_full_c.peec"
+sed '/^acceleration/d' "$WORK/dipole_full_c.peec" > "$WORK/dipole_full_ct.peec"
+run dipole_full_ct.peec
+cp "$csv" "$WORK/zin_capc.csv"
+sed '/^acceleration/d' "$SRC/dipole_full.peec" > "$WORK/dipole_full_dt.peec"
+run dipole_full_dt.peec
+paste -d, "$csv" "$WORK/zin_capc.csv" | awk -F, '
+NR > 1 {
+	dr = $3 - $10; di = $4 - $11; m = sqrt(($3 * $3) + ($4 * $4));
+	e = sqrt((dr * dr) + (di * di)) / m; if (e > mx) mx = e
+}
+END {
+	ok = (mx <= 1e-12);
+	printf "%-24s max rel diff=%.3e -> %s\n", "compress cap exact", mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
 
 echo "--- multi-port S parameters"
 # (q) 抵抗性 T 型 2 ポート : Z=[[75,50],[50,75]], Z0=50 -> S11=1/21, S21=8/21 (実数)

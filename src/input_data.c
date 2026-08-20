@@ -588,13 +588,7 @@ int input_data(FILE *fp, peec_t *p)
 		printf("%s\n", "*** dielectric requires capacitance = 1");
 		return 1;
 	}
-	// 圧縮 (段階 1) は誘導性 PEEC のみ : cmat = P^-1 が密な逆行列を
-	// 持ち込むため、capacitance = 1 とは併用できない (静かな劣化ではなく
-	// 明示的なエラーにする)。acceleration は密 LU を前提にするので同様。
-	if (p->compress && p->capacitance) {
-		printf("%s\n", "*** compression = 1 requires capacitance = 0 (nodal C = P^-1 is dense)");
-		return 1;
-	}
+	// acceleration は密 LU の再利用が前提なので圧縮とは併用できない
 	if (p->compress && p->accel) {
 		printf("%s\n", "*** compression = 1 and acceleration = 1 are mutually exclusive");
 		return 1;
@@ -649,6 +643,9 @@ void peec_free(peec_t *p)
 	free(p->cellid);
 	free(p->cellof);
 	free(p->carea);
+	free(p->csoff);
+	free(p->csidx);
+	free(p->cpt);
 	free(p->cmat);
 
 	// MNA と結果 (mna.c / solve.c)

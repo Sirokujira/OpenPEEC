@@ -28,6 +28,12 @@ hmatrix.c
 
 #include "peec.h"
 
+// 要素コールバックの Lp 版 (ctx = peec_t *)
+static d_complex_t lp_entry_cb(void *ctx, int i, int j, double kw)
+{
+	return lp_entry((const peec_t *)ctx, i, j, kw);
+}
+
 #define HM_LEAF   32      // 葉クラスタの最大セル数
 #define HM_ETA    2.0     // 許容条件のパラメータ (大きいほど圧縮が積極的)
 #define HM_MAXIT  200     // ACA の最大ランク (超えたら密に落とす)
@@ -76,20 +82,13 @@ static void ct_reserve(ctree_t *t, int need)
 	t->rad   = (double *)realloc(t->rad, (size_t)t->cap * sizeof(double));
 }
 
-// セルの代表点 (区間の中点)
-static void cell_point(const peec_t *p, int m, double *x)
-{
-	for (int c = 0; c < 3; c++) {
-		x[c] = 0.5 * (p->seg[m].x1[c] + p->seg[m].x2[c]);
-	}
-}
 
 /*
 クラスタを作る (perm[lo..hi) を最長軸で二分)。戻り値はクラスタ id。
 分割点は中点分割 (バウンディングボックス中央) で、偏った場合は中央値に
 落とす。どちらも決定的なのでスレッド数・実行回数に依らず同じ木になる。
 */
-static int ct_build(ctree_t *t, const peec_t *p, int *perm, int lo, int hi)
+static int ct_build(ctree_t *t, const double *pts, int *perm, int lo, int hi)
 {
 	ct_reserve(t, t->nc);
 	const int id = t->nc++;
@@ -98,13 +97,12 @@ static int ct_build(ctree_t *t, const peec_t *p, int *perm, int lo, int hi)
 	t->left[id] = t->right[id] = -1;
 
 	// バウンディングボックス
-	double bmin[3], bmax[3], x[3];
-	cell_point(p, perm[lo], x);
+	double bmin[3], bmax[3];
 	for (int c = 0; c < 3; c++) {
-		bmin[c] = bmax[c] = x[c];
+		bmin[c] = bmax[c] = pts[(3 * perm[lo]) + c];
 	}
 	for (int i = lo + 1; i < hi; i++) {
-		cell_point(p, perm[i], x);
+		const double *x = &pts[3 * perm[i]];
 		for (int c = 0; c < 3; c++) {
 			if (x[c] < bmin[c]) bmin[c] = x[c];
 			if (x[c] > bmax[c]) bmax[c] = x[c];
@@ -131,8 +129,7 @@ static int ct_build(ctree_t *t, const peec_t *p, int *perm, int lo, int hi)
 	const double cut = 0.5 * (bmin[ax] + bmax[ax]);
 	int i = lo, j = hi - 1;
 	while (i <= j) {
-		cell_point(p, perm[i], x);
-		if (x[ax] < cut) {
+		if (pts[(3 * perm[i]) + ax] < cut) {
 			i++;
 		}
 		else {
@@ -146,8 +143,8 @@ static int ct_build(ctree_t *t, const peec_t *p, int *perm, int lo, int hi)
 	// 片側が空になったら中央で割る (決定的なフォールバック)
 	if ((mid == lo) || (mid == hi)) mid = (lo + hi) / 2;
 
-	const int l = ct_build(t, p, perm, lo, mid);
-	const int r = ct_build(t, p, perm, mid, hi);
+	const int l = ct_build(t, pts, perm, lo, mid);
+	const int r = ct_build(t, pts, perm, mid, hi);
 	t->left[id] = l;
 	t->right[id] = r;
 
@@ -265,7 +262,7 @@ static int aca_unrepresented(const int *rused, const double *urep, int m, double
 	return ((nxt >= 0) && (best <= thr)) ? nxt : -1;
 }
 
-static int aca_block(const peec_t *p, double kw, const int *perm,
+static int aca_block(hmat_entry_fn fn, void *ctx, double kw, const int *perm,
 	int r0, int m, int c0, int nn, double tol,
 	d_complex_t **uout, d_complex_t **vout)
 {
@@ -292,7 +289,7 @@ static int aca_block(const peec_t *p, double kw, const int *perm,
 		int jmax = -1;
 		double amax = 0, rn2 = 0;
 		for (int j = 0; j < nn; j++) {
-			d_complex_t a = lp_entry(p, perm[r0 + irow], perm[c0 + j], kw);
+			d_complex_t a = fn(ctx, perm[r0 + irow], perm[c0 + j], kw);
 			for (int l = 0; l < k; l++) {
 				a = d_sub(a, d_mul(u[(l * m) + irow], v[(l * nn) + j]));
 			}
@@ -324,7 +321,7 @@ static int aca_block(const peec_t *p, double kw, const int *perm,
 
 		// 残差列 u = A(:, jmax) - sum_l u_l v_l[jmax]
 		for (int i = 0; i < m; i++) {
-			d_complex_t a = lp_entry(p, perm[r0 + i], perm[c0 + jmax], kw);
+			d_complex_t a = fn(ctx, perm[r0 + i], perm[c0 + jmax], kw);
 			for (int l = 0; l < k; l++) {
 				a = d_sub(a, d_mul(u[(l * m) + i], v[(l * nn) + jmax]));
 			}
@@ -398,9 +395,15 @@ static int aca_block(const peec_t *p, double kw, const int *perm,
 }
 
 // ── 構築 ──────────────────────────────────────────────────────
-struct hmat_t *hmat_build(peec_t *p, double f, FILE *fp_log)
+/*
+汎用の構築 : カーネルは要素コールバック fn(ctx, i, j, kw)、幾何は代表点の
+配列 pts[3n] だけで決まる。これで部分インダクタンス Lp (区間) と電位係数 P
+(電荷セル) の両方を同じ機構で圧縮できる。
+*/
+struct hmat_t *hmat_build_gen(int n, const double *pts,
+	hmat_entry_fn fn, void *ctx, double kw, double tol,
+	const char *label, FILE *fp_log)
 {
-	const int n = p->nseg;
 	if (n <= 0) return NULL;
 
 	struct hmat_t *h = (struct hmat_t *)calloc(1, sizeof(struct hmat_t));
@@ -414,10 +417,8 @@ struct hmat_t *hmat_build(peec_t *p, double f, FILE *fp_log)
 	for (int i = 0; i < n; i++) {
 		h->perm[i] = i;
 	}
-	ct_build(&h->ct, p, h->perm, 0, n);
+	ct_build(&h->ct, pts, h->perm, 0, n);
 	hm_split(h, 0, 0);
-
-	const double kw = p->retardation ? (2 * PI * f / C0) : 0;
 
 	// 遠方ブロックを ACA で圧縮 (ブロックごとに独立 = 並列化してよい)
 	// MSVC の OpenMP 2.0 のためループ変数は事前宣言
@@ -430,7 +431,7 @@ struct hmat_t *hmat_build(peec_t *p, double f, FILE *fp_log)
 		const int r0 = h->ct.lo[a], m = h->ct.hi[a] - r0;
 		const int c0 = h->ct.lo[c], nn = h->ct.hi[c] - c0;
 		d_complex_t *u = NULL, *v = NULL;
-		const int k = aca_block(p, kw, h->perm, r0, m, c0, nn, p->ctol, &u, &v);
+		const int k = aca_block(fn, ctx, kw, h->perm, r0, m, c0, nn, tol, &u, &v);
 		if (k > 0) {
 			h->frank[b] = k;
 			h->fu[b] = u;
@@ -443,7 +444,7 @@ struct hmat_t *hmat_build(peec_t *p, double f, FILE *fp_log)
 			if (d != NULL) {
 				for (int i = 0; i < m; i++) {
 					for (int j = 0; j < nn; j++) {
-						d[(i * nn) + j] = lp_entry(p, h->perm[r0 + i], h->perm[c0 + j], kw);
+						d[(i * nn) + j] = fn(ctx, h->perm[r0 + i], h->perm[c0 + j], kw);
 					}
 				}
 			}
@@ -465,7 +466,7 @@ struct hmat_t *hmat_build(peec_t *p, double f, FILE *fp_log)
 		if (d != NULL) {
 			for (int i = 0; i < m; i++) {
 				for (int j = 0; j < nn; j++) {
-					d[(i * nn) + j] = lp_entry(p, h->perm[r0 + i], h->perm[c0 + j], kw);
+					d[(i * nn) + j] = fn(ctx, h->perm[r0 + i], h->perm[c0 + j], kw);
 				}
 			}
 		}
@@ -604,10 +605,30 @@ struct hmat_t *hmat_build(peec_t *p, double f, FILE *fp_log)
 	if (fp_log != NULL) {
 		const double mb = hmat_memory_mb(h);
 		const double dm = hmat_dense_mb(n);
-		fprintf(fp_log, "compression : %d cells, %d far blocks + %d near blocks, tol = %.1e, %.2f MB (dense %.2f MB, %.1fx)\n",
-			n, h->nfar, h->nnear, p->ctol, mb, dm, (mb > 0) ? (dm / mb) : 0);
+		fprintf(fp_log, "compression %s : %d cells, %d far blocks + %d near blocks, tol = %.1e, %.2f MB (dense %.2f MB, %.1fx)\n",
+			label, n, h->nfar, h->nnear, tol, mb, dm, (mb > 0) ? (dm / mb) : 0);
 		fflush(fp_log);
 	}
+
+	return h;
+}
+
+// 部分インダクタンス Lp (区間セル、代表点は区間の中点)
+struct hmat_t *hmat_build(peec_t *p, double f, FILE *fp_log)
+{
+	const int n = p->nseg;
+	if (n <= 0) return NULL;
+
+	double *pts = (double *)malloc((size_t)n * 3 * sizeof(double));
+	if (pts == NULL) return NULL;
+	for (int i = 0; i < n; i++) {
+		for (int c = 0; c < 3; c++) {
+			pts[(3 * i) + c] = 0.5 * (p->seg[i].x1[c] + p->seg[i].x2[c]);
+		}
+	}
+	const double kw = p->retardation ? (2 * PI * f / C0) : 0;
+	struct hmat_t *h = hmat_build_gen(n, pts, lp_entry_cb, p, kw, p->ctol, "Lp", fp_log);
+	free(pts);
 
 	return h;
 }

@@ -167,7 +167,11 @@ typedef struct {
 	int    *cellid;               // [ncell] セルのノード id
 	int    *cellof;               // [nchg] 電荷セル -> セル index
 	double *carea;                // [ncell] セルの長さ (細線) / 面積 (面導体)
+	int    *csoff;                // [ncell+1] セル -> 電荷サブセル (CSR 風)
+	int    *csidx;                // [nchg] サブセル番号
+	double *cpt;                  // [3*ncell] セルの代表点 (クラスタツリー用)
 	d_complex_t *cmat;            // [ncell*ncell] 節点容量行列 C = P^-1
+	                              // (compression = 1 では作らない : 電荷が未知数)
 	int    clogged;               // 総容量をログ出力したか
 
 	// 形状ノード表 (座標マージ用)
@@ -181,6 +185,8 @@ typedef struct {
 	int    refnode;               // 基準ノード id
 	int    *nodemap;              // [maxid+1] : id -> 行列 index / -1 = 基準 / -2 = 未使用
 	int    offL, offV, offS;      // 枝電流の先頭 index (L 素子 / 電圧源 / ワイヤ区間)
+	int    offQ;                  // セル電荷の先頭 index (compression = 1 の容量性
+	                              // PEEC のみ。それ以外は nunknown と同値 = 未使用)
 	int    nunknown;
 
 	// 掃引・オプション
@@ -269,7 +275,15 @@ d_complex_t poly_corr(const seg_t *s1, const seg_t *s2, double kw);
 // hmatrix.c — クラスタツリー + ACA による低ランク圧縮
 // (前方宣言。実体は hmatrix.c 内。peec_t は不完全型のポインタで持つ)
 struct hmat_t;
+// カーネルの 1 要素 (i, j は元の番号、kw = 波数。0 で準静的)
+typedef d_complex_t (*hmat_entry_fn)(void *ctx, int i, int j, double kw);
+// 汎用の構築 : 幾何は代表点 pts[3n] だけ、カーネルは fn だけで決まる
+struct hmat_t *hmat_build_gen(int n, const double *pts,
+	hmat_entry_fn fn, void *ctx, double kw, double tol,
+	const char *label, FILE *fp_log);
+// 部分インダクタンス Lp (区間セル) / 電位係数 P (電荷セル) の薄いラッパ
 struct hmat_t *hmat_build(peec_t *p, double f, FILE *fp_log);
+struct hmat_t *hmat_build_pot(peec_t *p, double f, FILE *fp_log);
 void hmat_free(struct hmat_t *h);
 // y = Lp x (圧縮された部分インダクタンス行列。ブロック順は決定的でスレッド不変)
 void hmat_matvec(const struct hmat_t *h, const d_complex_t *x, d_complex_t *y);
@@ -293,6 +307,9 @@ void lp_fill(peec_t *p, double f, FILE *fp_log);
 
 // potential.c
 int  pot_fill(peec_t *p, double f, FILE *fp_log);
+int  pot_cells(peec_t *p);                    // 容量セルの構成 (幾何のみ、1 回)
+// 電位係数行列の 1 要素 (i, j はセル番号)。圧縮の ACA から呼ぶ。
+d_complex_t pot_entry(const peec_t *p, int i, int j, double kw);
 
 // skin.c
 d_complex_t zint_round(double len, double a, double sigma, double freq);
@@ -308,13 +325,28 @@ typedef struct {
 	int  nnz, cap;
 } mna_sparse_t;
 
+/*
+圧縮ブロック : 密なカーネル行列で結合した未知数の塊 (行列フリー経路)
+
+  Lp : off = offS、n = nseg、  scale = -j omega
+  P  : off = offQ、n = ncell、 scale = 1
+*/
+typedef struct {
+	int off, n;
+	const struct hmat_t *h;
+	d_complex_t scale;
+} hblock_t;
+
+#define HBLK_MAX 2                    // Lp と P
+
 int  mna_numbering(peec_t *p, FILE *fp_log);
 void mna_assemble(const peec_t *p, double f, d_complex_t *a);
 void mna_sparse(const peec_t *p, double f, mna_sparse_t *sp);
 void mna_sparse_free(mna_sparse_t *sp);
-// 行列フリーの y = A x (疎部 + H 行列の Lp)。work は長さ nseg
-void mna_apply(const peec_t *p, const mna_sparse_t *sp, const struct hmat_t *h,
-	double f, const d_complex_t *x, d_complex_t *y, d_complex_t *work);
+// 行列フリーの y = A x (疎部 + 圧縮ブロック)。work は max(blk[].n) 以上
+void mna_apply(const peec_t *p, const mna_sparse_t *sp,
+	const hblock_t *blk, int nblk,
+	const d_complex_t *x, d_complex_t *y, d_complex_t *work);
 void mna_rhs_port(const peec_t *p, int iport, d_complex_t *b);
 void mna_rhs_sources(const peec_t *p, d_complex_t *b);
 void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b);
@@ -326,7 +358,7 @@ void lu_solve(int n, const d_complex_t *a, const int *piv, d_complex_t *b);
 // precond.c — 葉ブロック消去 + 回路 Schur 補元の前処理 (compression = 1)
 struct precond_t;
 struct precond_t *pc_build(const peec_t *p, const mna_sparse_t *sp,
-	const struct hmat_t *h, double f);
+	const hblock_t *blk, int nblk);
 void pc_free(struct precond_t *pc);
 void pc_apply(const struct precond_t *pc, d_complex_t *b);   // b <- M^-1 b
 double pc_memory_mb(const struct precond_t *pc);
@@ -335,8 +367,9 @@ double pc_memory_mb(const struct precond_t *pc);
 int  gmres_solve(int n, const d_complex_t *a, const d_complex_t *alu, const int *piv,
 	d_complex_t *b, double tol);
 // 行列フリー GMRES (compression = 1)。収束すれば反復数、しなければ -1
-int  gmres_hmat(const peec_t *p, const mna_sparse_t *sp, const struct hmat_t *h,
-	double f, const struct precond_t *pc, d_complex_t *b, double tol);
+int  gmres_hmat(const peec_t *p, const mna_sparse_t *sp,
+	const hblock_t *blk, int nblk,
+	const struct precond_t *pc, d_complex_t *b, double tol);
 
 // solve.c
 int  solve(peec_t *p, FILE *fp_log);
