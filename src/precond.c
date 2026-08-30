@@ -15,11 +15,16 @@ D_b は密だが、前処理では**クラスタツリーの葉の対角ブロ�
 (実測で密行列の 1.6〜3.1%)。するとブロック対角になって厳密に消去でき、
 
   M^-1 は  D_b の葉ごとの LU (m <= HM_LEAF) と
-  Schur 補元 S = S11 - sum_b B_b D_b^-1 C_b (n1 x n1 密) の LU
+  Schur 補元 S = S11 - sum_b B_b D_b^-1 C_b の LU
 
 だけで適用できる。適用は前進消去 → Schur 解 → 後退代入の直列 3 段。
 異なる圧縮ブロックどうしは直接結合しない (電流と電荷は回路ブロックを
 介してのみつながる) ので、消去は互いに独立に足し込める。
+
+**Schur 補元は疎に持つ** (sparse.c)。葉 r が触れる回路未知数は幾何的に
+局所的なので、S は「葉ごとのクリークの重ね合わせ」= 局所的なパターンに
+なり、1 行あたりの非ゼロ数は規模によらず ~36 に飽和する (実測)。密に
+持つと n1^2 だが、実際の非ゼロは O(N) しかない。
 
 設計の根拠 (プロトタイプでの実測、密 LU を前処理に使った GMRES の反復数) :
   - 近傍ブロック全部     : 18〜29 反復 (Lp の 9.6〜32%)
@@ -28,12 +33,15 @@ D_b は密だが、前処理では**クラスタツリーの葉の対角ブロ�
   - 近傍パターンの ILU(0): 収束せず (棄却)
   - 近傍場の厳密疎 LU    : fill が n^2 の 75% (密と変わらないので棄却)
 
-メモリは葉 LU が ~HM_LEAF x (未知数)、Schur が n1^2。Schur の n1^2 は
-O(N^2) のまま残るが、部分要素の充填 O(N^2) を H 行列が O(kN log N) に
-落とすのが主目的なので、この段階ではこれでよい。
+メモリは葉 LU が ~HM_LEAF x (未知数)、Schur が疎 LU の充填ぶん。**これで
+圧縮経路から O(N^2) の項が消える**。
+
+Schur は近似せず厳密に分解する (疎にするのは格納と分解だけ) ので、前処理
+そのものは密のときと同じ行列であり、GMRES の反復数も変わらない。
 
 スレッド数不変性 : 葉ブロックの LU は互いに独立なので並列化してよい。
-Schur の集約と適用は直列 (GMRES 自体の内積が直列なのでボトルネックではない)。
+Schur の集約・分解・適用は直列 (GMRES 自体の内積が直列なのでボトルネック
+ではない)。
 */
 
 #include "peec.h"
@@ -62,11 +70,48 @@ struct precond_t {
 	int n, n1;
 	int nblk;
 	pcblk_t blk[HBLK_MAX];
-	d_complex_t *slu;             // Schur 補元 (n1 x n1) の LU
-	int *spiv;
+	struct sparse_lu_t *schur;    // Schur 補元の疎 LU (sparse.c)
+	// Schur を組み立てる間だけ使う三つ組 (重複は slu_build が加算する)
+	int cnnz, ccap;
+	int *cri, *cci;
+	d_complex_t *cval;
 	d_complex_t *w1;              // [n1]
 	d_complex_t *wb;              // [max n] 作業領域
 };
+
+// Schur の要素を 1 個積む。戻り値 1 = メモリ不足
+static int coo_push(struct precond_t *pc, int i, int j, d_complex_t v)
+{
+	if (pc->cnnz >= pc->ccap) {
+		const int nc = (pc->ccap > 0) ? (2 * pc->ccap) : 4096;
+		int *nri = (int *)realloc(pc->cri, (size_t)nc * sizeof(int));
+		if (nri == NULL) return 1;
+		pc->cri = nri;
+		int *nci = (int *)realloc(pc->cci, (size_t)nc * sizeof(int));
+		if (nci == NULL) return 1;
+		pc->cci = nci;
+		d_complex_t *nv = (d_complex_t *)realloc(pc->cval, (size_t)nc * sizeof(d_complex_t));
+		if (nv == NULL) return 1;
+		pc->cval = nv;
+		pc->ccap = nc;
+	}
+	pc->cri[pc->cnnz] = i;
+	pc->cci[pc->cnnz] = j;
+	pc->cval[pc->cnnz] = v;
+	pc->cnnz++;
+
+	return 0;
+}
+
+static void coo_free(struct precond_t *pc)
+{
+	free(pc->cri); free(pc->cci); free(pc->cval);
+	pc->cri = NULL;
+	pc->cci = NULL;
+	pc->cval = NULL;
+	pc->cnnz = 0;
+	pc->ccap = 0;
+}
 
 static void pcblk_free(pcblk_t *b)
 {
@@ -83,7 +128,9 @@ void pc_free(struct precond_t *pc)
 	for (int b = 0; b < pc->nblk; b++) {
 		pcblk_free(&pc->blk[b]);
 	}
-	free(pc->slu); free(pc->spiv); free(pc->w1); free(pc->wb);
+	slu_free(pc->schur);
+	coo_free(pc);
+	free(pc->w1); free(pc->wb);
 	free(pc);
 }
 
@@ -194,11 +241,6 @@ struct precond_t *pc_build(const peec_t *p, const mna_sparse_t *sp,
 	}
 
 	// ── 疎部の振り分け : S11 / B_b / C_b / D_b への追加分 ──────────
-	pc->slu = (d_complex_t *)calloc((size_t)(n1 > 0 ? n1 : 1) * (n1 > 0 ? n1 : 1),
-		sizeof(d_complex_t));
-	pc->spiv = (int *)malloc((size_t)(n1 > 0 ? n1 : 1) * sizeof(int));
-	if ((pc->slu == NULL) || (pc->spiv == NULL)) goto fail;
-
 	for (int b = 0; b < nblk; b++) {
 		pc->blk[b].nb = 0;
 		pc->blk[b].nc = 0;
@@ -225,7 +267,7 @@ struct precond_t *pc_build(const peec_t *p, const mna_sparse_t *sp,
 	for (int e = 0; e < sp->nnz; e++) {
 		const int i = sp->ri[e], j = sp->ci[e];
 		if ((i < n1) && (j < n1)) {
-			pc->slu[(size_t)i * n1 + j] = d_add(pc->slu[(size_t)i * n1 + j], sp->val[e]);
+			if (coo_push(pc, i, j, sp->val[e])) goto fail;
 		}
 		else if (i < n1) {
 			pcblk_t *pb = &pc->blk[ublk[j]];
@@ -343,18 +385,22 @@ struct precond_t *pc_build(const peec_t *p, const mna_sparse_t *sp,
 					for (int a = 0; a < m; a++) tblk[(size_t)a * t + c] = col[a];
 				}
 				// S[i][tset[c]] -= B[i][idx[a]] * X[a][c]
-				for (int a = 0; a < m; a++) {
+				for (int a = 0; (a < m) && ok; a++) {
 					for (int q = pb->boff[idx[a]]; q < pb->boff[idx[a] + 1]; q++) {
 						const int e = pb->bidx[q];
 						const int i = pb->bri[e];
 						for (int c = 0; c < t; c++) {
-							const size_t id = (size_t)i * n1 + tset[c];
-							pc->slu[id] = d_sub(pc->slu[id],
-								d_mul(pb->bval[e], tblk[(size_t)a * t + c]));
+							const d_complex_t v = d_mul(pb->bval[e],
+								tblk[(size_t)a * t + c]);
+							if ((v.r == 0) && (v.i == 0)) continue;
+							if (coo_push(pc, i, tset[c],
+								d_sub(d_complex(0, 0), v))) { ok = 0; break; }
 						}
+						if (!ok) break;
 					}
 				}
 				for (int c = 0; c < t; c++) tmap[tset[c]] = -1;
+				if (!ok) break;
 			}
 		}
 		free(tmap);
@@ -367,10 +413,14 @@ struct precond_t *pc_build(const peec_t *p, const mna_sparse_t *sp,
 	free(ublk);
 	free(upos);
 
-	if ((n1 > 0) && (lu_decomp(n1, pc->slu, pc->spiv) >= 0)) {
-		pc_free(pc);
-		return NULL;
+	if (n1 > 0) {
+		pc->schur = slu_build(n1, pc->cnnz, pc->cri, pc->cci, pc->cval);
+		if (pc->schur == NULL) {
+			pc_free(pc);
+			return NULL;
+		}
 	}
+	coo_free(pc);                 // 分解に取り込んだので三つ組はもう要らない
 
 	pc->w1 = (d_complex_t *)malloc((size_t)(n1 > 0 ? n1 : 1) * sizeof(d_complex_t));
 	pc->wb = (d_complex_t *)malloc((size_t)maxn * sizeof(d_complex_t));
@@ -418,7 +468,7 @@ void pc_apply(const struct precond_t *pc, d_complex_t *b)
 				d_mul(pb->bval[e], pc->wb[pb->bci[e]]));
 		}
 	}
-	if (n1 > 0) lu_solve(n1, pc->slu, pc->spiv, pc->w1);
+	if (n1 > 0) slu_solve(pc->schur, pc->w1);
 
 	// z_b = D_b^-1 (u_b - C_b z1)
 	for (int k = 0; k < pc->nblk; k++) {
@@ -437,7 +487,7 @@ void pc_apply(const struct precond_t *pc, d_complex_t *b)
 double pc_memory_mb(const struct precond_t *pc)
 {
 	if (pc == NULL) return 0;
-	size_t nz = (size_t)pc->n1 * pc->n1;
+	size_t nz = slu_nnz(pc->schur);
 	for (int b = 0; b < pc->nblk; b++) {
 		nz += pc->blk[b].dof[pc->blk[b].nleaf]
 		    + (size_t)pc->blk[b].nb + pc->blk[b].nc;
