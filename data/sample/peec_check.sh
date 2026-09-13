@@ -816,6 +816,19 @@ END {
 	exit ok ? 0 : 1
 }' || status=1
 
+# (ay) 疎な Schur 補元 (sparse.c) : 集中定数の枝を渡して、節点電位以外の
+#      回路未知数 (i_L と、対角が構造的にゼロの i_V) を Schur に入れる。
+#      閾値ピボットが対角を採れずに非対角へ落ちる経路と、最小次数の
+#      消去グラフ (重複辺を潰さないと次数バケットを突き抜ける) の番人。
+cp "$SRC/compress_schur.peec" "$WORK/"
+run compress_schur.peec
+kr=$(getR)
+kx=$(getL)
+sed '/^compression = /d' "$SRC/compress_schur.peec" > "$WORK/compress_schur_ref.peec"
+run compress_schur_ref.peec
+chk "compress schur Rin" "$kr" "$(getR)" 0.001
+chk "compress schur L" "$kx" "$(getL)" 0.001
+
 echo "--- multi-port S parameters"
 # (q) 抵抗性 T 型 2 ポート : Z=[[75,50],[50,75]], Z0=50 -> S11=1/21, S21=8/21 (実数)
 cp "$SRC/tnetwork_spara.peec" "$WORK/"

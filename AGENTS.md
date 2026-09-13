@@ -62,6 +62,7 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/pe
 | `src/skin.c` | 表皮効果 (丸線は Bessel、角線は合成式) |
 | `src/mna.c` | MNA 番号付けとスタンプ |
 | `src/lu.c` | 複素 LU 分解 (部分ピボット) |
+| `src/sparse.c` | 疎行列 LU (最小次数順序 + Gilbert-Peierls、前処理の Schur 補元用) |
 | `src/iterative.c` | GMRES (acceleration = 1 の掃引 LU 再利用と compression = 1 の行列フリー) |
 | `src/hmatrix.c` | Lp / P の H 行列圧縮 (クラスタツリー + ACA、compression = 1) |
 | `src/precond.c` | 葉ブロック消去 + 回路 Schur 補元の前処理 (compression = 1) |
@@ -189,6 +190,27 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
     nodetol マージが外れて**接続が静かに切れる** (quad 1 スクエアで +46%、
     実際に踏んだ)。(`graded quad Rin (DC)` / `graded quad L vs plate` /
     `graded thick plate R` / `graded8 beats uniform16`)
+14. **圧縮経路 (`compression = 1`) は密経路と同じ要素評価を共有する** —
+    Lp は `lp_entry()`、P は `pot_entry()` の 1 箇所だけで評価し、求積の
+    次数が引数順に依存する (不変条件 13) ため添字を上三角に正規化する。
+    H 行列の matvec は**葉**単位で並列化する ([0,n) を重複なく分割する)。
+    木の階層をまたぐ行区間で並列化すると複数スレッドが y の同じ要素を
+    read-modify-write して静かに寄与を落とす (実際に踏んだ)。
+    (`compress wire L` / `compress plate Rin` / `compress thread invar.`)
+15. **圧縮の容量性 PEEC は電荷を陽な未知数にする** — 節点容量 C = P⁻¹ は
+    作らず、「KCL に +jωq」「電荷行に Pq − v = 0」と組む。電荷行から
+    q = P⁻¹v なので密経路と厳密に同じ系。符号を取り違えると Xin が反転する。
+    近似が入らない規模で両経路の Zin がビット一致することが最強の判定。
+    (`compress cap Rin` / `compress cap L` / `compress cap exact`)
+16. **前処理の Schur 補元は疎に持ち、厳密に分解する** — 疎にするのは格納と
+    分解だけで前処理そのものは変えない (近似 ILU ではない) ので、GMRES の
+    反復数も収束先も変わらない。最小次数の消去グラフを作るとき **A + A^T の
+    重複辺を必ず潰す** — (i,j) と (j,i) が両方あると次数が 2 倍に膨らみ、
+    次数バケット `head[deg]` (長さ n+1) を突き抜けて隣の確保領域を壊す
+    (実際に踏んだ : n=18 で `adj[0].len = 34`、ASan では再現せず)。
+    MNA には対角が構造的にゼロの行 (電圧源の枝電流) があるので、閾値
+    ピボットは非対角へ落ちられること。
+    (`compress schur Rin` / `compress schur L` / `compress cap exact`)
 
 ## メモリ
 
@@ -211,6 +233,8 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
 - `peec_check.sh` が `-n 1` と `-n 4` の `zin.csv` 完全一致を判定している。
   リダクションを持つ並列化を足すとここが落ちる。その場合は「一致する」という
   README の主張ごと見直すこと。
+- 疎行列 LU (sparse.c、前処理の Schur 補元) は**全体が直列**。GMRES の前処理
+  として固定の順序で呼ばれるだけなので、スレッド数不変性の心配が無い。
 
 ## 入力キーを足すとき
 

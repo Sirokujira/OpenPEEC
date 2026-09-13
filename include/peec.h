@@ -363,6 +363,15 @@ void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b);
 int  lu_decomp(int n, d_complex_t *a, int *piv);
 void lu_solve(int n, const d_complex_t *a, const int *piv, d_complex_t *b);
 
+// sparse.c — 疎行列 LU (最小次数順序 + Gilbert-Peierls、前処理の Schur 補元用)
+struct sparse_lu_t;
+// 三つ組から A を組んで LU 分解する (重複は加算)。NULL = 失敗
+struct sparse_lu_t *slu_build(int n, int nnz, const int *ri, const int *ci,
+	const d_complex_t *val);
+void slu_free(struct sparse_lu_t *s);
+void slu_solve(const struct sparse_lu_t *s, d_complex_t *b);   // b <- A^-1 b
+size_t slu_nnz(const struct sparse_lu_t *s);
+
 // precond.c — 葉ブロック消去 + 回路 Schur 補元の前処理 (compression = 1)
 struct precond_t;
 struct precond_t *pc_build(const peec_t *p, const mna_sparse_t *sp,

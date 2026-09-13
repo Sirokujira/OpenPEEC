@@ -53,6 +53,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 | `src/skin.c` | 表皮効果 (丸線は Bessel、角線は合成式) |
 | `src/mna.c` | MNA 番号付けとスタンプ |
 | `src/lu.c` | 複素 LU 分解 (部分ピボット) |
+| `src/sparse.c` | 疎行列 LU (最小次数順序 + Gilbert-Peierls、前処理の Schur 補元用) |
 | `src/iterative.c` | GMRES (acceleration = 1 の掃引 LU 再利用と compression = 1 の行列フリー) |
 | `src/hmatrix.c` | Lp / P の H 行列圧縮 (クラスタツリー + ACA、compression = 1) |
 | `src/precond.c` | 葉ブロック消去 + 回路 Schur 補元の前処理 (compression = 1) |
@@ -70,9 +71,9 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 - `.claude/rules/portability.md` — MSVC で実際に踏んだ落とし穴
   (VLA 禁止 / OpenMP インデックス事前宣言 / `<complex.h>` 不可 など)。
   編集のたびに `.claude/hooks/check-portability.sh` が自動検査する。
-- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 7 つの
+- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 17 個の
   不変条件**と、その番人になっている検証判定の対応。幾何積分・セル構成・
-  MNA に触る前に必読。
+  MNA・圧縮経路に触る前に必読。
 - `.claude/rules/validation.md` — 入力キーの後方互換規則と、検証ケースの
   作り方 (期待値はコードと独立な出所にすること)。
 
@@ -117,6 +118,9 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
 `peec_check.sh` が `-n 1` と `-n 4` の `zin.csv` 完全一致を判定しているので、
 リダクションを持つ並列化を足すとここが落ちる。
 その場合は「一致する」という README の主張ごと見直すこと。
+
+疎行列 LU (sparse.c、前処理の Schur 補元) は**全体が直列**。GMRES の前処理
+として固定の順序で呼ばれるだけなので、ここはスレッド数不変性の心配が無い。
 
 **ブロックの行区間は木の階層をまたいで重なる**ことに注意 : 行クラスタ単位で
 matvec を並列化すると複数スレッドが y の同じ要素を read-modify-write して
