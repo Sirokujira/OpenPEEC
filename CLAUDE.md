@@ -11,7 +11,7 @@ OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を�
 遠方界後処理 (`farfield` → `far.csv`)、平面波入射 (`planewave` → `pw.csv`、
 EMC イミュニティ)、過渡応答 (`transient` → `tran.csv`、掃引の逆 FFT)、
 対数掃引 (`frequency ... log`)、縁寄せ格子 (`grading`)、
-誘電損 tanδ / 単極 Debye 分散 (`dielectric` の省略可能引数)。
+誘電損 tanδ / 多極 Debye 分散 (`dielectric` の省略可能引数)。
 `capacitance` / `skineffect` / `retardation` / `groundplane` / `farfield` /
 `planewave` / `transient` は既定で無効 (キー省略時は従来動作と完全一致)。
 

@@ -556,6 +556,52 @@ NR > 1 {
 	exit ok ? 0 : 1
 }' || status=1
 
+# (ar) 多極 Debye : 2 極 (eps_inf = 2, de = 1 @ 10 kHz, de = 3 @ 1 MHz) で
+#      dY(f) = j w eps0 (epsr*(f) - 1) A/d、epsr* = eps_inf + sum_k de_k/(1 + j f/f_k)
+#      に一致すること。5 点 x (G, B) の最大相対誤差で判定。単極では作れない
+#      「2 段の緩和」を通る経路で、期待値は解析式そのもの (コード非依存)。
+cp "$SRC/diel_debye2.peec" "$WORK/"
+run diel_debye2.peec
+cp "$csv" "$WORK/zin_debye2.csv"
+sed '/^dielectric/d' "$SRC/diel_debye2.peec" > "$WORK/diel_debye2_air.peec"
+run diel_debye2_air.peec
+paste -d, "$WORK/zin_debye2.csv" "$csv" | awk -F, 'BEGIN {
+	PI = atan2(0, -1); e0 = 8.854187817620389e-12;
+	K = e0 * 0.0016 / 4e-4; ei = 2;
+	f1 = 1e4; d1e = 1; f2 = 1e6; d2e = 3
+}
+NR > 1 {
+	f = $2; w = 2 * PI * f;
+	da = ($3 * $3) + ($4 * $4);   g1 = $3 / da;  b1 = -$4 / da;
+	db = ($10 * $10) + ($11 * $11); g2 = $10 / db; b2 = -$11 / db;
+	q1 = f / f1; n1 = 1 + (q1 * q1);
+	q2 = f / f2; n2 = 1 + (q2 * q2);
+	a = ei + (d1e / n1) + (d2e / n2);
+	b = -((d1e * q1 / n1) + (d2e * q2 / n2));
+	eG = w * K * (-b); eB = w * K * (a - 1);
+	dg = ((g1 - g2) / eG) - 1; if (dg < 0) dg = -dg; if (dg > mx) mx = dg;
+	dbv = ((b1 - b2) / eB) - 1; if (dbv < 0) dbv = -dbv; if (dbv > mx) mx = dbv;
+	n++
+}
+END {
+	ok = (n == 5) && (mx <= 2e-3);
+	printf "%-24s freqs=%d max rel err=%.3e -> %s (<= 2e-3)\n", "debye2 dY (5 freqs)", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+
+# 同じ周波数の極への分割は恒等式 :
+#   de/(1 + jf/f0) = de_a/(1 + jf/f0) + de_b/(1 + jf/f0)   (de = de_a + de_b)
+# なので、単極 (de = 2 @ 100 kHz) を 2 極 (0.5 と 1.5、どちらも 100 kHz) に
+# 割った入力は bit 単位で同じ結果になるはず。多極の和の経路そのものの番人。
+sed 's/ 2 0 2 1e5$/ 2 0 2 1e5 0.5 1e5 1.5/' "$SRC/diel_debye.peec" > "$WORK/diel_debye_split.peec"
+run diel_debye_split.peec
+if cmp -s "$WORK/zin_debye.csv" "$csv"; then
+	printf "%-24s -> OK (同一周波数の極への分割が完全一致)\n" "debye pole split"
+else
+	printf "%-24s -> NG (分割で結果が変わった)\n" "debye pole split" >&2
+	status=1
+fi
+
 echo "--- transient (inverse FFT of the sweep)"
 # (al) 周波数に依らない反射係数 : y(t) = S11 x(t) が全時刻で厳密に成り立つ。
 #      励振と応答を同じ合成式で作るので帯域打ち切りも相殺する。
