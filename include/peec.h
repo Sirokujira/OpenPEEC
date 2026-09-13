@@ -32,6 +32,9 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 #define C0   (2.99792458e8)
 #define MU0  (4.0 * PI * 1e-7)
 #define EPS0 (1.0 / (C0 * C0 * MU0))
+
+// 誘電体 1 種あたりの Debye 極の上限 (広帯域の実測フィットでも数極で足りる)
+#define DIEL_MAXPOLE 8
 #define EPS  (1e-12)
 
 #define NAMELEN 32
@@ -97,8 +100,13 @@ typedef struct {
 typedef struct {
 	double org[3], ea[3], eb[3];
 	double thick, epsr, tand;
-	double epsinf, frelax;        // 単極 Debye : epsr*(f) = eps_inf +
-	                              //   (epsr - eps_inf)/(1 + j f/frelax)。frelax = 0 で無効
+	// 多極 Debye : epsr*(f) = eps_inf + sum_k de[k]/(1 + j f/pf[k])
+	// npole = 0 で分散なし。npole = 1 は従来の単極と完全に同じ式になる。
+	// 直流極限は eps_inf + sum de[k] = epsr (パーサが一致を要求する)。
+	double epsinf;
+	int    npole;
+	double pf[DIEL_MAXPOLE];      // 緩和周波数 f_k [Hz] (> 0)
+	double pde[DIEL_MAXPOLE];     // 強度 de_k (> 0)
 	int    ndiva, ndivb, ndivt;
 } diel_t;
 
@@ -125,14 +133,14 @@ typedef struct {
 	int    diel;                  // 1 = 誘電体セル (枝の直列インピーダンスは下記)
 	// 複素比誘電率 epsr* の過剰分 (epsr* - 1) を枝に載せる :
 	//   Y = jw eps0 (epsr*(f) - 1) A/len  ->  Z = 1/Y
-	// 非分散 (frelax = 0) : epsr* = epsr (1 - j tand) は周波数に依らないので
+	// 非分散 (極が無い) : epsr* = epsr (1 - j tand) は周波数に依らないので
 	// 事前計算した cexc / gexc を使う (Y = w (gexc + j cexc))。
-	// 分散 (frelax > 0)   : 単極 Debye epsr*(f) = epsinf + (epss - epsinf)/
-	//   (1 + j f/frelax)。mna.c が周波数ごとに gfac から Y を組む。
+	// 分散 (極がある)   : 多極 Debye は材料 (diel_t) 側が持つので、セルは
+	//   その索引 didx だけ持つ。mna.c が周波数ごとに gfac から Y を組む。
 	double cexc;                  // eps0 (epsr - 1) area / len       [F]
 	double gexc;                  // eps0 epsr tand area / len        [F] (損失側)
 	double gfac;                  // eps0 area / len [F] (分散モデル用の幾何係数)
-	double epss, epsinf, frelax;  // Debye の静的値・光学値・緩和周波数 [Hz]
+	int    didx;                  // 誘電体ブリックの索引 (p->diel)。diel = 1 のときだけ有効
 } seg_t;
 
 typedef struct {

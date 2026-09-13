@@ -117,19 +117,26 @@ int mna_numbering(peec_t *p, FILE *fp_log)
 
   Z = 1/Y,  Y = jw eps0 (epsr*(f) - 1) A/len
 
-非分散 (frelax = 0) : epsr* = epsr (1 - j tand) は周波数に依らないので
+非分散 (極なし) : epsr* = epsr (1 - j tand) は周波数に依らないので
 事前計算済みの cexc / gexc から Y = w (gexc + j cexc)。
-分散 (frelax > 0) : 単極 Debye
-  epsr*(f) = epsinf + (epss - epsinf)/(1 + j f/frelax)
-(因果的で Kramers-Kronig を満たす)。epsr* = a + jb (b <= 0) とすると
+分散 (極あり) : 多極 Debye
+  epsr*(f) = eps_inf + sum_k de_k/(1 + j f/f_k)
+(各項が因果的で Kramers-Kronig を満たすので、和も満たす)。
+極が 1 個で de = epsr - eps_inf のときが従来の単極で、式は完全に同じ。
+epsr* = a + jb (b <= 0) とすると
   Y = jw eps0 gfac (a - 1 + jb) = w eps0 gfac (-b + j(a - 1))
-で、-b >= 0 が緩和損失のコンダクタンスになる。
+で、-b >= 0 が緩和損失のコンダクタンスになる。極ごとの寄与は
+b_k = -de_k (f/f_k)/(1 + (f/f_k)^2) <= 0 なので、和も必ず損失側に入る。
 */
-static d_complex_t zint_diel(const seg_t *s, double omega, double f)
+static d_complex_t zint_diel(const peec_t *p, const seg_t *s, double omega, double f)
 {
-	if (s->frelax > 0) {
-		const d_complex_t er = d_add(d_complex(s->epsinf, 0),
-			d_div(d_complex(s->epss - s->epsinf, 0), d_complex(1, f / s->frelax)));
+	const diel_t *dl = &p->diel[s->didx];
+	if (dl->npole > 0) {
+		d_complex_t er = d_complex(dl->epsinf, 0);
+		for (int k = 0; k < dl->npole; k++) {
+			er = d_add(er, d_div(d_complex(dl->pde[k], 0),
+				d_complex(1, f / dl->pf[k])));
+		}
 		return d_inv(d_complex(omega * s->gfac * (-er.i),
 		                       omega * s->gfac * (er.r - 1)));
 	}
@@ -252,7 +259,7 @@ static void assemble(const peec_t *p, double f, sink_t *s, int skiplp)
 		// 内部インピーダンス : 既定は DC 抵抗、skineffect = 1 で表皮効果 + 内部 L。
 		// 誘電体セルは過剰分 (epsr* - 1) の直列インピーダンス (zint_diel)
 		const d_complex_t zint = p->seg[k].diel
-			? zint_diel(&p->seg[k], omega, f)
+			? zint_diel(p, &p->seg[k], omega, f)
 			: p->skin
 			? zint_seg(&p->seg[k], f)
 			: d_complex(p->seg[k].res, 0);

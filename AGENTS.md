@@ -158,7 +158,7 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
    枝は Z = 1/Y (mna.c が `seg->diel` を見る。skin は適用しない)。
    εr = 1 のブリックは**セルを作らない** (作ると 1/(jω·0) で NaN。
    スキップすれば真空と bit 一致)。tanδ = 0 なら Z = −j/(ωC_e) で従来と一致。
-   周波数分散 (単極 Debye、frelax > 0) も同じ原則で、`zint_diel()` (mna.c) が
+   周波数分散 (多極 Debye、npole > 0) も同じ原則で、`zint_diel()` (mna.c) が
    周波数ごとの εr*(f) から過剰分だけを組む。定数 tanδ と Debye の併用は
    損失の二重計上なので入力検証で拒否する。
    (`dielectric dC (pp)` / `dielectric epsr=1 noop` / `dielectric G (tand)` /
@@ -301,9 +301,9 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
 - 電流は区間ごと一定、電荷はセルごと一定の低次基底。共振近傍の精度は分割数依存。
 - 地板 (`groundplane`) は z = 一定の無限 PEC 面 1 枚のみ。積分回数は 2 倍に
   なるが未知数は増えない。導体は z ≥ 地板に置く (下はエラー)。
-- 誘電体 (`dielectric`) は直交直方体のみ。損失は一定 tanδ または単極 Debye
+- 誘電体 (`dielectric`) は直交直方体のみ。損失は一定 tanδ または多極 Debye
   分散 epsr*(f) = eps_inf + (eps_s - eps_inf)/(1 + j f/f_relax) のどちらか
-  (併用は損失の二重計上なので入力検証で拒否)。多極 Debye / Lorentz は未対応。
+  (併用は損失の二重計上なので入力検証で拒否)。Lorentz (共振型) は未対応。
 - 面格子の縁寄せは `grading = 1` (plate/quad 余弦・disk 正弦)。plate の
   メッシュ生成は非一様間隔対応 : 幅・中心・電荷セルは格子座標配列の
   隣接中点 (双対区間) から導く。等間隔時の式は従来と同一で省略時は

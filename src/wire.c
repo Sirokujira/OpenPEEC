@@ -90,14 +90,13 @@ static void diel_seg(peec_t *p, const double *x1, const double *x2, int n1, int 
 	s->sigma = 0;
 	s->res = 0;
 	// 複素比誘電率 epsr* の過剰分 (epsr* - 1) を枝に載せる。
-	// 非分散は事前計算 (cexc / gexc)、Debye (frelax > 0) は mna.c が
-	// 幾何係数 gfac から周波数ごとに Y を組む。
+	// 非分散は事前計算 (cexc / gexc)、Debye 分散 (dl->npole > 0) は mna.c が
+	// 幾何係数 gfac と材料の極から周波数ごとに Y を組む。極はセルではなく
+	// 材料が持つので、セルは索引だけ覚える (セル数に比例して増やさない)。
 	s->cexc = EPS0 * (dl->epsr - 1) * s->area / s->len;
 	s->gexc = EPS0 * dl->epsr * dl->tand * s->area / s->len;
 	s->gfac = EPS0 * s->area / s->len;
-	s->epss = dl->epsr;
-	s->epsinf = dl->epsinf;
-	s->frelax = dl->frelax;
+	s->didx = (int)(dl - p->diel);
 	p->nseg++;
 }
 
