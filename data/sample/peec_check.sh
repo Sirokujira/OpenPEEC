@@ -441,6 +441,67 @@ run monopole_ff.peec
 chk "monopole D = 2 x dipole" "$(awk -v m="$(getD)" -v d="$dd" 'BEGIN{printf "%.6f", m/d}')" 2.0 0.01
 chk "monopole ff efficiency" "$(getEff)" 1.0 0.005
 
+echo "--- near field"
+# near.csv の第 n データ行 (1 始まり) から 1 列を取り出す
+nfcol() { awk -F, -v r="$2" -v c="$3" 'NR == (r + 1) {printf "%.9e", $c}' "$WORK/$1"; }
+
+# (ai) 正方ループ軸上の磁界 : 有限直線 4 本の Biot-Savart 和
+#        H_z(z) = I s^2 / (2 pi (s^2/4 + z^2) sqrt(s^2/2 + z^2))
+#      retardation = 0 / capacitance = 0 なので電流は厳密に 1A 一様、
+#      場も k = 0 で評価される。解析式を厳密に再現するはずなので許容 0.1%。
+hzex() { awk -v s=0.2 -v z="$1" 'BEGIN {
+	printf "%.9e", s*s / (2*3.14159265358979324 * ((s*s/4) + z*z) * sqrt((s*s/2) + z*z))}'; }
+cp "$SRC/loop_near.peec" "$WORK/"
+run loop_near.peec
+chk "near loop Hz (z=0.05)" "$(nfcol near.csv 1 15)" "$(hzex 0.05)" 0.001
+chk "near loop Hz (z=0.10)" "$(nfcol near.csv 2 15)" "$(hzex 0.10)" 0.001
+chk "near loop Hz (z=0.20)" "$(nfcol near.csv 4 15)" "$(hzex 0.20)" 0.001
+
+# (aj) 帯電円板の軸上電界 : 総電荷 Q = I/(j omega) は電荷保存で厳密、
+#      導体円板の平衡分布の軸上電界は E_z = Q/(4 pi eps0 (z^2 + a^2))。
+#      区分一定基底は縁の電荷集中を下から近似するので z ~ a で +1% 程度
+#      上振れし、z >> a では総電荷だけで決まって厳密値に収束する。
+ezex() { awk -v a=0.1 -v f=1e6 -v z="$1" 'BEGIN {
+	pi = 3.14159265358979324; q = 1 / (2*pi*f);
+	printf "%.9e", -q / (4*pi*8.8541878128e-12 * ((z*z) + (a*a)))}'; }
+cp "$SRC/disk_near.peec" "$WORK/"
+run disk_near.peec
+chk "near disk Ez (z=0.1)" "$(nfcol near.csv 1 10)" "$(ezex 0.1)" 0.02
+chk "near disk Ez (z=0.5)" "$(nfcol near.csv 5 10)" "$(ezex 0.5)" 0.003
+
+# (ak) 近傍界と遠方界の相互検証 : r = 50 m (= 24 lambda) で |E| = |rE|/r。
+#      farfield.c (放射ベクトルの漸近形) と nearfield.c (全項の数値求積) は
+#      独立な実装なので、位相規約・幅の規格化・-jwA と -grad phi の打ち消しが
+#      すべて揃っていないと一致しない。横成分の補正は 1 + O(1/(kr)^2) = 2e-5。
+# frfr <far.csv> <theta[deg]> : |rE| をその方向 (phi = 0) から取る
+frfr() { awk -F, -v th="$2" 'NR>1 && (($2+0) == th) && (($3+0) == 0) {
+	printf "%.9e", sqrt(($4*$4) + ($5*$5) + ($6*$6) + ($7*$7)); exit}' "$WORK/$1"; }
+cp "$SRC/dipole_near.peec" "$WORK/"
+run dipole_near.peec
+chk "near vs far (theta=90)" "$(nfcol near.csv 1 17)" \
+	"$(awk -v m="$(frfr far.csv 90)" 'BEGIN{printf "%.9e", m/50}')" 0.001
+chk "near vs far (theta=45)" "$(nfcol near.csv 2 17)" \
+	"$(awk -v m="$(frfr far.csv 45)" 'BEGIN{printf "%.9e", m/50}')" 0.001
+
+# (al) 地板上の境界条件 : 完全導体面では接線 E と法線 H が厳密に 0。
+#      鏡像の符号 (電流 -I / 電荷 -q + 幾何 z 反転) が正しければ本体項と
+#      鏡像項が打ち消す。取り違えると打ち消しでなく 2 倍になるので比は O(1)。
+cp "$SRC/gp_near.peec" "$WORK/"
+run gp_near.peec
+awk -F, 'NR>1 {
+	n++;
+	et = sqrt(($5*$5) + ($6*$6) + ($7*$7) + ($8*$8));
+	hz = sqrt(($15*$15) + ($16*$16));
+	re = ($17 > 0) ? (et / $17) : 1; if (re > mre) mre = re;
+	rh = ($18 > 0) ? (hz / $18) : 1; if (rh > mrh) mrh = rh;
+}
+END {
+	ok = (n == 2) && (mre <= 1e-12) && (mrh <= 1e-12);
+	printf "%-24s points=%d |Etan|/|E|=%.3e |Hz|/|H|=%.3e -> %s\n",
+		"near gp boundary", n, mre, mrh, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/near.csv" || status=1
+
 echo "--- plane wave incidence (external field excitation)"
 # pw.csv の 1 行目 (port#1、単一周波数) から |Voc| と実効長を取り出す
 getVoc() { awk -F, 'NR==2{print $5}' "$WORK/pw.csv"; }
@@ -924,6 +985,18 @@ if cmp -s "$WORK/zin_n1.csv" "$csv"; then
 	printf "%-24s -> OK (-n 1 と -n 4 が完全一致)\n" "thread invariance"
 else
 	printf "%-24s -> NG (-n 1 と -n 4 が不一致)\n" "thread invariance" >&2
+	status=1
+fi
+
+# (am) 近傍界も観測点ごとに独立なので同じくビット一致する (near.csv で判定)。
+cp "$SRC/dipole_near.peec" "$WORK/"
+(cd "$WORK" && "$PEEC" -n 1 dipole_near.peec > /dev/null)
+cp "$WORK/near.csv" "$WORK/near_n1.csv"
+(cd "$WORK" && "$PEEC" -n 4 dipole_near.peec > /dev/null)
+if cmp -s "$WORK/near_n1.csv" "$WORK/near.csv"; then
+	printf "%-24s -> OK (-n 1 と -n 4 が完全一致)\n" "near thread invariance"
+else
+	printf "%-24s -> NG (-n 1 と -n 4 が不一致)\n" "near thread invariance" >&2
 	status=1
 fi
 

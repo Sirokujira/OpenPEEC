@@ -8,12 +8,14 @@ OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を�
 導体は丸線 (`wire`) / 角線 (`bar`) / 面導体 (`plate` = 矩形、
 `quad` = 凸四辺形、`disk` = 円板)。ほかに無限 PEC 地板 (`groundplane`、
 鏡像法)、誘電体ブリック (`dielectric`、Ruehli の過剰容量)、
-遠方界後処理 (`farfield` → `far.csv`)、平面波入射 (`planewave` → `pw.csv`、
+遠方界後処理 (`farfield` → `far.csv`)、近傍界後処理 (`nearfield` →
+`near.csv`)、平面波入射 (`planewave` → `pw.csv`、
 EMC イミュニティ)、過渡応答 (`transient` → `tran.csv`、掃引の逆 FFT)、
 対数掃引 (`frequency ... log`)、縁寄せ格子 (`grading`)、
 誘電損 tanδ / 多極 Debye 分散 (`dielectric` の省略可能引数)。
 `capacitance` / `skineffect` / `retardation` / `groundplane` / `farfield` /
-`planewave` / `transient` は既定で無効 (キー省略時は従来動作と完全一致)。
+`nearfield` / `planewave` / `transient` は既定で無効 (キー省略時は従来動作と
+完全一致)。
 
 CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本体は
 外部ライブラリに依存しない**規約なので、HDF5 はこのスクリプト側に置く。
@@ -31,7 +33,8 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
 # 回帰 : 解析解・文献値との比較 (MNA / 部分 L / 表皮効果 / 容量 / 遅延 / 角線 /
-#        面導体 / 体積セル / パネル / 地板 / 遠方界 / 誘電体 / 対数掃引 /
+#        面導体 / 体積セル / パネル / 地板 / 遠方界 / 近傍界 / 誘電体 /
+#        対数掃引 /
 #        平面波入射 / 過渡応答 / 縁寄せ格子 / Debye 分散)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 ```
@@ -60,6 +63,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 | `src/solve.c` | 周波数掃引 |
 | `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、`dist.csv` |
 | `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率) |
+| `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv`、E / H の遅延ポテンシャル) |
 | `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
 | `tools/peec2h5.py` | CSV → HDF5 変換 (本体の依存を増やさないための外付け) |
 
@@ -71,7 +75,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 - `.claude/rules/portability.md` — MSVC で実際に踏んだ落とし穴
   (VLA 禁止 / OpenMP インデックス事前宣言 / `<complex.h>` 不可 など)。
   編集のたびに `.claude/hooks/check-portability.sh` が自動検査する。
-- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 17 個の
+- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 18 個の
   不変条件**と、その番人になっている検証判定の対応。幾何積分・セル構成・
   MNA・圧縮経路に触る前に必読。
 - `.claude/rules/validation.md` — 入力キーの後方互換規則と、検証ケースの
@@ -110,13 +114,14 @@ Touchstone 1.1 は 1 個しか記録できないので port#1 の値を書いて
 
 OpenMP で並列化しているのは `lp_fill` (partial.c)、`pot_fill` (potential.c)、
 `lu_decomp` の残余行列更新 (lu.c)、GMRES の行列ベクトル積 (iterative.c)、
-H 行列のブロック充填と matvec (hmatrix.c)、前処理の葉 LU (precond.c) の
-6 箇所。**いずれも要素・行・ブロックごとに独立で、順序依存の加算
-(リダクション) を持たない** (GMRES の内積・Gram-Schmidt は直列。H 行列の
+H 行列のブロック充填と matvec (hmatrix.c)、前処理の葉 LU (precond.c)、
+近傍界の観測点ループ (nearfield.c) の 7 箇所。**いずれも要素・行・ブロック・
+観測点ごとに独立で、順序依存の加算 (リダクション) を持たない**
+(GMRES の内積・Gram-Schmidt は直列。H 行列の
 matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化し、区間内の
 ブロック加算順は固定) ため、スレッド数を変えても結果はビット単位で一致する。
-`peec_check.sh` が `-n 1` と `-n 4` の `zin.csv` 完全一致を判定しているので、
-リダクションを持つ並列化を足すとここが落ちる。
+`peec_check.sh` が `-n 1` と `-n 4` の `zin.csv` / `near.csv` 完全一致を
+判定しているので、リダクションを持つ並列化を足すとここが落ちる。
 その場合は「一致する」という README の主張ごと見直すこと。
 
 疎行列 LU (sparse.c、前処理の Schur 補元) は**全体が直列**。GMRES の前処理

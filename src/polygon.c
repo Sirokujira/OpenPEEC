@@ -162,9 +162,6 @@ static double tri_area(const double *a, const double *b, const double *c)
 	return 0.5 * sqrt(dot3(w, w));
 }
 
-// セルの求積点列を作る (最大数 : POLY_MAX 三角形 x 4 分割 x 7 点)
-#define POLY_NQMAX (POLY_MAX * 4 * 7)
-
 // 多角形セルの求積点 : papex からの扇 x (nsub = 2 なら各三角形を 4 分割) x n 点則
 // 戻り値は点数。wt には点の重み x 微小面積が入る (合計 = セル面積)。
 static int poly_qpts(const seg_t *s, int nsub, int n7,
@@ -220,8 +217,11 @@ static int poly_qpts(const seg_t *s, int nsub, int n7,
 	return np;
 }
 
-// 細線 (wid = 0) / リボン / 多角形 いずれかのセルの求積点列
-static int cell_qpts(const seg_t *s, int nsub, int n7, double *px, double *wt)
+// 細線 (wid = 0) / リボン / 多角形 いずれかのセルの求積点列。
+// 重みの合計は 細線なら len、リボン / 多角形なら面積になる。
+// 近傍界 (nearfield.c) も同じ点列を使うので、セルの形と求積の対応を
+// 二重に持たない (幾何を 1 箇所に閉じ込めるため公開している)。
+int cell_qpts(const seg_t *s, int nsub, int n7, double *px, double *wt)
 {
 	if (s->npv > 0) return poly_qpts(s, nsub, n7, px, wt);
 

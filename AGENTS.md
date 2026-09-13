@@ -11,7 +11,8 @@
 `disk` = 円板)。`plate` は `分割数t` (省略時 1) を 2 以上にすると厚み方向にも
 分割し、体積セル (矩形バー) として厚み方向の電流分布 (表皮効果) を解く。
 ほかに無限 PEC 地板 (`groundplane`、鏡像法)、誘電体ブリック (`dielectric`、
-Ruehli の過剰容量)、遠方界後処理 (`farfield` → `far.csv`)、平面波入射
+Ruehli の過剰容量)、遠方界後処理 (`farfield` → `far.csv`)、近傍界後処理
+(`nearfield` → `near.csv`)、平面波入射
 (`planewave` → `pw.csv`、EMC イミュニティ)、過渡応答 (`transient` →
 `tran.csv`、掃引の逆フーリエ変換)、対数掃引 (`frequency ... log`)。
 いずれもキー省略時は無効 (従来動作と完全一致)。
@@ -69,6 +70,7 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/pe
 | `src/solve.c` | 周波数掃引、Z → S 変換 |
 | `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、`dist.csv` |
 | `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率) |
+| `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv`、E / H の遅延ポテンシャル) |
 | `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
 | `tools/peec2h5.py` | CSV → HDF5 変換 (本体の依存を増やさないための外付け) |
 
@@ -211,6 +213,14 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
     MNA には対角が構造的にゼロの行 (電圧源の枝電流) があるので、閾値
     ピボットは非対角へ落ちられること。
     (`compress schur Rin` / `compress schur L` / `compress cap exact`)
+17. **近傍界は解と同じ規約・同じ求積点で評価する** — 位相規約は
+    exp(+jωt) / g = exp(-jkR)/R で farfield.c と共通、求積点は
+    `cell_qpts()` (polygon.c) の 1 箇所から取る (セル形状の振り分けを二重に
+    持たない)。電流セルの幅規格化は不変条件 4、電荷のサブセル重みは
+    `pot_entry()` と同じ len/carea、鏡像規約は不変条件 8。`retardation = 0`
+    では k = 0 (部分要素が静的なのに場だけ遅延させない)。地板面上で接線 E と
+    法線 H が機械精度で 0 になることが鏡像符号の番人。
+    (`near loop Hz` / `near disk Ez` / `near vs far` / `near gp boundary`)
 
 ## メモリ
 
@@ -222,15 +232,16 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
 
 OpenMP で並列化しているのは `lp_fill` (partial.c)、`pot_fill` (potential.c)、
 `lu_decomp` の残余行列更新 (lu.c)、GMRES の行列ベクトル積 (iterative.c)、
-H 行列のブロック充填と matvec (hmatrix.c)、前処理の葉 LU (precond.c) の
-6 箇所。**いずれも要素・行・ブロックごとに独立で、順序依存の加算
+H 行列のブロック充填と matvec (hmatrix.c)、前処理の葉 LU (precond.c)、
+近傍界の観測点ループ (nearfield.c) の 7 箇所。**いずれも要素・行・ブロックごとに独立で、順序依存の加算
 (リダクション) を持たない** (GMRES の内積・Gram-Schmidt は直列。H 行列の
 matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化する。ブロックの
 行区間は木の階層をまたいで重なるので、行クラスタ単位の並列化は競合する —
 実際に踏んだ)。スレッド数を変えても結果はビット単位で一致する。
 
 - 並列ループ内で共有配列に `+=` しない (`pot_fill` は一時配列に出してから直列で集約)。
-- `peec_check.sh` が `-n 1` と `-n 4` の `zin.csv` 完全一致を判定している。
+- `peec_check.sh` が `-n 1` と `-n 4` の `zin.csv` / `near.csv` 完全一致を
+  判定している。
   リダクションを持つ並列化を足すとここが落ちる。その場合は「一致する」という
   README の主張ごと見直すこと。
 - 疎行列 LU (sparse.c、前処理の Schur 補元) は**全体が直列**。GMRES の前処理
@@ -313,6 +324,10 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
   支配的な配置 — 基板・平行平板 — で正確)。`capacitance = 1` 必須。
 - 遠方界 (`farfield`) は port #1 の 1 A 励振に対する値。効率が意味を持つのは
   `retardation = 1` のとき (準静的電流は放射を含まない)。
+- 近傍界 (`nearfield`) も port #1 の 1 A 励振に対する値。観測点はセル寸法
+  程度以上離すこと (セル上の積分は数点の求積)。`capacitance = 0` では電荷が
+  無いので E は −jωA の項だけ、`retardation = 0` では部分要素と揃えて
+  静的 (k = 0) に評価する。
 - 平面波 (`planewave`) は 1 方向・1 偏波の単一入射波 (重ね合わせは実行を分けて
   線形性で足す)。`pw.csv` はポート間に素子が無いときだけ Voc として読める。
 - 過渡応答 (`transient`) は掃引の逆フーリエ変換なので、応答が `1/Δf` 以内に

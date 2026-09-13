@@ -43,7 +43,7 @@ int input_data(FILE *fp, peec_t *p)
 	const char sep[] = " \t";
 	const char errfmt2[] = "*** invalid %s data\n";
 	int    cres = 0, ccap = 0, cind = 0, cmut = 0, csrc = 0, cport = 0, cwire = 0, cnode = 0;
-	int    cplate = 0, cpanel = 0, cdiel = 0;
+	int    cplate = 0, cpanel = 0, cdiel = 0, cnf = 0;
 
 	// initialize (既定値 : キー省略時は従来動作)
 	memset(p, 0, sizeof(peec_t));
@@ -568,6 +568,27 @@ int input_data(FILE *fp, peec_t *p)
 				return 1;
 			}
 		}
+		else if (!strcmp(strkey, "nearfield")) {
+			// nearfield = x1 y1 z1 x2 y2 z2 n1 n2 n3
+			//   角 x1 -> 角 x2 の直方体を各軸 n 分割した格子点 (n = 0 は固定)
+			if (ntoken < 11) err = 1;
+			else {
+				APPEND(p->nf, p->nnf, cnf, nf_t);
+				nf_t *e = &p->nf[p->nnf];
+				memset(e, 0, sizeof(nf_t));
+				for (int k = 0; k < 3; k++) {
+					e->p1[k] = atof(token[2 + k]);
+					e->p2[k] = atof(token[5 + k]);
+					e->n[k] = atoi(token[8 + k]);
+					if (e->n[k] < 0) err = 1;
+				}
+				if (!err) p->nnf++;
+			}
+			if (err) {
+				printf(errfmt2, "nearfield");
+				return 1;
+			}
+		}
 		else if (!strcmp(strkey, "grading")) {
 			p->grading = atoi(token[2]);
 		}
@@ -668,6 +689,7 @@ void peec_free(peec_t *p)
 	free(p->wire);
 	free(p->ncid);
 	free(p->ncxyz);
+	free(p->nf);
 
 	// 形状・分割 (wire.c)
 	free(p->seg);
