@@ -107,6 +107,11 @@ same portability rules, no external numerical libraries.
   しません)。地板があれば鏡像を加えるので、地板上で接線 E と法線 H が
   機械精度で 0 になります。EMC の近傍界スキャンやプローブ位置での結合量の
   見積り用です。
+  `planewave` と併用すると、同じ観測点で平面波による誘起電流・電荷の散乱界に
+  入射界 (地板があれば反射波も) を足した**全界**を `nearpw.csv` にも出します
+  (列は `near.csv` と同じ)。導体の遮蔽効果 (シールド効果) や、外来波の中に
+  置いた構造の周りの界分布を見る用途です。入射界は右辺の起電力と同じ
+  規約 (`pw_waves()`) から組むので、到来方向・偏波・反射の符号が一致します。
 - **平面波入射 (外部界励振)** — `planewave` キー :
   導体表面の電界積分方程式を区間に沿って線積分すると、枝方程式の右辺に
   誘起起電力 `-∫E_inc·dl` が立ちます。区間内は直線・一定方向なので線積分は
@@ -165,8 +170,10 @@ same portability rules, no external numerical libraries.
   有限導電率の地板は `plate` でモデル化してください (鏡像との併用は可)。
 - 遠方界 (`farfield`) は port #1 の 1 A 励振に対する値です。指向性 D は
   電流分布だけで決まりますが、利得 G と効率は導体損を含みます。
-- 近傍界 (`nearfield`) も port #1 の 1 A 励振に対する値です。セル上の積分は
-  セルあたり数点の求積なので、観測点はセル寸法程度以上離してください
+- 近傍界 (`nearfield`) の `near.csv` は port #1 の 1 A 励振、`nearpw.csv` は
+  平面波入射時の全界 (入射 + 反射 + 散乱) です。入射界は物理的な平面波なので
+  `retardation` に依らず k = ω/c で評価し、散乱界は以下の規約に従います。
+  セル上の積分はセルあたり数点の求積なので、観測点はセル寸法程度以上離してください
   (セル上・セル直近では求積誤差が残ります)。`capacitance = 0` では電荷が
   無いので E は `−jωA` の項だけになります。`retardation = 0` のときは
   部分要素と揃えて静的 (k = 0) に評価します。
@@ -278,6 +285,7 @@ peec [-n <threads>] input.peec
 | `dist.csv` | 電流・電荷分布 (`distribution = 1` のときのみ)。`port` 列が励振ポート番号 (多ポートではポートごとに 1 組)、平面波による誘起電流 `Ipw` は 0 |
 | `far.csv` | 遠方界パターン rE と D / G [dBi] (`farfield` 指定時のみ) |
 | `near.csv` | 近傍界 E / H の各成分と |E| / |H| (`nearfield` 指定時のみ) |
+| `nearpw.csv` | 平面波入射時の全界 (入射 + 反射 + 散乱)。列は `near.csv` と同じ (`nearfield` と `planewave` の併用時のみ) |
 | `pw.csv` | 平面波入射の端子電圧・実効長・利用可能電力 (`planewave` 指定時のみ) |
 | `tran.csv` | 過渡波形 (励振 / S 行列の時間応答 / 誘起電圧、`transient` 指定時のみ) |
 
@@ -337,7 +345,7 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `frequency` | `frequency = f開始 f終了 分割数 [log]` | 周波数掃引 (分割数+1 点)。`log` で等比 (対数) 掃引、省略時は線形 |
 | `groundplane` | `groundplane = z` | 無限 PEC 地板 (z = 一定、鏡像法)。導体は z ≥ 地板に置く |
 | `farfield` | `farfield = 分割数θ 分割数φ` | 遠方界の後処理を有効化 (`far.csv` 出力)。地板ありは上半球のみ |
-| `nearfield` | `nearfield = x1 y1 z1 x2 y2 z2 n1 n2 n3` | 近傍界の観測格子 (`near.csv` 出力)。複数行可、n = 0 の軸は固定 |
+| `nearfield` | `nearfield = x1 y1 z1 x2 y2 z2 n1 n2 n3` | 近傍界の観測格子 (`near.csv` 出力、`planewave` 併用時は `nearpw.csv` も)。複数行可、n = 0 の軸は固定 |
 | `planewave` | `planewave = θ φ 偏波 振幅 [位相deg]` | 平面波入射 (外部界励振)。(θ, φ) は**到来方向**、偏波 1 = θ / 2 = φ、振幅 [V/m] |
 | `transient` | `transient = 1 [減衰dB]` | 過渡応答 (掃引の逆フーリエ変換、`tran.csv` 出力)。等間隔・DC の整数倍の掃引が必須。減衰は帯域端でのガウス励振の減衰 (省略時 40 dB) |
 | `nodetol` | `nodetol = 1e-8` | 座標マージ許容 [m] (省略時 1e-8) |
@@ -417,6 +425,11 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `dipole_near.peec` 近傍界 vs 遠方界 | r = 50 m (24λ) で \|E\| = \|rE\|/r。漸近形 (farfield.c) と全項の数値求積 (nearfield.c) の相互検証、θ = 90°/45° | 0.1% |
 | `gp_near.peec` 地板上の境界条件 | PEC 面で接線 E と法線 H が 0 (鏡像の符号の番人、実測 2.8e-16) | 1e-12 |
 | `dipole_near.peec` スレッド数不変性 | 近傍界も `-n 1` と `-n 4` の `near.csv` が完全一致 | 完全一致 |
+| `pw_standing.peec` 地板上の定在波 (平面波の近傍界) | 入射 + 反射の厳密解 E_y = 2jE0 sin kz、H_x = 2(E0/η0) cos kz を z = 0, λ/8, λ/4, λ/2 で。散乱体は e·t = 0 で結合しない向き | 1e-6 |
+| `loop_shield.peec` 閉ループの磁界遮蔽 | 中心で H_tot/H_inc = 1 − jωμ0GA/(R + jωL) (ファラデー + Grover の L + Biot–Savart の中心磁界 G = 2√2/(πs)) = 0.687764 (実測 6 桁一致)。符号を取り違えると 1.31 | 0.5% |
+| `dipole_pw_near.peec` 補償定理 | ポートを 50 Ω で閉じた系の全界 = 開放時の全界 − I_L × (ポート 1 A 励振の場)、I_L = Voc/(Zin + R_L)。平面波経路の誘起電流・電荷を検証済みのポート経路と突き合わせる (実測 5e-10) | 1e-6 |
+| `gp_near.peec` + `planewave` | 斜め入射でも地板面上で全界の接線 E と法線 H が 0 (入射 + 反射、散乱 + 鏡像がそれぞれ打ち消す) | 1e-12 |
+| `dipole_pw_near.peec` スレッド数不変性 | `nearpw.csv` も `-n 1` と `-n 4` が完全一致 | 完全一致 |
 | `diel_pp.peec` 平行平板 + εr = 4 ブリック | ΔC = (εr−1)ε0A/d = 106.250 pF (等電位面間の過剰容量ラダーは格子に依らず厳密、実測残差 ~1e-6) | 0.5% |
 | `diel_pp.peec` εr = 1 | ブリック無しと bit 単位で一致 (完全無効果) | 完全一致 |
 | `dipole_pw.peec` 半波長ダイポールの受信 | 実効長 \|l_eff\| = λ/π = 0.663793 m (正弦電流分布の教科書値) | 1% |

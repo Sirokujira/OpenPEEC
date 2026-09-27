@@ -387,6 +387,12 @@ Schur 補元 S = S11 - sum_b B_b D_b^-1 C_b は回路未知数どうしの行列
   なく 2 倍になるので、比は O(1) になって即座に出る。
 - **retardation = 0 なら k = 0 で評価する**。部分要素が静的なのに場だけ遅延
   させると、解が持っていないはずの放射項が場に現れる。
+- **平面波の全界 (nearpw.csv) の入射界は右辺と同じ `pw_waves()` (mna.c) から
+  組む**。到来方向・偏波・地板での反射 (水平成分反転・垂直成分保存、面上で
+  位相一致) を近傍界側で書き直すと、起電力と入射界の規約がずれても実行は
+  通る。入射界は物理的な平面波なので **retardation に依らず k = omega/c**
+  (右辺の起電力も同じ k)。散乱界だけが上の k の規約に従う。
+  H_inc = -(1/eta0) r^ x E_inc (伝搬方向は -r^)。
 
 観測点ごとの評価は互いに独立 (出力配列の別要素) なのでリダクションが無く、
 OpenMP でもスレッド数によらずビット一致する。
@@ -400,7 +406,13 @@ OpenMP でもスレッド数によらずビット一致する。
 は電荷保存で厳密、導体円板の平衡分布から E_z = Q/(4 pi eps0 (z^2+a^2))) /
 `near vs far (theta=90/45)` (r = 24 lambda で |E| = |rE|/r : 漸近形と全項
 数値求積の相互検証) / `near gp boundary` (鏡像の符号) /
-`near thread invariance`
+`near thread invariance` /
+`pw standing Ey / Hx` (地板上の定在波 E_y = 2j E0 sin kz, H_x = 2(E0/eta0) cos kz
+の厳密解 : 反射の符号と位相、H の向き) / `loop shield |Htot/Hinc|` (閉ループの
+中心で 1 - j omega mu0 G A/(R + j omega L) : 散乱界の符号 = レンツの法則) /
+`pw compensation` (補償定理 F_B = F_A,pw - I_L F_A,port : 平面波経路の誘起電流・
+電荷の受け渡しをポート経路と突き合わせる) / `nearpw gp boundary` /
+`nearpw thread invariance`
 
 ## 並列化
 

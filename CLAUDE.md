@@ -9,7 +9,7 @@ OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を�
 `quad` = 凸四辺形、`disk` = 円板)。ほかに無限 PEC 地板 (`groundplane`、
 鏡像法)、誘電体ブリック (`dielectric`、Ruehli の過剰容量)、
 遠方界後処理 (`farfield` → `far.csv`)、近傍界後処理 (`nearfield` →
-`near.csv`)、平面波入射 (`planewave` → `pw.csv`、
+`near.csv`、平面波併用時は全界 `nearpw.csv`)、平面波入射 (`planewave` → `pw.csv`、
 EMC イミュニティ)、過渡応答 (`transient` → `tran.csv`、掃引の逆 FFT)、
 対数掃引 (`frequency ... log`)、縁寄せ格子 (`grading`)、
 誘電損 tanδ / 多極 Debye 分散 (`dielectric` の省略可能引数)。
@@ -63,7 +63,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 | `src/solve.c` | 周波数掃引 |
 | `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、`dist.csv` |
 | `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率) |
-| `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv`、E / H の遅延ポテンシャル) |
+| `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv` / 平面波の全界 `nearpw.csv`、E / H の遅延ポテンシャル) |
 | `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
 | `tools/peec2h5.py` | CSV → HDF5 変換 (本体の依存を増やさないための外付け) |
 
@@ -120,7 +120,7 @@ H 行列のブロック充填と matvec (hmatrix.c)、前処理の葉 LU (precon
 (GMRES の内積・Gram-Schmidt は直列。H 行列の
 matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化し、区間内の
 ブロック加算順は固定) ため、スレッド数を変えても結果はビット単位で一致する。
-`peec_check.sh` が `-n 1` と `-n 4` の `zin.csv` / `near.csv` 完全一致を
+`peec_check.sh` が `-n 1` と `-n 4` の `zin.csv` / `near.csv` / `nearpw.csv` 完全一致を
 判定しているので、リダクションを持つ並列化を足すとここが落ちる。
 その場合は「一致する」という README の主張ごと見直すこと。
 

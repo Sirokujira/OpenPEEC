@@ -718,6 +718,7 @@ void peec_free(peec_t *p)
 	free(p->cellq);
 	free(p->voc);
 	free(p->segipw);
+	free(p->cellqpw);
 
 	memset(p, 0, sizeof(peec_t));
 }

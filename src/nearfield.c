@@ -35,6 +35,17 @@ capacitance = 0 では電荷が無いので E は -j omega A の項だけにな�
 これで地板上の接線電界が恒等的に 0 になる。地板より下は導体内部なので
 観測点を置いても物理的な意味は無い (ログに注意を出す)。
 
+平面波入射 (planewave) があるときは、同じ観測点で平面波による誘起電流・電荷
+(p->segipw / p->cellqpw) の散乱界に入射界 (地板があれば反射波も) を足した
+全界を nearpw.csv に出す。入射界は右辺 (mna_rhs_planewave) と同じ pw_waves()
+から作るので、到来方向・偏波・反射の規約は 1 箇所に閉じている :
+
+  E_inc(r) = sum_w e0_w ev_w exp(+j k rh_w・r)
+  H_inc(r) = sum_w -(1/eta0) rh_w x E_w(r)        (伝搬方向は -rh_w)
+
+入射界は物理的な平面波なので retardation に依らず k = omega/c で評価する
+(右辺の起電力も同じ k)。散乱界は上の規約どおり retardation = 0 なら静的。
+
 観測点ごとの評価は互いに独立なので OpenMP 並列にしてもリダクションが無く、
 スレッド数によらずビット一致する (不変条件の「並列化」の節)。
 */
@@ -134,11 +145,13 @@ static void nf_kernel(const nfq_t *q, int k, const double *pt, double kw,
 	}
 }
 
-// 観測点 1 点の E / H (port #1 励振、周波数 ifreq)
+// 観測点 1 点の E / H (散乱界)。cur[nseg] は区間電流、chg[ncell] はセル電荷
+// (NULL なら電荷項なし)。port #1 励振と平面波励振で共通。
 static void nf_point(const peec_t *p, const nfq_t *qi, const nfq_t *qc,
-	const double *pt, int ifreq, double kw, d_complex_t *ev, d_complex_t *hv)
+	const d_complex_t *cur0, const d_complex_t *chg, const double *pt,
+	double f, double kw, d_complex_t *ev, d_complex_t *hv)
 {
-	const double ca = 2 * PI * freq_at(p, ifreq) * MU0 / (4 * PI);
+	const double ca = 2 * PI * f * MU0 / (4 * PI);
 	const double cq = 1 / (4 * PI * EPS0);
 	const double ch = 1 / (4 * PI);
 	const double zmir = 2 * p->gpz;
@@ -155,7 +168,7 @@ static void nf_point(const peec_t *p, const nfq_t *qi, const nfq_t *qc,
 		// 電流セル : E の -j omega A 項と H
 		for (int k = 0; k < p->nseg; k++) {
 			const seg_t *s = &p->seg[k];
-			d_complex_t cur = p->segi[DIDX(p, ifreq, 0, k)];
+			d_complex_t cur = cur0[k];
 			double tv[3];
 			for (int c = 0; c < 3; c++) {
 				tv[c] = (s->x2[c] - s->x1[c]) / s->len;
@@ -186,10 +199,10 @@ static void nf_point(const peec_t *p, const nfq_t *qi, const nfq_t *qc,
 		}
 
 		// 電荷セル : E の -grad phi 項 (鏡像電荷は -q)
-		if (qc == NULL) continue;
+		if ((qc == NULL) || (chg == NULL)) continue;
 		for (int i = 0; i < p->ncell; i++) {
 			if (p->carea[i] <= 0) continue;
-			const d_complex_t qcell = p->cellq[QIDX(p, ifreq, 0, i)];
+			const d_complex_t qcell = chg[i];
 			const double scl = (mir ? -cq : cq) / p->carea[i];
 			for (int e = p->csoff[i]; e < p->csoff[i + 1]; e++) {
 				const int h = p->csidx[e];
@@ -207,7 +220,61 @@ static void nf_point(const peec_t *p, const nfq_t *qi, const nfq_t *qc,
 	}
 }
 
-int output_near(const peec_t *p, const char *fn, FILE *fp_log)
+// 平面波の入射界 (地板があれば反射波も) を ev / hv に加える
+static void nf_incident(const pw_wave_t *w, int nw, double kinc, const double *pt,
+	d_complex_t *ev, d_complex_t *hv)
+{
+	const double eta0 = MU0 * C0;
+	for (int iw = 0; iw < nw; iw++) {
+		const double *rh = w[iw].rh;
+		const double ph = kinc * ((rh[0] * pt[0]) + (rh[1] * pt[1]) + (rh[2] * pt[2]));
+		const d_complex_t a = d_mul(w[iw].e0, d_complex(cos(ph), sin(ph)));
+		d_complex_t e[3];
+		for (int c = 0; c < 3; c++) {
+			e[c] = d_rmul(w[iw].ev[c], a);
+			ev[c] = d_add(ev[c], e[c]);
+		}
+		// H = -(1/eta0) rh x E
+		d_complex_t h[3];
+		h[0] = d_sub(d_rmul(rh[1], e[2]), d_rmul(rh[2], e[1]));
+		h[1] = d_sub(d_rmul(rh[2], e[0]), d_rmul(rh[0], e[2]));
+		h[2] = d_sub(d_rmul(rh[0], e[1]), d_rmul(rh[1], e[0]));
+		for (int c = 0; c < 3; c++) {
+			hv[c] = d_sub(hv[c], d_rmul(1 / eta0, h[c]));
+		}
+	}
+}
+
+static void nf_header(FILE *fp)
+{
+	fprintf(fp, "frequency[Hz],x[m],y[m],z[m],"
+		"Ex_real[V/m],Ex_imag[V/m],Ey_real[V/m],Ey_imag[V/m],Ez_real[V/m],Ez_imag[V/m],"
+		"Hx_real[A/m],Hx_imag[A/m],Hy_real[A/m],Hy_imag[A/m],Hz_real[A/m],Hz_imag[A/m],"
+		"absE[V/m],absH[A/m]\n");
+}
+
+static void nf_write(FILE *fp, double f, const double *pts, const d_complex_t *ev,
+	const d_complex_t *hv, int np)
+{
+	for (int i = 0; i < np; i++) {
+		double ae = 0, ah = 0;
+		for (int c = 0; c < 3; c++) {
+			ae += d_norm(ev[(3 * i) + c]);
+			ah += d_norm(hv[(3 * i) + c]);
+		}
+		fprintf(fp, "%.9e,%.9e,%.9e,%.9e",
+			f, pts[3 * i], pts[(3 * i) + 1], pts[(3 * i) + 2]);
+		for (int c = 0; c < 3; c++) {
+			fprintf(fp, ",%.9e,%.9e", ev[(3 * i) + c].r, ev[(3 * i) + c].i);
+		}
+		for (int c = 0; c < 3; c++) {
+			fprintf(fp, ",%.9e,%.9e", hv[(3 * i) + c].r, hv[(3 * i) + c].i);
+		}
+		fprintf(fp, ",%.9e,%.9e\n", sqrt(ae), sqrt(ah));
+	}
+}
+
+int output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log)
 {
 	if (p->nnf <= 0) return 0;
 	if ((p->segi == NULL) || (p->nseg <= 0) || (p->nport <= 0)) return 0;
@@ -267,52 +334,61 @@ int output_near(const peec_t *p, const char *fn, FILE *fp_log)
 		fprintf(fp_log, "*** warning : nearfield point below the ground plane (z < %.5e) is inside the conductor\n", p->gpz);
 	}
 
+	// 平面波 (planewave) の全界 : 誘起電流があるときだけ
+	const int dopw = p->pw && (p->segipw != NULL) && (fnpw != NULL);
+
 	FILE *fp = fopen(fn, "w");
-	if (fp == NULL) {
-		printf("*** file %s open error.\n", fn);
+	FILE *fpw = dopw ? fopen(fnpw, "w") : NULL;
+	if ((fp == NULL) || (dopw && (fpw == NULL))) {
+		printf("*** file %s open error.\n", (fp == NULL) ? fn : fnpw);
+		if (fp != NULL) fclose(fp);
+		if (fpw != NULL) fclose(fpw);
 		nfq_free(&qi); nfq_free(&qc);
 		free(pts); free(ev); free(hv);
 		return 1;
 	}
-
-	fprintf(fp, "frequency[Hz],x[m],y[m],z[m],"
-		"Ex_real[V/m],Ex_imag[V/m],Ey_real[V/m],Ey_imag[V/m],Ez_real[V/m],Ez_imag[V/m],"
-		"Hx_real[A/m],Hx_imag[A/m],Hy_real[A/m],Hy_imag[A/m],Hz_real[A/m],Hz_imag[A/m],"
-		"absE[V/m],absH[A/m]\n");
+	nf_header(fp);
+	if (fpw != NULL) nf_header(fpw);
 
 	const int np = (int)npt;
 	for (int ifreq = 0; ifreq < p->nfreq; ifreq++) {
 		const double f = freq_at(p, ifreq);
 		// retardation = 0 の解は静的な部分要素から出ているので場も静的に評価する
 		const double kw = p->retardation ? (2 * PI * f / C0) : 0;
+		const d_complex_t *cur = &p->segi[DIDX(p, ifreq, 0, 0)];
+		const d_complex_t *chg = hascharge ? &p->cellq[QIDX(p, ifreq, 0, 0)] : NULL;
 		int i;
 #ifdef _OPENMP
 #pragma omp parallel for
 #endif
 		for (i = 0; i < np; i++) {
-			nf_point(p, &qi, hascharge ? &qc : NULL, &pts[3 * i], ifreq, kw,
+			nf_point(p, &qi, hascharge ? &qc : NULL, cur, chg, &pts[3 * i], f, kw,
 				&ev[3 * i], &hv[3 * i]);
 		}
-		for (i = 0; i < np; i++) {
-			double ae = 0, ah = 0;
-			for (int c = 0; c < 3; c++) {
-				ae += d_norm(ev[(3 * i) + c]);
-				ah += d_norm(hv[(3 * i) + c]);
+		nf_write(fp, f, pts, ev, hv, np);
+
+		if (fpw != NULL) {
+			// 散乱界 (誘起電流・電荷) + 入射界 (実際の波数 k = omega/c)
+			const double kinc = 2 * PI * f / C0;
+			pw_wave_t w[2];
+			const int nw = pw_waves(p, kinc, w);
+			const d_complex_t *curpw = &p->segipw[(size_t)ifreq * p->nseg];
+			const d_complex_t *chgpw = (hascharge && (p->cellqpw != NULL))
+				? &p->cellqpw[(size_t)ifreq * p->ncell] : NULL;
+#ifdef _OPENMP
+#pragma omp parallel for
+#endif
+			for (i = 0; i < np; i++) {
+				nf_point(p, &qi, (chgpw != NULL) ? &qc : NULL, curpw, chgpw, &pts[3 * i],
+					f, kw, &ev[3 * i], &hv[3 * i]);
+				nf_incident(w, nw, kinc, &pts[3 * i], &ev[3 * i], &hv[3 * i]);
 			}
-			fprintf(fp, "%.9e,%.9e,%.9e,%.9e",
-				f, pts[3 * i], pts[(3 * i) + 1], pts[(3 * i) + 2]);
-			for (int c = 0; c < 3; c++) {
-				fprintf(fp, ",%.9e,%.9e", ev[(3 * i) + c].r, ev[(3 * i) + c].i);
-			}
-			for (int c = 0; c < 3; c++) {
-				fprintf(fp, ",%.9e,%.9e", hv[(3 * i) + c].r, hv[(3 * i) + c].i);
-			}
-			fprintf(fp, ",%.9e,%.9e\n", sqrt(ae), sqrt(ah));
+			nf_write(fpw, f, pts, ev, hv, np);
 		}
 	}
 
-	fprintf(fp_log, "nearfield : %d grid(s), %d point(s) x %d frequency\n",
-		p->nnf, np, p->nfreq);
+	fprintf(fp_log, "nearfield : %d grid(s), %d point(s) x %d frequency%s\n",
+		p->nnf, np, p->nfreq, dopw ? " (+ plane-wave total field)" : "");
 	fflush(fp_log);
 
 	nfq_free(&qi);
@@ -321,6 +397,7 @@ int output_near(const peec_t *p, const char *fn, FILE *fp_log)
 	free(ev);
 	free(hv);
 	fclose(fp);
+	if (fpw != NULL) fclose(fpw);
 
 	return 0;
 }

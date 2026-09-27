@@ -1,0 +1,33 @@
+# 検証 (ap) : 平面波の近傍界 — 補償定理によるポート励振との相互検証
+#   dipole_near.peec と同じ半波長ダイポール (容量あり・遅延あり) に、+x から
+#   theta 偏波 (E が -z 向き = ダイポールに平行) の平面波を当てる。
+#
+#   ポートを開放したまま (実行 A) と、ポートを R_L = 50 ohm で閉じたもの
+#   (実行 B : スクリプトが resistor = 1 2 50 を足す) を比べる。線形回路の
+#   補償定理 (Thevenin の定理) により、負荷を付けた系の場は
+#
+#     F_B = F_A,pw - I_L F_A,port,    I_L = Voc / (Zin + R_L)
+#
+#   となる。F_A,pw は実行 A の nearpw.csv (平面波の全界)、F_A,port は実行 A の
+#   near.csv (ポートに 1 A を注入した場)、Voc / Zin は実行 A の pw.csv / zin.csv。
+#   入射界は A と B で同じなので打ち消し合い、残るのは誘起電流・電荷の
+#   散乱界どうしの関係になる。ポート励振の近傍界は別途解析解で検証済み
+#   (loop_near / disk_near / dipole_near) なので、平面波経路の誘起電流・
+#   電荷の受け渡し (p->segipw / p->cellqpw の添字) がここで判定される。
+#   厳密な恒等式なので残差は丸め誤差のみ (許容 1e-6)。
+#
+#   観測点は電荷の寄与が大きい先端近く (0.05, 0, 0.45) と側方 (0.1, 0.05, 0.1)。
+OpenPEEC 1 0
+title = half-wave dipole in a plane wave (compensation theorem check)
+capacitance = 1
+retardation = 1
+planewave = 90 0 1 1.0
+node = 1 0 0 -0.0005
+node = 2 0 0 0.0005
+wire = 0 0 -0.5 0 0 -0.0005 1e-3 5.8e7 16
+wire = 0 0 0.0005 0 0 0.5 1e-3 5.8e7 16
+port = 1 2 50
+nearfield = 0.05 0 0.45  0.05 0 0.45  0 0 0
+nearfield = 0.1 0.05 0.1  0.1 0.05 0.1  0 0 0
+frequency = 1.4376e8 1.4376e8 0
+end

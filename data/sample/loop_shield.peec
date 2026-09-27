@@ -1,0 +1,38 @@
+# 検証 (ao) : 平面波の近傍界 — 閉じた正方ループによる磁界の遮蔽
+#   loop_pw.peec と同じ一辺 s = 0.2 m の正方ループを 1 uohm で閉じ、同じ
+#   平面波 (+x から到来、phi 偏波、H = -(E0/eta0) z^) を当てる。ループを
+#   貫く磁束を打ち消す向きに電流が流れ (レンツの法則)、中心の磁界が減る。
+#
+#   誘起電流 : (R + j omega L) I = -j omega mu0 H_inc A     (ファラデー)
+#   中心の散乱磁界 : H_scat = G I,  G = 2 sqrt(2)/(pi s)    (有限直線 4 本の
+#                                                           Biot-Savart、loop_near と同じ式の z = 0)
+#   したがって中心の全磁界と入射磁界の比は
+#
+#     H_tot/H_inc = 1 - j omega mu0 G A / (R + j omega L)
+#
+#   s = 0.2 m, A = 0.04 m^2, f = 1 MHz、L = 7.24689e-7 H (loop_square.peec の
+#   Grover 式)、R = R_wire + R_load = 4.3906e-3 + 1e-6 ohm :
+#     omega mu0 G A = 1.421722、omega L = 4.553347
+#     |H_tot/H_inc| = 0.687764     (R << omega L なので ~ 1 - mu0 G A/L)
+#
+#   期待値はファラデーの法則・Grover の L・Biot-Savart という誘起電流と
+#   近傍界の実装から独立な量だけで決まる。散乱界の符号を取り違えると 1.31 に
+#   なるので即座に分かる。L の離散化誤差は比に 0.45 倍で効く。許容 0.5%。
+#   各辺 20 分割は loop_near と同じ理由 (中心までの距離 0.1 m >> セル長)。
+OpenPEEC 1 0
+title = closed square loop shielding a plane wave (plane-wave near field)
+planewave = 90 0 2 1.0
+node = 1 0 0 0
+node = 2 0.2 0 0
+node = 3 0.2 0.2 0
+node = 4 0 0.2 0
+node = 5 0 1e-6 0
+wire = 0 0 0 0.2 0 0 1e-3 5.8e7 20
+wire = 0.2 0 0 0.2 0.2 0 1e-3 5.8e7 20
+wire = 0.2 0.2 0 0 0.2 0 1e-3 5.8e7 20
+wire = 0 0.2 0 0 1e-6 0 1e-3 5.8e7 20
+resistor = 1 5 1e-6
+port = 1 5 50
+nearfield = 0.1 0.1 0  0.1 0.1 0  0 0 0
+frequency = 1e6 1e6 0
+end
