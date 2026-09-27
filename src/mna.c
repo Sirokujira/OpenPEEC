@@ -438,6 +438,39 @@ static d_complex_t pw_emf(const seg_t *s, const double *rh, const double *ev,
 	return d_rmul(amp, d_mul(e0, d_complex(cos(kw * rr), sin(kw * rr))));
 }
 
+/*
+平面波を構成する波 (入射波と、地板があればその反射波) を返す。戻り値は波の数。
+右辺 (mna_rhs_planewave) と近傍界の入射界 (nearfield.c) が同じ規約を使うための
+共通部 : 到来方向・偏波・地板での反射の符号と位相をここ 1 箇所で決める。
+*/
+int pw_waves(const peec_t *p, double kw, pw_wave_t w[2])
+{
+	const double th = p->pwth * PI / 180;
+	const double ph = p->pwph * PI / 180;
+	const double st = sin(th), ct = cos(th), cp = cos(ph), sp = sin(ph);
+	const double rh[3] = {st * cp, st * sp, ct};
+	const double thh[3] = {ct * cp, ct * sp, -st};
+	const double phh[3] = {-sp, cp, 0};
+	for (int c = 0; c < 3; c++) {
+		w[0].rh[c] = rh[c];
+		w[0].ev[c] = (p->pwpol == 2) ? phh[c] : thh[c];
+	}
+	w[0].e0 = d_polar_deg(p->pwamp, p->pwphase);
+	if (!p->gp) return 1;
+
+	// 反射波 (地板) : 到来方向を z 鏡像、偏波の水平成分を反転、
+	// 位相は z = gpz で入射波と一致するようずらす
+	w[1].rh[0] = rh[0];
+	w[1].rh[1] = rh[1];
+	w[1].rh[2] = -rh[2];
+	w[1].ev[0] = -w[0].ev[0];
+	w[1].ev[1] = -w[0].ev[1];
+	w[1].ev[2] = w[0].ev[2];
+	const double psi = 2 * kw * rh[2] * p->gpz;
+	w[1].e0 = d_mul(w[0].e0, d_complex(cos(psi), sin(psi)));
+	return 2;
+}
+
 void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b)
 {
 	const int n = p->nunknown;
@@ -446,29 +479,13 @@ void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b)
 	memset(b, 0, (size_t)n * sizeof(d_complex_t));
 	if (!p->pw) return;
 
-	const double th = p->pwth * PI / 180;
-	const double ph = p->pwph * PI / 180;
-	const double st = sin(th), ct = cos(th), cp = cos(ph), sp = sin(ph);
-	const double rh[3] = {st * cp, st * sp, ct};
-	const double thh[3] = {ct * cp, ct * sp, -st};
-	const double phh[3] = {-sp, cp, 0};
-	double ev[3];
-	for (int c = 0; c < 3; c++) {
-		ev[c] = (p->pwpol == 2) ? phh[c] : thh[c];
-	}
-	const d_complex_t e0 = d_polar_deg(p->pwamp, p->pwphase);
-
-	// 反射波 (地板) : 到来方向を z 鏡像、偏波の水平成分を反転、
-	// 位相は z = gpz で入射波と一致するようずらす
-	const double rh2[3] = {rh[0], rh[1], -rh[2]};
-	const double ev2[3] = {-ev[0], -ev[1], ev[2]};
-	const double psi = 2 * kw * rh[2] * p->gpz;
-	const d_complex_t e0r = d_mul(e0, d_complex(cos(psi), sin(psi)));
+	pw_wave_t w[2];
+	const int nw = pw_waves(p, kw, w);
 
 	for (int k = 0; k < p->nseg; k++) {
-		d_complex_t emf = pw_emf(&p->seg[k], rh, ev, e0, kw);
-		if (p->gp) {
-			emf = d_add(emf, pw_emf(&p->seg[k], rh2, ev2, e0r, kw));
+		d_complex_t emf = pw_emf(&p->seg[k], w[0].rh, w[0].ev, w[0].e0, kw);
+		if (nw > 1) {
+			emf = d_add(emf, pw_emf(&p->seg[k], w[1].rh, w[1].ev, w[1].e0, kw));
 		}
 		b[p->offS + k] = d_rmul(-1, emf);
 	}

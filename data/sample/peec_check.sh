@@ -502,6 +502,82 @@ END {
 	exit ok ? 0 : 1
 }' "$WORK/near.csv" || status=1
 
+# --- 平面波入射の近傍界 (nearpw.csv = 入射界 + 反射界 + 散乱界)
+ETA0=376.730313461770
+# (an) 地板上の定在波 : 散乱体は結合しない向き (e^・t^ = 0) なので入射 + 反射の厳密解
+#        E_y = 2j E0 sin(kz),  H_x = 2 (E0/eta0) cos(kz)
+cp "$SRC/pw_standing.peec" "$WORK/"
+run pw_standing.peec
+chk "pw standing Ey (l/8)" "$(nfcol nearpw.csv 2 8)" 1.41421356237 0.000001
+chk "pw standing Ey (l/4)" "$(nfcol nearpw.csv 3 8)" 2.0 0.000001
+chk "pw standing Hx (z=0)" "$(nfcol nearpw.csv 1 11)" "$(awk -v e="$ETA0" 'BEGIN{printf "%.12e", 2/e}')" 0.000001
+chk "pw standing Hx (l/2)" "$(nfcol nearpw.csv 5 11)" "$(awk -v e="$ETA0" 'BEGIN{printf "%.12e", -2/e}')" 0.000001
+
+# (ao) 閉ループの磁界遮蔽 : 中心で H_tot/H_inc = 1 - j w mu0 G A/(R + j w L)
+#      (ファラデー + Grover の L + Biot-Savart の中心磁界 G = 2 sqrt(2)/(pi s))
+cp "$SRC/loop_shield.peec" "$WORK/"
+run loop_shield.peec
+chk "loop shield |Htot/Hinc|" \
+	"$(awk -F, -v e="$ETA0" 'NR==2 {printf "%.9e", sqrt($15*$15 + $16*$16) * e}' "$WORK/nearpw.csv")" \
+	"$(awk 'BEGIN {
+		pi = 3.14159265358979324; s = 0.2; w = 2*pi*1e6; mu0 = 4*pi*1e-7;
+		g = 2*sqrt(2)/(pi*s); a = w*mu0*g*s*s; b = w*7.24689e-7; r = 4.3906e-3 + 1e-6;
+		d = r*r + b*b; re = 1 - a*b/d; im = -a*r/d;
+		printf "%.9e", sqrt(re*re + im*im)}')" 0.005
+
+# (ap) 補償定理 : ポートを R_L で閉じた系の場 = 開放時の場 - I_L x (ポート 1 A 励振の場)
+#      I_L = Voc/(Zin + R_L)。入射界は打ち消し合い、平面波経路の誘起電流・電荷を
+#      解析解で検証済みのポート経路と突き合わせる (厳密な恒等式)。
+cp "$SRC/dipole_pw_near.peec" "$WORK/"
+run dipole_pw_near.peec
+cp "$WORK/pw.csv" "$WORK/cmp_pw.csv"
+cp "$csv" "$WORK/cmp_zin.csv"
+cp "$WORK/near.csv" "$WORK/cmp_near.csv"
+cp "$WORK/nearpw.csv" "$WORK/cmp_nearpw.csv"
+sed 's/^planewave = .*/&\nresistor = 1 2 50/' "$SRC/dipole_pw_near.peec" > "$WORK/dipole_pw_load.peec"
+run dipole_pw_load.peec
+awk -F, -v RL=50 '
+FILENAME ~ /cmp_pw.csv$/     && FNR == 2 {vr = $3; vi = $4}
+FILENAME ~ /cmp_zin.csv$/    && FNR == 2 {zr = $3 + RL; zi = $4}
+FILENAME ~ /cmp_near.csv$/   && FNR > 1  {for (c = 5; c <= 16; c++) P[FNR, c] = $c}
+FILENAME ~ /cmp_nearpw.csv$/ && FNR > 1  {for (c = 5; c <= 16; c++) W[FNR, c] = $c}
+FILENAME ~ /\/nearpw.csv$/   && FNR > 1  {for (c = 5; c <= 16; c++) B[FNR, c] = $c; nr = FNR}
+END {
+	d = zr*zr + zi*zi; ir = (vr*zr + vi*zi)/d; ii = (vi*zr - vr*zi)/d;
+	for (n = 2; n <= nr; n++) {
+		for (c = 5; c <= 15; c += 2) {
+			er = W[n, c]   - (ir*P[n, c]   - ii*P[n, c+1]);
+			ei = W[n, c+1] - (ir*P[n, c+1] + ii*P[n, c]);
+			dr = B[n, c] - er; di = B[n, c+1] - ei;
+			e = sqrt(dr*dr + di*di); if (e > mx) mx = e;
+			m = sqrt(B[n, c]^2 + B[n, c+1]^2); if (m > mb) mb = m;
+		}
+	}
+	rel = (mb > 0) ? (mx / mb) : 1;
+	ok = (nr == 3) && (rel <= 1e-6);
+	printf "%-24s points=%d max|resid|/max|F|=%.3e -> %s\n",
+		"pw compensation", nr - 1, rel, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/cmp_pw.csv" "$WORK/cmp_zin.csv" "$WORK/cmp_near.csv" "$WORK/cmp_nearpw.csv" "$WORK/nearpw.csv" || status=1
+
+# (aq) 地板上の境界条件 (全界) : 斜め入射の平面波でも入射 + 反射と散乱 + 鏡像が
+#      それぞれ地板面で接線 E と法線 H を打ち消す
+awk '{print} /^title = /{print "planewave = 60 30 1 1.0"}' "$SRC/gp_near.peec" > "$WORK/gp_near_pw.peec"
+run gp_near_pw.peec
+awk -F, 'NR>1 {
+	n++;
+	et = sqrt(($5*$5) + ($6*$6) + ($7*$7) + ($8*$8));
+	hz = sqrt(($15*$15) + ($16*$16));
+	re = ($17 > 0) ? (et / $17) : 1; if (re > mre) mre = re;
+	rh = ($18 > 0) ? (hz / $18) : 1; if (rh > mrh) mrh = rh;
+}
+END {
+	ok = (n == 2) && (mre <= 1e-12) && (mrh <= 1e-12);
+	printf "%-24s points=%d |Etan|/|E|=%.3e |Hz|/|H|=%.3e -> %s\n",
+		"nearpw gp boundary", n, mre, mrh, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/nearpw.csv" || status=1
+
 echo "--- plane wave incidence (external field excitation)"
 # pw.csv の 1 行目 (port#1、単一周波数) から |Voc| と実効長を取り出す
 getVoc() { awk -F, 'NR==2{print $5}' "$WORK/pw.csv"; }
@@ -997,6 +1073,18 @@ if cmp -s "$WORK/near_n1.csv" "$WORK/near.csv"; then
 	printf "%-24s -> OK (-n 1 と -n 4 が完全一致)\n" "near thread invariance"
 else
 	printf "%-24s -> NG (-n 1 と -n 4 が不一致)\n" "near thread invariance" >&2
+	status=1
+fi
+
+# (ar) 平面波の近傍界 (nearpw.csv) も同じくビット一致する
+cp "$SRC/dipole_pw_near.peec" "$WORK/"
+(cd "$WORK" && "$PEEC" -n 1 dipole_pw_near.peec > /dev/null)
+cp "$WORK/nearpw.csv" "$WORK/nearpw_n1.csv"
+(cd "$WORK" && "$PEEC" -n 4 dipole_pw_near.peec > /dev/null)
+if cmp -s "$WORK/nearpw_n1.csv" "$WORK/nearpw.csv"; then
+	printf "%-24s -> OK (-n 1 と -n 4 が完全一致)\n" "nearpw thread invariance"
+else
+	printf "%-24s -> NG (-n 1 と -n 4 が不一致)\n" "nearpw thread invariance" >&2
 	status=1
 fi
 

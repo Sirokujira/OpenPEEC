@@ -1,0 +1,31 @@
+# 検証 (an) : 平面波の近傍界 — 地板上の定在波 (入射波 + 反射波の厳密解)
+#   地板 z = 0 に、真上 (theta = 0) から phi 偏波の平面波を入射する。
+#   到来方向 r^ = z^ (伝搬は -z)、偏波 e^ = phi^(phi = 0) = y^、E0 = 1 V/m。
+#   exp(+jwt) 系で入射波は E = E0 y^ exp(+jkz)、H = -(1/eta0) r^ x E
+#   = (E0/eta0) x^ exp(+jkz)。完全導体面で接線 E が消えるので反射波は
+#   E = -E0 y^ exp(-jkz)、H = (E0/eta0) x^ exp(-jkz)。合計は定在波 :
+#
+#     E_y(z) = 2j E0 sin(kz)          H_x(z) = 2 (E0/eta0) cos(kz)
+#
+#   f = 1.5e8 Hz : lambda = 1.998616387 m、eta0 = 376.7303135 ohm
+#     z = lambda/8 : Im E_y = sqrt(2) = 1.414213562   Re H_x =  sqrt(2)/eta0
+#     z = lambda/4 : Im E_y = 2                       H_x    = 0
+#     z = 0        : E_y    = 0                       Re H_x =  2/eta0 = 5.308837e-3
+#     z = lambda/2 : E_y    = 0                       Re H_x = -2/eta0
+#
+#   PEEC には導体が要るので x 向きの短い線を置くが、E が y 向きなので
+#   起電力 (e^・t^) len ... が厳密に 0 になり、誘起電流も散乱界も 0 になる。
+#   したがって nearpw.csv は入射界 + 反射界そのもので、上の値に丸め誤差で
+#   一致するはず (許容 1e-6)。入射界の組み立て (pw_waves() の反射の符号と
+#   位相、H = -(1/eta0) r^ x E の向き) を単独で判定するケース。
+OpenPEEC 1 0
+title = standing wave above a ground plane (plane-wave near field)
+groundplane = 0
+planewave = 0 0 2 1.0
+node = 1 0 0 1
+node = 2 0.1 0 1
+wire = 0 0 1 0.1 0 1 1e-3 5.8e7 1
+port = 1 2 50
+nearfield = 5 5 0  5 5 0.9993081935  0 0 4
+frequency = 1.5e8 1.5e8 0
+end

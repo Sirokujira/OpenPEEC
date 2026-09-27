@@ -12,7 +12,7 @@
 分割し、体積セル (矩形バー) として厚み方向の電流分布 (表皮効果) を解く。
 ほかに無限 PEC 地板 (`groundplane`、鏡像法)、誘電体ブリック (`dielectric`、
 Ruehli の過剰容量)、遠方界後処理 (`farfield` → `far.csv`)、近傍界後処理
-(`nearfield` → `near.csv`)、平面波入射
+(`nearfield` → `near.csv`、平面波併用時は全界 `nearpw.csv`)、平面波入射
 (`planewave` → `pw.csv`、EMC イミュニティ)、過渡応答 (`transient` →
 `tran.csv`、掃引の逆フーリエ変換)、対数掃引 (`frequency ... log`)。
 いずれもキー省略時は無効 (従来動作と完全一致)。
@@ -70,7 +70,7 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/pe
 | `src/solve.c` | 周波数掃引、Z → S 変換 |
 | `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、`dist.csv` |
 | `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率) |
-| `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv`、E / H の遅延ポテンシャル) |
+| `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv` / 平面波の全界 `nearpw.csv`、E / H の遅延ポテンシャル) |
 | `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
 | `tools/peec2h5.py` | CSV → HDF5 変換 (本体の依存を増やさないための外付け) |
 
@@ -219,8 +219,12 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
     持たない)。電流セルの幅規格化は不変条件 4、電荷のサブセル重みは
     `pot_entry()` と同じ len/carea、鏡像規約は不変条件 8。`retardation = 0`
     では k = 0 (部分要素が静的なのに場だけ遅延させない)。地板面上で接線 E と
-    法線 H が機械精度で 0 になることが鏡像符号の番人。
-    (`near loop Hz` / `near disk Ez` / `near vs far` / `near gp boundary`)
+    法線 H が機械精度で 0 になることが鏡像符号の番人。平面波の全界
+    (`nearpw.csv`) の入射界は右辺と同じ `pw_waves()` (mna.c) から組み、
+    retardation に依らず k = ω/c。平面波の誘起電流・電荷は補償定理で
+    ポート経路と突き合わせる。
+    (`near loop Hz` / `near disk Ez` / `near vs far` / `near gp boundary` /
+    `pw standing` / `loop shield` / `pw compensation` / `nearpw gp boundary`)
 
 ## メモリ
 
@@ -240,7 +244,7 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
 実際に踏んだ)。スレッド数を変えても結果はビット単位で一致する。
 
 - 並列ループ内で共有配列に `+=` しない (`pot_fill` は一時配列に出してから直列で集約)。
-- `peec_check.sh` が `-n 1` と `-n 4` の `zin.csv` / `near.csv` 完全一致を
+- `peec_check.sh` が `-n 1` と `-n 4` の `zin.csv` / `near.csv` / `nearpw.csv` 完全一致を
   判定している。
   リダクションを持つ並列化を足すとここが落ちる。その場合は「一致する」という
   README の主張ごと見直すこと。
@@ -324,7 +328,9 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
   支配的な配置 — 基板・平行平板 — で正確)。`capacitance = 1` 必須。
 - 遠方界 (`farfield`) は port #1 の 1 A 励振に対する値。効率が意味を持つのは
   `retardation = 1` のとき (準静的電流は放射を含まない)。
-- 近傍界 (`nearfield`) も port #1 の 1 A 励振に対する値。観測点はセル寸法
+- 近傍界 (`nearfield`) の `near.csv` は port #1 の 1 A 励振、`nearpw.csv` は
+  平面波入射時の全界 (入射 + 反射 + 散乱)。入射界は `retardation` に依らず
+  k = ω/c で評価する。観測点はセル寸法
   程度以上離すこと (セル上の積分は数点の求積)。`capacitance = 0` では電荷が
   無いので E は −jωA の項だけ、`retardation = 0` では部分要素と揃えて
   静的 (k = 0) に評価する。

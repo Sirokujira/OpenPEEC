@@ -167,6 +167,29 @@ static int z_to_s(peec_t *p, int ifreq, d_complex_t *m, d_complex_t *minv,
 	return 0;
 }
 
+/*
+セル電荷 q[0 .. ncell) を解ベクトル b から取り出す。
+圧縮経路では電荷が未知数そのものなので直接読む。密経路は q = C v
+(v は各セルのノード電位、基準ノードは 0 V)。ポート励振と平面波励振で共通。
+*/
+static void cell_charges(const peec_t *p, int comp, const d_complex_t *b, d_complex_t *q)
+{
+	for (int m = 0; m < p->ncell; m++) {
+		d_complex_t v = d_complex(0, 0);
+		if (comp) {
+			v = b[p->offQ + m];
+		}
+		else {
+			for (int l = 0; l < p->ncell; l++) {
+				const int im = p->nodemap[p->cellid[l]];
+				const d_complex_t vl = (im < 0) ? d_complex(0, 0) : b[im];
+				v = d_add(v, d_mul(p->cmat[(size_t)m * p->ncell + l], vl));
+			}
+		}
+		q[m] = v;
+	}
+}
+
 
 int solve(peec_t *p, FILE *fp_log)
 {
@@ -194,11 +217,15 @@ int solve(peec_t *p, FILE *fp_log)
 	d_complex_t *scol = (d_complex_t *)malloc((size_t)np * sizeof(d_complex_t));
 	int *spiv = (int *)malloc((size_t)np * sizeof(int));
 
-	// 平面波入射 (planewave) : 各ポートの端子電圧と (distribution = 1 なら) 誘起電流
+	// 平面波入射 (planewave) : 各ポートの端子電圧と、分布 (distribution = 1) か
+	// 近傍界 (nearfield) があれば誘起電流。近傍界はさらに誘起電荷も使う。
 	if (p->pw) {
 		p->voc = (d_complex_t *)malloc((size_t)p->nport * p->nfreq * sizeof(d_complex_t));
-		if (p->dist && (p->nseg > 0)) {
+		if ((p->dist || (p->nnf > 0)) && (p->nseg > 0)) {
 			p->segipw = (d_complex_t *)malloc((size_t)p->nfreq * p->nseg * sizeof(d_complex_t));
+		}
+		if ((p->nnf > 0) && p->capacitance && (p->ncell > 0)) {
+			p->cellqpw = (d_complex_t *)malloc((size_t)p->nfreq * p->ncell * sizeof(d_complex_t));
 		}
 	}
 
@@ -342,24 +369,9 @@ int solve(peec_t *p, FILE *fp_log)
 					p->segi[DIDX(p, ifreq, j, m)] = b[p->offS + m];
 				}
 			}
-			// セル電荷。圧縮経路では電荷が未知数そのものなので直接読む。
-			// 密経路は q = C v (v は各セルのノード電位、基準ノードは 0V)
+			// セル電荷 (cell_charges : 圧縮経路は未知数、密経路は q = C v)
 			if (p->cellq != NULL) {
-				for (int m = 0; m < p->ncell; m++) {
-					d_complex_t q;
-					if (comp) {
-						q = b[p->offQ + m];
-					}
-					else {
-						q = d_complex(0, 0);
-						for (int l = 0; l < p->ncell; l++) {
-							const int im = p->nodemap[p->cellid[l]];
-							const d_complex_t v = (im < 0) ? d_complex(0, 0) : b[im];
-							q = d_add(q, d_mul(p->cmat[(size_t)m * p->ncell + l], v));
-						}
-					}
-					p->cellq[QIDX(p, ifreq, j, m)] = q;
-				}
+				cell_charges(p, comp, b, &p->cellq[QIDX(p, ifreq, j, 0)]);
 			}
 		}
 
@@ -387,6 +399,10 @@ int solve(peec_t *p, FILE *fp_log)
 				for (int m = 0; m < p->nseg; m++) {
 					p->segipw[(size_t)ifreq * p->nseg + m] = b[p->offS + m];
 				}
+			}
+			// 誘起電荷 (近傍界の -grad phi 項に使う)
+			if (p->cellqpw != NULL) {
+				cell_charges(p, comp, b, &p->cellqpw[(size_t)ifreq * p->ncell]);
 			}
 		}
 

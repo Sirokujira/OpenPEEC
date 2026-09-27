@@ -27,6 +27,7 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 #define FN_PW "pw.csv"
 #define FN_TRAN "tran.csv"
 #define FN_NEAR "near.csv"
+#define FN_NEARPW "nearpw.csv"
 
 // 数学・物理定数 (自前マクロ : <math.h> の M_PI には依存しない)
 #define PI   (4.0 * atan(1.0))
@@ -246,7 +247,8 @@ typedef struct {
 	// 平面波入射 (planewave) : 各ポートの端子電圧 [V] と誘起電流 [A]
 	// (ポート間に素子が無ければ端子電圧 = 開放端電圧 Voc)
 	d_complex_t *voc;             // [nport * nfreq]
-	d_complex_t *segipw;          // [nfreq * nseg] 誘起区間電流 (distribution = 1)
+	d_complex_t *segipw;          // [nfreq * nseg] 誘起区間電流 (distribution = 1 / nearfield)
+	d_complex_t *cellqpw;         // [nfreq * ncell] 誘起セル電荷 (nearfield + capacitance = 1)
 } peec_t;
 
 // Z / S 行列の添字 (周波数 ifreq、行 i、列 j)
@@ -371,6 +373,13 @@ void mna_apply(const peec_t *p, const mna_sparse_t *sp,
 	const d_complex_t *x, d_complex_t *y, d_complex_t *work);
 void mna_rhs_port(const peec_t *p, int iport, d_complex_t *b);
 void mna_rhs_sources(const peec_t *p, d_complex_t *b);
+// 平面波 (planewave) の 1 波 : E(r) = e0 ev exp(+j k rh・r)、伝搬方向は -rh
+typedef struct {
+	double rh[3];                 // 到来方向 (単位ベクトル)
+	double ev[3];                 // 偏波 (単位ベクトル)
+	d_complex_t e0;               // 複素振幅 [V/m] (原点での値)
+} pw_wave_t;
+int  pw_waves(const peec_t *p, double kw, pw_wave_t w[2]);
 void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b);
 
 // lu.c
@@ -417,7 +426,7 @@ int  output_pw(const peec_t *p, const char *fn, FILE *fp_log);
 int  output_far(const peec_t *p, const char *fn, FILE *fp_log);
 
 // nearfield.c
-int  output_near(const peec_t *p, const char *fn, FILE *fp_log);
+int  output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log);
 
 // transient.c
 int  output_tran(const peec_t *p, const char *fn, FILE *fp_log);
