@@ -107,6 +107,39 @@ cp "$SRC/loop_square.peec" "$WORK/"
 run loop_square.peec
 chk "loop L" "$(getL)" 7.24689e-7 0.02
 
+# --- helix (らせん / 円形ループの生成子 : wire 列への展開)
+# (ar) 円形ループ : L = mu0 R [ln(8R/a) - 2] = 5.886857e-7 H (細線の閉形式、外部 L)。
+#      72 角形は円より僅かに小さい (実測 -0.10%)。許容 0.5%。
+cp "$SRC/loop_circle.peec" "$WORK/"
+run loop_circle.peec
+chk "helix circle L" "$(getL)" "$(awk 'BEGIN {pi = 3.14159265358979324;
+	printf "%.9e", 4e-7*pi * 0.1 * (log(8*0.1/1e-3) - 2)}')" 0.005
+
+# (as) 同軸 2 円ループ : Maxwell の公式 M = mu0 sqrt(R1 R2) [(2/k - k) K(k) - (2/k) E(k)]、
+#      k^2 = 4 R1 R2/((R1+R2)^2 + d^2)。K, E は AGM 反復 (コードと独立)。
+#      Z 行列表の Z21 から Im Z21 = 2 pi f M を読む。許容 0.5%。
+getZ() { awk -v k="$1" -v c="$2" '$0 == k {found = 1; next} found && (++n == 2) {print $(c + 1); exit}' "$log"; }
+cp "$SRC/loops_coaxial.peec" "$WORK/"
+run loops_coaxial.peec
+chk "helix coaxial M (Z21)" "$(getZ Z21 2)" "$(awk 'BEGIN {
+	pi = 3.14159265358979324; mu0 = 4e-7*pi; R1 = 0.1; R2 = 0.05; d = 0.05;
+	k2 = 4*R1*R2/((R1+R2)^2 + d^2); k = sqrt(k2); kp = sqrt(1 - k2);
+	a = 1; b = kp; c = k; s = 0; pw = 0.5;
+	for (i = 0; i < 40; i++) { s += pw*c*c; pw *= 2; an = (a+b)/2; bn = sqrt(a*b); c = (a-b)/2; a = an; b = bn; if (c < 1e-17) break }
+	K = pi/(2*a); E = K*(1 - s);
+	M = mu0*sqrt(R1*R2)*((2/k - k)*K - (2/k)*E);
+	printf "%.9e", 2*pi*1e6*M}')" 0.005
+# 相反性 Z12 = Z21 (別ポート励振の解どうし)
+chk "helix coaxial Z12 = Z21" "$(getZ Z12 2)" "$(getZ Z21 2)" 0.000001
+
+# (at) 左巻き 2.5 巻きらせん : DC 抵抗 = 折れ線長/(sigma pi a^2) (区間は弦)、
+#      終点 (-0.02, 0, -0.0125) を node = で明示して繋ぐ (幾何の座標マージ判定)。
+cp "$SRC/helix_dc.peec" "$WORK/"
+run helix_dc.peec
+chk "helix Rdc (left-handed)" "$(getR)" "$(awk 'BEGIN {pi = 3.14159265358979324;
+	seg = sqrt((2*0.02*sin(pi/24))^2 + (0.0125/60)^2);
+	printf "%.9e", 60*seg/(5.8e7*pi*2.5e-7)}')" 0.000001
+
 echo "--- skin effect"
 # (d) 低周波 : Rin=5.494087e-3 ohm, L_tot=1.370349e-6 H (内部 L -> mu0 l/(8 pi))
 cp "$SRC/wire_skin.peec" "$WORK/"

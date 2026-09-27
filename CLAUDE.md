@@ -6,7 +6,7 @@ OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を�
 集中定数 MNA + 導体形状からの部分要素抽出 (インダクタンス L / 電位係数 P /
 抵抗 R) → 入力インピーダンス Zin(f)。
 導体は丸線 (`wire`) / 角線 (`bar`) / 面導体 (`plate` = 矩形、
-`quad` = 凸四辺形、`disk` = 円板)。ほかに無限 PEC 地板 (`groundplane`、
+`quad` = 凸四辺形、`disk` = 円板)、らせん / 円形ループ (`helix`、直線 `wire` 列に展開)。ほかに無限 PEC 地板 (`groundplane`、
 鏡像法)、誘電体ブリック (`dielectric`、Ruehli の過剰容量)、
 遠方界後処理 (`farfield` → `far.csv`)、近傍界後処理 (`nearfield` →
 `near.csv`、平面波併用時は全界 `nearpw.csv`)、平面波入射 (`planewave` → `pw.csv`、

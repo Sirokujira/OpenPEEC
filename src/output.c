@@ -84,9 +84,35 @@ static void _output_spara(const peec_t *p, FILE *fp)
 	fflush(fp);
 }
 
+// Z 行列の表 (2 ポート以上のとき)。Z[i][j] = ポート j に 1A、他ポート開放での
+// ポート i の電圧。相互インダクタンス M = Im Z21 / omega など、S に戻す手間なく
+// 結合量を読めるようにする (1 ポートは入力インピーダンス表と同じなので出さない)。
+static void _output_zmat(const peec_t *p, FILE *fp)
+{
+	const int np = p->nport;
+
+	fprintf(fp, "=== Z matrix === (port j driven by 1 A, other ports open)\n");
+	for (int i = 0; i < np; i++) {
+	for (int j = 0; j < np; j++) {
+		fprintf(fp, "Z%d%d\n", i + 1, j + 1);
+		fprintf(fp, "  %s\n", "frequency[Hz]      real[ohm]      imag[ohm]");
+		for (int ifreq = 0; ifreq < p->nfreq; ifreq++) {
+			const d_complex_t z = p->zmat[ZIDX(p, ifreq, i, j)];
+			fprintf(fp, "%13.5e%15.6e%15.6e\n", freq_at(p, ifreq), z.r, z.i);
+		}
+	}
+	}
+
+	fflush(fp);
+}
+
 void output_spara(const peec_t *p, FILE *fp_log)
 {
 	if ((p->nport <= 0) || (p->smat == NULL)) return;
+	if ((p->nport >= 2) && (p->zmat != NULL)) {
+		_output_zmat(p, stdout);
+		_output_zmat(p, fp_log);
+	}
 	_output_spara(p, stdout);
 	_output_spara(p, fp_log);
 }
