@@ -1,0 +1,33 @@
+# 検証 (ak) : 近傍界 — 遠方界との相互検証 (半波長ダイポール)
+#   dipole_ff.peec と同一構造 (l = 1 m, f = 1.4376e8 Hz, lambda = 2.08535 m)。
+#   同じ実行で far.csv と near.csv を出し、r = 50 m (= 24 lambda) の近傍界が
+#   遠方界の漸近形に一致することを判定する :
+#
+#     |E(r)| = |rE(theta, phi)| / r
+#
+#   独立な 2 実装の相互検証になる。遠方界 (farfield.c) は放射ベクトル
+#   N = sum I len t^ sinc(...) exp(+j k r^.r_c) を使う漸近形で、近傍界
+#   (nearfield.c) は 1/R, 1/R^2, 1/R^3 の全項を数値求積で足す。
+#   一致するには exp(-jkR) の位相規約、-j omega A と -grad phi の打ち消し
+#   (遠方では横成分だけが 1/R で残る)、幅の規格化がすべて揃っている必要がある。
+#
+#   残差の主因は 1/(kr) の補正項で、横成分では
+#     |1 + 1/(jkr) - 1/(kr)^2| = 1 + O(1/(kr)^2) = 1 + 2.2e-5   (kr = 150.6)
+#   なので振幅は 1e-4 の水準で一致するはず。許容 0.1%。
+#
+#   観測方向 : theta = 90 deg (最大放射) と theta = 45 deg (phi = 0)
+#     (50, 0, 0) と (35.355339, 0, 35.355339)
+OpenPEEC 1 0
+title = half-wave dipole near field vs far field
+capacitance = 1
+retardation = 1
+farfield = 36 24
+node = 1 0 0 -0.0005
+node = 2 0 0 0.0005
+wire = 0 0 -0.5 0 0 -0.0005 1e-3 5.8e7 16
+wire = 0 0 0.0005 0 0 0.5 1e-3 5.8e7 16
+port = 1 2 50
+nearfield = 50 0 0  50 0 0  0 0 0
+nearfield = 35.355339 0 35.355339  35.355339 0 35.355339  0 0 0
+frequency = 1.4376e8 1.4376e8 0
+end

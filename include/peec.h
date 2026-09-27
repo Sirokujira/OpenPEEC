@@ -26,6 +26,7 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 #define FN_FAR "far.csv"
 #define FN_PW "pw.csv"
 #define FN_TRAN "tran.csv"
+#define FN_NEAR "near.csv"
 
 // 数学・物理定数 (自前マクロ : <math.h> の M_PI には依存しない)
 #define PI   (4.0 * atan(1.0))
@@ -81,6 +82,14 @@ typedef struct {
 	double thick, sigma;
 	int    grading;               // 1 = 縁寄せ格子 (wire_build が p->grading を写す)
 } panel_t;
+
+// 近傍界の観測格子 (nearfield = x1 y1 z1 x2 y2 z2 n1 n2 n3)。
+// 角 x1 から角 x2 まで各軸を n 分割した (n1+1)(n2+1)(n3+1) 点。
+// n = 0 の軸は分割せず x1 側の座標に固定する (点 / 線 / 面 / 体を 1 行で書ける)。
+typedef struct {
+	double p1[3], p2[3];
+	int    n[3];
+} nf_t;
 
 // 平面矩形導体 : o + s*ea + t*eb (s, t は 0..1)
 // ndivt >= 2 で厚み方向にも分割し、セルを体積バー (Hoer-Love) として扱う。
@@ -210,6 +219,8 @@ typedef struct {
 	int    gp;                    // groundplane = z : 無限 PEC 地板 (鏡像法)
 	double gpz;                   // 地板の z 座標 (gp = 1 のとき有効)
 	int    ffnth, ffnph;          // farfield = 分割数theta 分割数phi (0 = 無効)
+	int    nnf;                   // nearfield = ... の行数 (0 = 無効)
+	nf_t   *nf;                   // [nnf] 観測格子
 	int    pw;                    // planewave : 平面波入射 (外部界励振)
 	double pwth, pwph;            // 平面波の到来方向 (theta, phi) [deg]
 	int    pwpol;                 // 偏波 : 1 = theta 偏波、2 = phi 偏波
@@ -275,6 +286,9 @@ int    bar_use_hl(const seg_t *s1, const seg_t *s2);
 double bar_pair(const seg_t *s1, const seg_t *s2);
 
 // polygon.c
+// セルの求積点列の最大数 (POLY_MAX 三角形 x 4 分割 x 7 点)
+#define POLY_NQMAX (POLY_MAX * 4 * 7)
+int  cell_qpts(const seg_t *s, int nsub, int n7, double *px, double *wt);
 double poly_area(const seg_t *s);
 double poly_potential(const seg_t *s, const double *pt);
 double poly_static(const seg_t *s1, const seg_t *s2, int nsub, int n7);
@@ -401,6 +415,9 @@ int  output_pw(const peec_t *p, const char *fn, FILE *fp_log);
 
 // farfield.c
 int  output_far(const peec_t *p, const char *fn, FILE *fp_log);
+
+// nearfield.c
+int  output_near(const peec_t *p, const char *fn, FILE *fp_log);
 
 // transient.c
 int  output_tran(const peec_t *p, const char *fn, FILE *fp_log);

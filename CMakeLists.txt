@@ -41,6 +41,7 @@ add_executable(peec
     src/solve.c
     src/output.c
     src/farfield.c
+    src/nearfield.c
     src/transient.c
     src/hmatrix.c
     src/precond.c

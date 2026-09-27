@@ -203,12 +203,13 @@ int solve(peec_t *p, FILE *fp_log)
 	}
 
 	// 電流・電荷分布 (distribution = 1)。ポートごとに保持する (多ポートの
-	// クロストーク解析用)。遠方界 (farfield) は port #1 の列だけを使う。
-	if ((p->dist || (p->ffnth > 0)) && (p->nseg > 0)) {
+	// クロストーク解析用)。遠方界 (farfield) と近傍界 (nearfield) は
+	// port #1 の列だけを使う。
+	if ((p->dist || (p->ffnth > 0) || (p->nnf > 0)) && (p->nseg > 0)) {
 		p->segi = (d_complex_t *)malloc(
 			(size_t)p->nfreq * p->nport * p->nseg * sizeof(d_complex_t));
 	}
-	if (p->dist && p->capacitance && (p->ncell > 0)) {
+	if ((p->dist || (p->nnf > 0)) && p->capacitance && (p->ncell > 0)) {
 		p->cellq = (d_complex_t *)malloc(
 			(size_t)p->nfreq * p->nport * p->ncell * sizeof(d_complex_t));
 	}
