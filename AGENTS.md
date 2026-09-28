@@ -31,7 +31,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、107 件)
+# 検証 (解析解・文献値との比較、143 判定)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -42,8 +42,9 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 107 件すべて OK でなければ
-完了ではない。「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
+**変更したら必ず `peec_check.sh` を通すこと。** 143 判定すべて OK (h5py が
+無い環境の `peec2h5 converter` だけは SKIP) でなければ完了ではない。
+「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
 計測時の注意 : ソルバーが失敗すると `zin.csv` / `peec.log` は**前回の実行結果が
 残る**。自前で値を読むときは先に `grep "normal end" peec.log` を確認すること
@@ -160,11 +161,13 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
    枝は Z = 1/Y (mna.c が `seg->diel` を見る。skin は適用しない)。
    εr = 1 のブリックは**セルを作らない** (作ると 1/(jω·0) で NaN。
    スキップすれば真空と bit 一致)。tanδ = 0 なら Z = −j/(ωC_e) で従来と一致。
-   周波数分散 (多極 Debye、npole > 0) も同じ原則で、`zint_diel()` (mna.c) が
-   周波数ごとの εr*(f) から過剰分だけを組む。定数 tanδ と Debye の併用は
-   損失の二重計上なので入力検証で拒否する。
+   周波数分散 (多極 Debye / Lorentz、npole > 0) も同じ原則で、`zint_diel()`
+   (mna.c) が周波数ごとの εr*(f) から過剰分だけを組む。定数 tanδ と分散の
+   併用は損失の二重計上なので入力検証で拒否する。Lorentz 極
+   Δε f0²/(f0²−f²+jfg) は分母の虚部が +jfg (e^{jωt} 規約で因果的・損失側)。
    (`dielectric dC (pp)` / `dielectric epsr=1 noop` / `dielectric G (tand)` /
-   `dielectric tand=0 noop` / `debye dY (3 freqs)`)
+   `dielectric tand=0 noop` / `debye dY (3 freqs)` / `lorentz dY (5 freqs)` /
+   `lorentz+debye dY`)
 10. **遠方界の規格化とポインティング整合** — r E = −j(ωμ0/4π)[N − (N·r̂)r̂]、
     U = |rE|²/(2η0)。係数を触るとパターン (D) は変わらず**効率だけが静かに
     狂う**ため、Prad = ∮U dΩ が Pin = Re(Zin)/2 と一致することが番人になる。
@@ -316,9 +319,10 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
 - 電流は区間ごと一定、電荷はセルごと一定の低次基底。共振近傍の精度は分割数依存。
 - 地板 (`groundplane`) は z = 一定の無限 PEC 面 1 枚のみ。積分回数は 2 倍に
   なるが未知数は増えない。導体は z ≥ 地板に置く (下はエラー)。
-- 誘電体 (`dielectric`) は直交直方体のみ。損失は一定 tanδ または多極 Debye
-  分散 epsr*(f) = eps_inf + (eps_s - eps_inf)/(1 + j f/f_relax) のどちらか
-  (併用は損失の二重計上なので入力検証で拒否)。Lorentz (共振型) は未対応。
+- 誘電体 (`dielectric`) は直交直方体のみ。損失は一定 tanδ または多極分散
+  (Debye 極 `f de` と Lorentz 極 `lorentz f0 de g` の任意の組合せ) の
+  どちらか (併用は損失の二重計上なので入力検証で拒否)。直流極限が有限で
+  ない模型 (Drude) は未対応。
 - 面格子の縁寄せは `grading = 1` (plate/quad 余弦・disk 正弦)。plate の
   メッシュ生成は非一様間隔対応 : 幅・中心・電荷セルは格子座標配列の
   隣接中点 (双対区間) から導く。等間隔時の式は従来と同一で省略時は
