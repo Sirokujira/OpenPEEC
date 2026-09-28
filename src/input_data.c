@@ -35,6 +35,93 @@ static void updatemax(peec_t *p, int id)
 	if (id > p->maxid) p->maxid = id;
 }
 
+/*
+らせん (helix) を直線の wire 列に展開する。
+
+  軸    : c を通り単位ベクトル ax の向き
+  中心  : c を始点 s の回転面へ射影した c' = c + ((s - c)・ax) ax
+  半径  : R = |s - c'|  (始点は軸上にあってはならない)
+  基底  : e1 = (s - c')/R、e2 = ax x e1  (e1 -> e2 が +ax に対して右ねじ)
+  点 k  : c' + R (cos th_k e1 + sin th_k e2) + (pitch turns k/n) ax、
+          th_k = 2 pi turns k/n、k = 0 .. n、n = ceil(分割数 x 巻数)
+
+始点・終点に id が付いていれば node = と同じ束縛座標として登録する
+(座標は展開に使ったものそのものなので nodetol マージが必ず成立する)。
+*/
+static int helix_expand(peec_t *p, helix_t *h, double a, double sigma, int ndiv,
+	int *cwire, int *cnode)
+{
+	double na = sqrt((h->ax[0] * h->ax[0]) + (h->ax[1] * h->ax[1]) + (h->ax[2] * h->ax[2]));
+	if (na <= 0) return 1;
+	for (int k = 0; k < 3; k++) h->ax[k] /= na;
+
+	double d[3], e1[3], e2[3];
+	double dp = 0;
+	for (int k = 0; k < 3; k++) {
+		d[k] = h->s[k] - h->c[k];
+		dp += d[k] * h->ax[k];
+	}
+	for (int k = 0; k < 3; k++) {
+		h->c[k] += dp * h->ax[k];          // 始点の回転面へ射影
+		e1[k] = d[k] - (dp * h->ax[k]);
+	}
+	h->radius = sqrt((e1[0] * e1[0]) + (e1[1] * e1[1]) + (e1[2] * e1[2]));
+	if (h->radius <= 0) return 1;
+	for (int k = 0; k < 3; k++) e1[k] /= h->radius;
+	e2[0] = (h->ax[1] * e1[2]) - (h->ax[2] * e1[1]);
+	e2[1] = (h->ax[2] * e1[0]) - (h->ax[0] * e1[2]);
+	e2[2] = (h->ax[0] * e1[1]) - (h->ax[1] * e1[0]);
+
+	const double nseg = ceil((ndiv * h->turns) - 1e-9);
+	h->nseg = (nseg < 1) ? 1 : (int)nseg;
+	h->iwire = p->nwire;
+	h->len = 0;
+
+	double prev[3];
+	for (int k = 0; k < 3; k++) prev[k] = h->s[k];
+	for (int i = 1; i <= h->nseg; i++) {
+		const double t = (double)i / h->nseg;
+		const double th = 2 * PI * h->turns * t;
+		const double z = h->pitch * h->turns * t;
+		double pt[3];
+		for (int k = 0; k < 3; k++) {
+			pt[k] = h->c[k] + (h->radius * ((cos(th) * e1[k]) + (sin(th) * e2[k])))
+			      + (z * h->ax[k]);
+		}
+		APPEND(p->wire, p->nwire, *cwire, wire_t);
+		wire_t *w = &p->wire[p->nwire];
+		memset(w, 0, sizeof(wire_t));
+		for (int k = 0; k < 3; k++) {
+			w->x1[k] = prev[k];
+			w->x2[k] = pt[k];
+		}
+		w->shape = SHAPE_ROUND;
+		w->radius = a;
+		w->sigma = sigma;
+		w->ndiv = 1;
+		h->len += sqrt(((pt[0] - prev[0]) * (pt[0] - prev[0]))
+		             + ((pt[1] - prev[1]) * (pt[1] - prev[1]))
+		             + ((pt[2] - prev[2]) * (pt[2] - prev[2])));
+		p->nwire++;
+		for (int k = 0; k < 3; k++) prev[k] = pt[k];
+	}
+	for (int k = 0; k < 3; k++) h->e[k] = prev[k];
+
+	// 端点のノード id (node = と同じ束縛座標として登録)
+	for (int end = 0; end < 2; end++) {
+		const int id = end ? h->nend : h->nstart;
+		const double *x = end ? h->e : h->s;
+		if (id < 0) continue;
+		APPEND(p->ncid, p->nnodexyz, *cnode, int);
+		p->ncxyz = (double *)realloc(p->ncxyz, (size_t)(*cnode) * 3 * sizeof(double));
+		p->ncid[p->nnodexyz] = id;
+		for (int k = 0; k < 3; k++) p->ncxyz[3 * p->nnodexyz + k] = x[k];
+		updatemax(p, id);
+		p->nnodexyz++;
+	}
+	return 0;
+}
+
 int input_data(FILE *fp, peec_t *p)
 {
 	int    nline = 0;
@@ -43,7 +130,7 @@ int input_data(FILE *fp, peec_t *p)
 	const char sep[] = " \t";
 	const char errfmt2[] = "*** invalid %s data\n";
 	int    cres = 0, ccap = 0, cind = 0, cmut = 0, csrc = 0, cport = 0, cwire = 0, cnode = 0;
-	int    cplate = 0, cpanel = 0, cdiel = 0, cnf = 0;
+	int    cplate = 0, cpanel = 0, cdiel = 0, cnf = 0, chelix = 0;
 
 	// initialize (既定値 : キー省略時は従来動作)
 	memset(p, 0, sizeof(peec_t));
@@ -247,6 +334,38 @@ int input_data(FILE *fp, peec_t *p)
 			}
 			if (err) {
 				printf(errfmt2, strkey);
+				return 1;
+			}
+		}
+		else if (!strcmp(strkey, "helix")) {
+			// helix = cx cy cz ax ay az sx sy sz ピッチ 巻数 半径 導電率 分割数 [n1 n2]
+			//   c : 軸上の点、ax : 軸方向、s : 始点 (導体上、コイル半径は s と軸の距離)
+			//   ピッチ : 1 周あたりの軸方向の進み (負 = 左巻き、0 = 平面ループ)
+			//   分割数 : 1 周あたりの区間数 (巻数が小数なら ceil(分割数 x 巻数) 区間)
+			//   n1 n2 : 始点・終点に付けるノード id (省略可)
+			if (ntoken < 16) err = 1;
+			else {
+				APPEND(p->helix, p->nhelix, chelix, helix_t);
+				helix_t *h = &p->helix[p->nhelix];
+				memset(h, 0, sizeof(helix_t));
+				for (int k = 0; k < 3; k++) {
+					h->c[k] = atof(token[2 + k]);
+					h->ax[k] = atof(token[5 + k]);
+					h->s[k] = atof(token[8 + k]);
+				}
+				h->pitch = atof(token[11]);
+				h->turns = atof(token[12]);
+				const double a = atof(token[13]);
+				const double sigma = atof(token[14]);
+				const int ndiv = atoi(token[15]);
+				h->nstart = (ntoken >= 17) ? nodeid(token[16], &err) : -1;
+				h->nend = (ntoken >= 18) ? nodeid(token[17], &err) : -1;
+				if ((h->turns <= 0) || (a <= 0) || (sigma < 0) || (ndiv < 1)) err = 1;
+				if (!err) err = helix_expand(p, h, a, sigma, ndiv, &cwire, &cnode);
+				if (!err) p->nhelix++;
+			}
+			if (err) {
+				printf(errfmt2, "helix");
 				return 1;
 			}
 		}
@@ -687,6 +806,7 @@ void peec_free(peec_t *p)
 	free(p->src);
 	free(p->port);
 	free(p->wire);
+	free(p->helix);
 	free(p->ncid);
 	free(p->ncxyz);
 	free(p->nf);

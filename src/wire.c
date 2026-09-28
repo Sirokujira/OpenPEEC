@@ -415,6 +415,18 @@ int wire_build(peec_t *p, FILE *fp_log)
 
 	int autoid = p->maxid;
 
+	// らせん (helix) の記録 : 終点座標は node = で繋ぐときに要るので全桁出す
+	for (int i = 0; i < p->nhelix; i++) {
+		const helix_t *h = &p->helix[i];
+		fprintf(fp_log, "helix #%d : R = %.6g m, pitch = %.6g m, turns = %g, %d segments (wire #%d-#%d), length = %.9g m\n",
+			i + 1, h->radius, h->pitch, h->turns, h->nseg, h->iwire + 1, h->iwire + h->nseg, h->len);
+		fprintf(fp_log, "  start = (%.16g, %.16g, %.16g)", h->s[0], h->s[1], h->s[2]);
+		if (h->nstart >= 0) fprintf(fp_log, " node %d", h->nstart);
+		fprintf(fp_log, "\n  end   = (%.16g, %.16g, %.16g)", h->e[0], h->e[1], h->e[2]);
+		if (h->nend >= 0) fprintf(fp_log, " node %d", h->nend);
+		fprintf(fp_log, "\n");
+	}
+
 	// ── 線導体 (wire / bar) ──────────────────────────────────────
 	for (int i = 0; i < p->nwire; i++) {
 		const wire_t *w = &p->wire[i];

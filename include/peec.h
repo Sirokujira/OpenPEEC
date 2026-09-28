@@ -84,6 +84,22 @@ typedef struct {
 	int    grading;               // 1 = 縁寄せ格子 (wire_build が p->grading を写す)
 } panel_t;
 
+// らせん / 円形ループ (helix = cx cy cz ax ay az sx sy sz ピッチ 巻数 半径 導電率 分割数 [n1 n2])
+// 直線の wire 列に展開する生成子。幾何段以降は wire と区別しないので、ここには
+// ログ用の記録だけを残す。始点 s から軸 (c を通り ax 方向) の周りを +ax に対して
+// 右ねじ (反時計回り) に回り、1 周ごとに pitch だけ +ax 方向へ進む
+// (pitch < 0 = 左巻き、0 = 平面ループ)。コイル半径は s と軸の距離。
+typedef struct {
+	double c[3];                  // 軸上の点 (始点の回転面へ射影して中心にする)
+	double ax[3];                 // 軸方向 (単位ベクトル)
+	double s[3], e[3];            // 始点・終点 (導体上)
+	double pitch, turns, radius;
+	double len;                   // 折れ線の全長 [m]
+	int    nseg;                  // 区間数 (= ceil(分割数 x 巻数))
+	int    iwire;                 // 展開した wire の先頭索引 (p->wire)
+	int    nstart, nend;          // 端点に付けたノード id (-1 = 無し)
+} helix_t;
+
 // 近傍界の観測格子 (nearfield = x1 y1 z1 x2 y2 z2 n1 n2 n3)。
 // 角 x1 から角 x2 まで各軸を n 分割した (n1+1)(n2+1)(n3+1) 点。
 // n = 0 の軸は分割せず x1 側の座標に固定する (点 / 線 / 面 / 体を 1 行で書ける)。
@@ -158,6 +174,8 @@ typedef struct {
 
 	// ネットリスト
 	int    nres, ncap, nind, nmut, nsrc, nport, nwire, nplate, npanel, ndiel, nnodexyz;
+	int    nhelix;
+	helix_t *helix;               // [nhelix] らせんの記録 (wire 列は p->wire に展開済み)
 	plate_t *plate;
 	panel_t *panel;
 	diel_t *diel;
