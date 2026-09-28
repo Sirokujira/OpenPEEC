@@ -90,7 +90,7 @@ static void diel_seg(peec_t *p, const double *x1, const double *x2, int n1, int 
 	s->sigma = 0;
 	s->res = 0;
 	// 複素比誘電率 epsr* の過剰分 (epsr* - 1) を枝に載せる。
-	// 非分散は事前計算 (cexc / gexc)、Debye 分散 (dl->npole > 0) は mna.c が
+	// 非分散は事前計算 (cexc / gexc)、分散 (dl->npole > 0 : Debye / Lorentz) は mna.c が
 	// 幾何係数 gfac と材料の極から周波数ごとに Y を組む。極はセルではなく
 	// 材料が持つので、セルは索引だけ覚える (セル数に比例して増やさない)。
 	s->cexc = EPS0 * (dl->epsr - 1) * s->area / s->len;
@@ -919,6 +919,24 @@ int wire_build(peec_t *p, FILE *fp_log)
 
 	fprintf(fp_log, "geometry : %d wires + %d plates + %d panels + %d dielectric bricks -> %d cells, %d charge cells, %d nodes\n",
 		p->nwire, p->nplate, p->npanel, p->ndiel, p->nseg, p->nchg, p->ngnode);
+
+	// 分散のある誘電体は極の一覧を残す (Debye / Lorentz の書き分けの確認用)
+	for (int idl = 0; idl < p->ndiel; idl++) {
+		const diel_t *dl = &p->diel[idl];
+		if (dl->npole == 0) continue;
+		fprintf(fp_log, "dielectric #%d : epsr = %g, eps_inf = %g, %d poles\n",
+			idl + 1, dl->epsr, dl->epsinf, dl->npole);
+		for (int k = 0; k < dl->npole; k++) {
+			if (dl->plor[k]) {
+				fprintf(fp_log, "  pole %d : Lorentz f0 = %g Hz, de = %g, g = %g Hz (Q = %g)\n",
+					k + 1, dl->pf[k], dl->pde[k], dl->pg[k], dl->pf[k] / dl->pg[k]);
+			}
+			else {
+				fprintf(fp_log, "  pole %d : Debye   fr = %g Hz, de = %g\n",
+					k + 1, dl->pf[k], dl->pde[k]);
+			}
+		}
+	}
 
 	return 0;
 }

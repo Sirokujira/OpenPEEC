@@ -1,0 +1,36 @@
+# 検証 (at) : 誘電体の周波数分散 — Debye 極と Lorentz 極の混在
+#   diel_lorentz.peec と同じ平行平板 (40 x 40 mm、gap d = 0.4 mm) を、
+#   Lorentz 極 1 個 + Debye 極 1 個の誘電体で満たす :
+#     epsr*(f) = eps_inf + de_L f0^2/(f0^2 - f^2 + j f g) + de_D/(1 + j f/f_D)
+#     eps_inf = 2
+#     Lorentz : f0 = 100 kHz、de_L = 2、g = 50 kHz (Q = 2)
+#     Debye   : f_D = 1 kHz、de_D = 1
+#   直流極限は eps_inf + de_L + de_D = 5 = epsr (パーサが一致を要求)。
+#   入力では Lorentz 極を先に、Debye 極を後に書いている (極の並びは
+#   種類を問わず任意の順で書ける : パーサの逐次読みの番人)。
+#
+#   平行平板は等電位面なので、空気ケースとのアドミタンス差は格子に依らず
+#     dY(f) = j w eps0 (epsr*(f) - 1) A/d
+#   になる。掃引は 100 Hz .. 1 MHz の 4 分割対数 = {1e2, 1e3, 1e4, 1e5, 1e6}
+#   で、Debye の緩和と Lorentz の共振がちょうど格子点に乗る :
+#     f = 1e2 : ~4.990 - j0.100  (両極とも静的側)
+#     f = 1e3 :  4.500 - j0.510  (Debye の緩和周波数)
+#     f = 1e4 :  4.025 - j0.201  (Debye は緩和済み、Lorentz は静的側)
+#     f = 1e5 :  2.000 - j4.010  (Lorentz の共振 : 実部は eps_inf + Debye の残り)
+#     f = 1e6 : ~1.980 - j0.002  (両極とも光学側 : 共振の上で epsr' < eps_inf)
+#   の 5 点 x (G, B) = 10 値を解析式と比較する。期待値は極の解析式の和
+#   そのもので、コードの出力を使わない。判定は最大相対誤差 2e-3
+#   (多極 Debye ケースと同じ)。実測は上端の G が ~4e-4 で最大 : 損失が
+#   0.002 しか無いので w^2 LC の準静的補正が相対的に効く (掃引を 1 桁
+#   上げると 4e-3 になって判定を超えるので、この帯域に置いている)。
+OpenPEEC 1 0
+title = parallel plates with Lorentz + Debye dielectric (einf=2, L 2@100kHz g=50kHz, D 1@1kHz)
+capacitance = 1
+plate = 0 0 0      0.04 0 0  0 0.04 0  1e-5 5.8e7 8 8
+plate = 0 0 0.0004 0.04 0 0  0 0.04 0  1e-5 5.8e7 8 8
+dielectric = 0 0 0  0.04 0 0  0 0.04 0  0.0004 5 8 8 2 0 2 lorentz 1e5 2 5e4 1e3 1
+node = 1 0.02 0.02 0
+node = 2 0.02 0.02 0.0004
+port = 2 1 50
+frequency = 1e2 1e6 4 log
+end
