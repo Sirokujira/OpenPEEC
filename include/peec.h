@@ -35,7 +35,7 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 #define MU0  (4.0 * PI * 1e-7)
 #define EPS0 (1.0 / (C0 * C0 * MU0))
 
-// 誘電体 1 種あたりの Debye 極の上限 (広帯域の実測フィットでも数極で足りる)
+// 誘電体 1 種あたりの分散極 (Debye + Lorentz) の上限 (広帯域の実測フィットでも数極で足りる)
 #define DIEL_MAXPOLE 8
 #define EPS  (1e-12)
 
@@ -126,13 +126,18 @@ typedef struct {
 typedef struct {
 	double org[3], ea[3], eb[3];
 	double thick, epsr, tand;
-	// 多極 Debye : epsr*(f) = eps_inf + sum_k de[k]/(1 + j f/pf[k])
-	// npole = 0 で分散なし。npole = 1 は従来の単極と完全に同じ式になる。
-	// 直流極限は eps_inf + sum de[k] = epsr (パーサが一致を要求する)。
+	// 多極分散 : epsr*(f) = eps_inf + sum_k chi_k(f)
+	//   Debye 極   : chi_k = de[k]/(1 + j f/pf[k])
+	//   Lorentz 極 : chi_k = de[k] pf[k]^2/(pf[k]^2 - f^2 + j f pg[k])
+	// npole = 0 で分散なし。Debye 1 極は従来の単極と完全に同じ式になる。
+	// どちらの極も f -> 0 で de[k] に戻るので、直流極限は
+	// eps_inf + sum de[k] = epsr (パーサが一致を要求する)。
 	double epsinf;
 	int    npole;
-	double pf[DIEL_MAXPOLE];      // 緩和周波数 f_k [Hz] (> 0)
+	double pf[DIEL_MAXPOLE];      // Debye : 緩和周波数 / Lorentz : 共振周波数 [Hz] (> 0)
 	double pde[DIEL_MAXPOLE];     // 強度 de_k (> 0)
+	double pg[DIEL_MAXPOLE];      // Lorentz の減衰幅 g_k [Hz] (> 0)。Debye 極では 0
+	int    plor[DIEL_MAXPOLE];    // 1 = Lorentz 極、0 = Debye 極
 	int    ndiva, ndivb, ndivt;
 } diel_t;
 
@@ -161,7 +166,7 @@ typedef struct {
 	//   Y = jw eps0 (epsr*(f) - 1) A/len  ->  Z = 1/Y
 	// 非分散 (極が無い) : epsr* = epsr (1 - j tand) は周波数に依らないので
 	// 事前計算した cexc / gexc を使う (Y = w (gexc + j cexc))。
-	// 分散 (極がある)   : 多極 Debye は材料 (diel_t) 側が持つので、セルは
+	// 分散 (極がある)   : 多極 Debye / Lorentz は材料 (diel_t) 側が持つので、セルは
 	//   その索引 didx だけ持つ。mna.c が周波数ごとに gfac から Y を組む。
 	double cexc;                  // eps0 (epsr - 1) area / len       [F]
 	double gexc;                  // eps0 epsr tand area / len        [F] (損失側)

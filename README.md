@@ -141,7 +141,8 @@ same portability rules, no external numerical libraries.
   ノードは `nodetol` マージで導体ノードと共有されます (経路が閉じる)。
   枝は Lp にも参加するのでフルウェーブでも整合します。`capacitance = 1`
   が必須です。平行平板間の ΔC = (εr−1)ε0A/d が格子に依らず厳密に
-  再現されます (検証で実測残差 ~1e-6)。
+  再現されます (検証で実測残差 ~1e-6)。損失は一定 tanδ か、周波数分散
+  (Debye 緩和極と Lorentz 共振極の任意の組合せ) で指定します。
 
 ### 制限 / Limitations
 
@@ -190,9 +191,12 @@ same portability rules, no external numerical libraries.
   共振があるときは分割数を増やして Δf を小さくしてください。帯域端の
   打ち切りによる残留リンギングは減衰 [dB] を上げると減ります。
 - 誘電体 (`dielectric`) は直交直方体のみです。損失は一定 tanδ または
-  多極 Debye 分散 εr\*(f) = ε∞ + Σ_k Δε_k/(1+jf/f_k) (因果的、KK 整合)
+  多極分散 (Debye 極 Δε_k/(1+jf/f_k) と Lorentz 極
+  Δε_k f_k²/(f_k²−f²+jf g_k) の任意の組合せ。どちらも因果的で KK 整合)
   のどちらかで指定します (併用は損失の二重計上になるため拒否されます)。
-  Lorentz (共振型) などの高次モデルは未対応です。節点の束縛電荷は a–b 面内の双対矩形パネルで表すため、
+  Drude (自由電子、直流で発散) のように直流極限が有限でない模型は
+  未対応です (直流極限 ε∞ + ΣΔε_k = εr の一致を要求しているため)。
+  節点の束縛電荷は a–b 面内の双対矩形パネルで表すため、
   側面の束縛電荷は面直位置がセル幅の範囲で近似になります (表面電荷が
   a–b 面に支配的な配置 — 基板・平行平板など — で正確)。
 - 既定では行列は密です。計算量は電流セル数 N と電荷セル数 M に対して
@@ -208,7 +212,7 @@ same portability rules, no external numerical libraries.
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値と比較、100 件。許容は判定ごとに 1e-12 〜 3%)
+# 検証 (解析解・文献値と比較、143 判定。許容は判定ごとに 1e-12 〜 3%)
 # 実行ファイルは相対パスでもよい (スクリプトが絶対パスに直す)
 sh data/sample/peec_check.sh bin/peec /tmp/peec-check
 
@@ -345,7 +349,7 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `plate` | `plate = ox oy oz ax ay az bx by bz 厚さ 導電率 分割数a 分割数b [分割数t]` | 平面矩形の面導体 (2 辺ベクトルは直交)。`分割数t` (省略時 1) ≥ 2 で厚み方向も分割 (体積セル) |
 | `quad` | `quad = x1 y1 z1 x2 y2 z2 x3 y3 z3 x4 y4 z4 厚さ 導電率 分割数a 分割数b` | 凸な一般四辺形の面導体 (頂点は一周順)。分割 a は辺 1-2 方向、b は辺 1-4 方向 |
 | `disk` | `disk = cx cy cz nx ny nz 半径 厚さ 導電率 nring nsec` | 円板の面導体 (中心 c、法線 n)。nsec ≤ 32 |
-| `dielectric` | `dielectric = ox oy oz ax ay az bx by bz 厚さ εr 分割数a 分割数b 分割数t [tanδ [ε∞ 分散]]` | 誘電体ブリック (過剰容量)。org を底面として法線 (a×b) 方向へ厚さぶん押し出した直方体。`capacitance = 1` 必須。εr = 1 は無効果。tanδ (省略時 0) で誘電損 εr\* = εr(1−j tanδ)。ε∞ の後ろに分散を書くと Debye 分散 εr\*(f) = ε∞ + Σ_k Δε_k/(1+jf/f_k) (このとき tanδ = 0 を書く)。書き方は残り語数で決まり、**1 語**なら `f_r` の単極 (強度は εr−ε∞)、**偶数語**なら `f_1 Δε_1 f_2 Δε_2 …` の多極 (極は 8 個まで)。多極は直流極限 ε∞ + ΣΔε_k = εr の一致が必要 |
+| `dielectric` | `dielectric = ox oy oz ax ay az bx by bz 厚さ εr 分割数a 分割数b 分割数t [tanδ [ε∞ 分散]]` | 誘電体ブリック (過剰容量)。org を底面として法線 (a×b) 方向へ厚さぶん押し出した直方体。`capacitance = 1` 必須。εr = 1 は無効果。tanδ (省略時 0) で誘電損 εr\* = εr(1−j tanδ)。ε∞ の後ろに分散を書くと多極分散 εr\*(f) = ε∞ + Σ_k χ_k(f) (このとき tanδ = 0 を書く)。**1 語**なら `f_r` の単極 Debye (強度は εr−ε∞)。それ以外は極の並びで、Debye 極 `f_k Δε_k` (χ = Δε_k/(1+jf/f_k)) と Lorentz 極 `lorentz f_k Δε_k g_k` (共振周波数 f_k・減衰幅 g_k [Hz] > 0 : χ = Δε_k f_k²/(f_k²−f²+jf g_k)) を任意の順・組合せで書ける (極は合わせて 8 個まで)。多極は直流極限 ε∞ + ΣΔε_k = εr の一致が必要 |
 | `grading` | `grading = 1` | 面格子の縁寄せ (plate/quad 余弦、disk 正弦)。省略時 0 = 等間隔 |
 | `port` | `port = n1 n2 Z0` | ポート (Zin / S パラメータの基準抵抗 Z0 [Ω])。複数書くと多ポート解析になる |
 | `frequency` | `frequency = f開始 f終了 分割数 [log]` | 周波数掃引 (分割数+1 点)。`log` で等比 (対数) 掃引、省略時は線形 |
@@ -459,6 +463,9 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `diel_debye.peec` Debye 分散 (単極) | 空気とのアドミタンス差 ΔY(f) = jωε₀(εr\*(f)−1)A/d を f_r/100・f_r・100f_r の 3 点 × (G, B) で解析式と比較 (実測 ≤5e-4) | 2e-3 |
 | `diel_debye2.peec` Debye 分散 (多極) | 2 極 (Δε=1@10kHz, Δε=3@1MHz) で 5 点 × (G, B) を解析式と比較。単極では作れない「2 段の緩和」を通る (実測 1.3e-4) | 2e-3 |
 | `diel_debye.peec` 極の分割不変性 | 同一周波数の極への分割 (Δε → Δε_a + Δε_b) は恒等式なので結果が完全一致 | 完全一致 |
+| `diel_lorentz.peec` Lorentz 分散 | 1 極 (Δε=2@f0=1MHz, g=200kHz, Q=5) で共振をまたぐ 0.8〜1.2 MHz の 5 点 × (G, B) を ΔY の解析式と比較。共振の上で εr′ < 0 (枝が誘導性) になる 2 点を含む (実測 3.5e-5) | 2e-3 |
+| `diel_lorentz2.peec` Lorentz + Debye 混在 | Lorentz (2@100kHz, g=50kHz) を先、Debye (1@1kHz) を後に書いた 2 極で 5 点 × (G, B) を極の和の解析式と比較 (実測 4.3e-4) | 2e-3 |
+| `diel_lorentz.peec` 入力検証 | 減衰幅 g ≤ 0、語の不足、強度の和の不一致の 3 通りがエラー終了すること | 3/3 拒否 |
 
 ## License
 

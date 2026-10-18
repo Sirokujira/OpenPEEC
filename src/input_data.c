@@ -410,18 +410,26 @@ int input_data(FILE *fp, peec_t *p)
 			// org を底面として法線 (ea x eb) 方向へ thick 押し出した直方体。
 			// tand (省略時 0) は誘電正接 : epsr* = epsr (1 - j tand)。
 			//
-			// eps_inf の後ろに分散を書くと Debye 分散になる (因果的で
+			// eps_inf の後ろに分散を書くと多極分散になる (どの極も因果的で
 			// Kramers-Kronig を満たす)。2 通りの書き方を残り語数で判別する :
 			//
-			//   f_relax                     (1 語)  単極 : 強度は epsr - eps_inf
-			//   f_1 de_1 [f_2 de_2 ...]     (偶数語) 多極 : 強度を明示
+			//   f_relax                     (1 語)  単極 Debye : 強度は epsr - eps_inf
+			//   極の並び                    (それ以外) 多極 : 強度を明示
 			//
-			//   epsr*(f) = eps_inf + sum_k de_k/(1 + j f/f_k)
+			// 極の並びは次の 2 種類を任意の順・組合せで書ける :
 			//
-			// 多極では直流極限 eps_inf + sum de_k が epsr と一致している
-			// 必要がある (書き間違いを静かに通さないため一致を要求する)。
-			// 損失は緩和が生むので定数 tand との併用は二重計上 :
-			// tand = 0 を書くこと。
+			//   f_k de_k                    Debye 極   de_k/(1 + j f/f_k)
+			//   lorentz f_k de_k g_k        Lorentz 極 de_k f_k^2/(f_k^2 - f^2 + j f g_k)
+			//
+			//   epsr*(f) = eps_inf + sum_k (極の寄与)
+			//
+			// Lorentz 極は共振周波数 f_k、減衰幅 g_k [Hz] (> 0。Q = f_k/g_k で、
+			// 高 Q では損失ピークの半値全幅にほぼ等しい) の共振型で、
+			// f_k の少し上では epsr' が 1 を割り負にもなる (Debye では
+			// 起きない)。どちらの極も f -> 0 で de_k に戻るので、直流極限
+			// eps_inf + sum de_k が epsr と一致している必要がある (書き間違いを
+			// 静かに通さないため一致を要求する)。損失は極が生むので定数 tand
+			// との併用は二重計上 : tand = 0 を書くこと。
 			if (ntoken < 16) err = 1;
 			else {
 				APPEND(p->diel, p->ndiel, cdiel, diel_t);
@@ -448,22 +456,37 @@ int input_data(FILE *fp, peec_t *p)
 						e->pf[0] = atof(token[18]);
 						e->pde[0] = e->epsr - e->epsinf;
 					}
-					else if ((nrest % 2) == 0) {
-						// 多極 : (f_k, de_k) の並び
-						e->npole = nrest / 2;
-						if (e->npole > DIEL_MAXPOLE) {
-							printf("%s\n", "*** dielectric : too many Debye poles");
-							return 1;
-						}
-						for (int k = 0; k < e->npole; k++) {
-							e->pf[k] = atof(token[18 + (2 * k)]);
-							e->pde[k] = atof(token[19 + (2 * k)]);
+					else {
+						// 多極 : Debye 極 (f_k de_k) と Lorentz 極
+						// (lorentz f_k de_k g_k) の並び。語が余ったら誤り
+						int it = 18;
+						while (!err && (it < ntoken)) {
+							if (e->npole >= DIEL_MAXPOLE) {
+								printf("%s\n", "*** dielectric : too many poles");
+								return 1;
+							}
+							const int lor = !strcmp(token[it], "lorentz");
+							if (lor) it++;
+							const int nw = lor ? 3 : 2;
+							if ((it + nw) > ntoken) {
+								err = 1;
+								break;
+							}
+							const int k = e->npole;
+							e->pf[k] = atof(token[it]);
+							e->pde[k] = atof(token[it + 1]);
+							if (lor) {
+								e->plor[k] = 1;
+								e->pg[k] = atof(token[it + 2]);
+								if (e->pg[k] <= 0) err = 1;
+							}
+							e->npole++;
+							it += nw;
 						}
 					}
-					else err = 1;
 
-					// eps_inf は 1 以上 epsr 以下 (緩和で誘電率は下がる)。
-					// 定数 tand と Debye の併用は損失の二重計上なので拒否する
+					// eps_inf は 1 以上 epsr 以下 (強度 de_k > 0 の和だけ下がる)。
+					// 定数 tand と分散の併用は損失の二重計上なので拒否する
 					if ((e->epsinf < 1) || (e->epsinf > e->epsr) || (e->tand != 0)) err = 1;
 					double sde = 0;
 					for (int k = 0; k < e->npole; k++) {
@@ -473,7 +496,7 @@ int input_data(FILE *fp, peec_t *p)
 					// 直流極限の整合 : eps_inf + sum de_k = epsr
 					// (単極では定義上厳密に成り立つ。多極は書き間違いの番人)
 					if (!err && (fabs(sde - (e->epsr - e->epsinf)) > 1e-9 * e->epsr)) {
-						printf("%s\n", "*** dielectric : sum of Debye strengths must equal epsr - eps_inf");
+						printf("%s\n", "*** dielectric : sum of pole strengths must equal epsr - eps_inf");
 						return 1;
 					}
 				}

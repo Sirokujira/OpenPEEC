@@ -772,6 +772,92 @@ else
 	status=1
 fi
 
+# (as) Lorentz (共振型) 分散 : 1 極 (eps_inf = 2, de = 2 @ f0 = 1 MHz,
+#      g = 200 kHz) で共振をまたぐ 5 点 x (G, B) が
+#      dY(f) = j w eps0 (epsr*(f) - 1) A/d、
+#      epsr* = eps_inf + de/(1 - q^2 + j q r) (q = f/f0, r = g/f0)
+#      に一致すること。共振の上で epsr' < 0 (枝が誘導性) になる Debye では
+#      通らない経路を含む。期待値は Lorentz の解析式そのもの (コード非依存)。
+cp "$SRC/diel_lorentz.peec" "$WORK/"
+run diel_lorentz.peec
+cp "$csv" "$WORK/zin_lorentz.csv"
+sed '/^dielectric/d' "$SRC/diel_lorentz.peec" > "$WORK/diel_lorentz_air.peec"
+run diel_lorentz_air.peec
+paste -d, "$WORK/zin_lorentz.csv" "$csv" | awk -F, 'BEGIN {
+	PI = atan2(0, -1); e0 = 8.854187817620389e-12;
+	K = e0 * 0.0016 / 4e-4; ei = 2; f0 = 1e6; de = 2; g = 2e5
+}
+NR > 1 {
+	f = $2; w = 2 * PI * f;
+	da = ($3 * $3) + ($4 * $4);   g1 = $3 / da;  b1 = -$4 / da;
+	db = ($10 * $10) + ($11 * $11); g2 = $10 / db; b2 = -$11 / db;
+	q = f / f0; r = g / f0; x = 1 - (q * q); y = q * r; dn = (x * x) + (y * y);
+	a = ei + (de * x / dn); b = -de * y / dn;
+	if (a < 0) nneg++;
+	eG = w * K * (-b); eB = w * K * (a - 1);
+	dg = ((g1 - g2) / eG) - 1; if (dg < 0) dg = -dg; if (dg > mx) mx = dg;
+	dbv = ((b1 - b2) / eB) - 1; if (dbv < 0) dbv = -dbv; if (dbv > mx) mx = dbv;
+	n++
+}
+END {
+	ok = (n == 5) && (nneg == 2) && (mx <= 2e-3);
+	printf "%-24s freqs=%d (eps'"'"'<0: %d) max rel err=%.3e -> %s (<= 2e-3)\n", "lorentz dY (5 freqs)", n, nneg, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+
+# (at) Debye 極と Lorentz 極の混在 (Lorentz 2 @ 100 kHz g = 50 kHz を先、
+#      Debye 1 @ 1 kHz を後に書く) : 5 点 x (G, B) が極の解析式の和に
+#      一致すること。種類の違う極を任意の順で並べるパーサの逐次読みと、
+#      mna.c の極ごとの分岐の番人。
+cp "$SRC/diel_lorentz2.peec" "$WORK/"
+run diel_lorentz2.peec
+cp "$csv" "$WORK/zin_lorentz2.csv"
+sed '/^dielectric/d' "$SRC/diel_lorentz2.peec" > "$WORK/diel_lorentz2_air.peec"
+run diel_lorentz2_air.peec
+paste -d, "$WORK/zin_lorentz2.csv" "$csv" | awk -F, 'BEGIN {
+	PI = atan2(0, -1); e0 = 8.854187817620389e-12;
+	K = e0 * 0.0016 / 4e-4; ei = 2;
+	f0 = 1e5; dl = 2; g = 5e4; fd = 1e3; dd = 1
+}
+NR > 1 {
+	f = $2; w = 2 * PI * f;
+	da = ($3 * $3) + ($4 * $4);   g1 = $3 / da;  b1 = -$4 / da;
+	db = ($10 * $10) + ($11 * $11); g2 = $10 / db; b2 = -$11 / db;
+	q = f / f0; r = g / f0; x = 1 - (q * q); y = q * r; dn = (x * x) + (y * y);
+	qd = f / fd; nd = 1 + (qd * qd);
+	a = ei + (dl * x / dn) + (dd / nd);
+	b = -((dl * y / dn) + (dd * qd / nd));
+	eG = w * K * (-b); eB = w * K * (a - 1);
+	dg = ((g1 - g2) / eG) - 1; if (dg < 0) dg = -dg; if (dg > mx) mx = dg;
+	dbv = ((b1 - b2) / eB) - 1; if (dbv < 0) dbv = -dbv; if (dbv > mx) mx = dbv;
+	n++
+}
+END {
+	ok = (n == 5) && (mx <= 2e-3);
+	printf "%-24s freqs=%d max rel err=%.3e -> %s (<= 2e-3)\n", "lorentz+debye dY", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+
+# 書き間違いは静かに通さず拒否されること : 減衰幅 g <= 0、語の過不足
+# (lorentz の後ろが 2 語)、強度の和が epsr - eps_inf と不一致
+nbad=0
+for dl in "4 8 8 2 0 2 lorentz 1e6 2 0" \
+          "4 8 8 2 0 2 lorentz 1e6 2" \
+          "4 8 8 2 0 2 lorentz 1e6 1.5 2e5"; do
+	sed "s/^dielectric = \(.*0\.0004\) .*/dielectric = \1 $dl/" "$SRC/diel_lorentz.peec" > "$WORK/diel_lorentz_bad.peec"
+	if (cd "$WORK" && "$PEEC" -n 1 diel_lorentz_bad.peec > diel_lorentz_bad.out 2>&1); then
+		:
+	else
+		nbad=$((nbad + 1))
+	fi
+done
+if [ "$nbad" -eq 3 ]; then
+	printf "%-24s -> OK (3/3 malformed inputs rejected)\n" "lorentz parser guard"
+else
+	printf "%-24s -> NG (%d/3 malformed inputs rejected)\n" "lorentz parser guard" "$nbad" >&2
+	status=1
+fi
+
 echo "--- transient (inverse FFT of the sweep)"
 # (al) 周波数に依らない反射係数 : y(t) = S11 x(t) が全時刻で厳密に成り立つ。
 #      励振と応答を同じ合成式で作るので帯域打ち切りも相殺する。

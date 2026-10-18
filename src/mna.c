@@ -119,14 +119,22 @@ int mna_numbering(peec_t *p, FILE *fp_log)
 
 非分散 (極なし) : epsr* = epsr (1 - j tand) は周波数に依らないので
 事前計算済みの cexc / gexc から Y = w (gexc + j cexc)。
-分散 (極あり) : 多極 Debye
-  epsr*(f) = eps_inf + sum_k de_k/(1 + j f/f_k)
+分散 (極あり) : 多極 Debye / Lorentz
+  epsr*(f) = eps_inf + sum_k chi_k(f)
+  Debye   : chi_k = de_k/(1 + j f/f_k)
+  Lorentz : chi_k = de_k f_k^2/(f_k^2 - f^2 + j f g_k)
+          = de_k/(1 - q^2 + j q r)   (q = f/f_k、r = g_k/f_k)
 (各項が因果的で Kramers-Kronig を満たすので、和も満たす)。
-極が 1 個で de = epsr - eps_inf のときが従来の単極で、式は完全に同じ。
+Debye 極が 1 個で de = epsr - eps_inf のときが従来の単極で、式は完全に同じ
+(Lorentz 極の分岐は Debye 極の式に触らない : 既存入力は bit 互換)。
 epsr* = a + jb (b <= 0) とすると
   Y = jw eps0 gfac (a - 1 + jb) = w eps0 gfac (-b + j(a - 1))
-で、-b >= 0 が緩和損失のコンダクタンスになる。極ごとの寄与は
-b_k = -de_k (f/f_k)/(1 + (f/f_k)^2) <= 0 なので、和も必ず損失側に入る。
+で、-b >= 0 が損失のコンダクタンスになる。極ごとの寄与は
+  Debye   : b_k = -de_k q/(1 + q^2) <= 0
+  Lorentz : b_k = -de_k q r/((1 - q^2)^2 + (q r)^2) <= 0
+なので、和も必ず損失側に入る。Lorentz では a - 1 が負 (共振の少し上で
+epsr' < 1) になり得て、そのとき枝のサセプタンスは誘導性になる
+(-b > 0 が残るので Y は 0 にならず、Z = 1/Y は有限)。
 */
 static d_complex_t zint_diel(const peec_t *p, const seg_t *s, double omega, double f)
 {
@@ -134,6 +142,13 @@ static d_complex_t zint_diel(const peec_t *p, const seg_t *s, double omega, doub
 	if (dl->npole > 0) {
 		d_complex_t er = d_complex(dl->epsinf, 0);
 		for (int k = 0; k < dl->npole; k++) {
+			if (dl->plor[k]) {
+				const double q = f / dl->pf[k];
+				const double r = dl->pg[k] / dl->pf[k];
+				er = d_add(er, d_div(d_complex(dl->pde[k], 0),
+					d_complex(1 - (q * q), q * r)));
+				continue;
+			}
 			er = d_add(er, d_div(d_complex(dl->pde[k], 0),
 				d_complex(1, f / dl->pf[k])));
 		}
