@@ -212,7 +212,7 @@ same portability rules, no external numerical libraries.
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値と比較、143 判定。許容は判定ごとに 1e-12 〜 3%)
+# 検証 (解析解・文献値と比較、151 判定。許容は判定ごとに 1e-12 〜 3%)
 # 実行ファイルは相対パスでもよい (スクリプトが絶対パスに直す)
 sh data/sample/peec_check.sh bin/peec /tmp/peec-check
 
@@ -288,9 +288,10 @@ peec [-n <threads>] input.peec
 
 | ファイル | 内容 |
 |---|---|
-| `peec.log` | 入力インピーダンス表、Z 行列表 (2 ポート以上)、S パラメータ表、`=== normal end ===` |
+| `peec.log` | 入力インピーダンス表、Z 行列表 (2 ポート以上)、S パラメータ表、混合モード S 表 (`mixedmode` 指定時)、`=== normal end ===` |
 | `zin.csv` | 各ポートの Zin (機械読み取り用) |
 | `peec.sNp` | S パラメータの Touchstone 1.1 形式 (N = ポート数) |
+| `mixed.csv` | 混合モード S パラメータ (差動 / 同相、`mixedmode` 指定時のみ)。1 行 1 成分で `frequency[Hz],row,col,real,imag,\|S\|[dB]`、row/col は `d1` / `c1` / `s3` など |
 | `dist.csv` | 電流・電荷分布 (`distribution = 1` のときのみ)。`port` 列が励振ポート番号 (多ポートではポートごとに 1 組)、平面波による誘起電流 `Ipw` は 0 |
 | `far.csv` | 遠方界パターン rE と D / G [dBi] (`farfield` 指定時のみ) |
 | `near.csv` | 近傍界 E / H の各成分と |E| / |H| (`nearfield` 指定時のみ) |
@@ -328,6 +329,20 @@ S = F (Z − Z0) (Z + Z0)⁻¹ F⁻¹,   F = diag(1 / (2√z0ᵢ))
 Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポートごとに異なる
 `z0` を与えた場合は port#1 の値を書き、その旨をコメント行に残します。
 
+**混合モード S パラメータ** : `mixedmode = p1 n1 [p2 n2 ...]` で単端ポートの
+対 (正側, 負側) を差動対にすると、電力波を
+`a_d = (a_p − a_n)/√2`、`a_c = (a_p + a_n)/√2` に組み替えた混合モード S 行列
+
+```
+S_mm = M S Mᵀ   (M は直交行列 : 差動対ごとに ±1/√2、対に入らないポートは 1)
+```
+
+を `mixed.csv` と `peec.log` に出します (Bockelman & Eisenstadt の定義)。並びは
+d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 2 対の 4 ポートでは
+`S(d2,d1)` = Sdd21 (差動伝送)、`S(c2,d1)` = Scd21 (差動 → 同相のモード変換)。
+基準抵抗は差動モード 2·z0、同相モード z0/2 で、これが成り立つよう対の 2 ポートの
+`z0` は等しくなければなりません (入力検査で拒否します)。
+
 ## Input format / 入力形式
 
 テキスト形式。1 行目は `OpenPEEC 1 0`、最終行は `end`。`#` はコメント。
@@ -352,6 +367,7 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `dielectric` | `dielectric = ox oy oz ax ay az bx by bz 厚さ εr 分割数a 分割数b 分割数t [tanδ [ε∞ 分散]]` | 誘電体ブリック (過剰容量)。org を底面として法線 (a×b) 方向へ厚さぶん押し出した直方体。`capacitance = 1` 必須。εr = 1 は無効果。tanδ (省略時 0) で誘電損 εr\* = εr(1−j tanδ)。ε∞ の後ろに分散を書くと多極分散 εr\*(f) = ε∞ + Σ_k χ_k(f) (このとき tanδ = 0 を書く)。**1 語**なら `f_r` の単極 Debye (強度は εr−ε∞)。それ以外は極の並びで、Debye 極 `f_k Δε_k` (χ = Δε_k/(1+jf/f_k)) と Lorentz 極 `lorentz f_k Δε_k g_k` (共振周波数 f_k・減衰幅 g_k [Hz] > 0 : χ = Δε_k f_k²/(f_k²−f²+jf g_k)) を任意の順・組合せで書ける (極は合わせて 8 個まで)。多極は直流極限 ε∞ + ΣΔε_k = εr の一致が必要 |
 | `grading` | `grading = 1` | 面格子の縁寄せ (plate/quad 余弦、disk 正弦)。省略時 0 = 等間隔 |
 | `port` | `port = n1 n2 Z0` | ポート (Zin / S パラメータの基準抵抗 Z0 [Ω])。複数書くと多ポート解析になる |
+| `mixedmode` | `mixedmode = p1 n1 [p2 n2 ...]` | 単端ポート番号 (1 始まり、`port` 行の順) の対 (正側, 負側) を差動対にし、混合モード S を `mixed.csv` に出す。各ポートは 1 つの対にしか入れられず、対の 2 ポートの Z0 は等しいこと。対に入らないポートは単端のまま通る |
 | `frequency` | `frequency = f開始 f終了 分割数 [log]` | 周波数掃引 (分割数+1 点)。`log` で等比 (対数) 掃引、省略時は線形 |
 | `groundplane` | `groundplane = z` | 無限 PEC 地板 (z = 一定、鏡像法)。導体は z ≥ 地板に置く |
 | `farfield` | `farfield = 分割数θ 分割数φ` | 遠方界の後処理を有効化 (`far.csv` 出力)。地板ありは上半球のみ |
@@ -404,6 +420,10 @@ Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポー�
 | `plate_cap.peec` 正方形平板の容量 | 8/16 分割から Richardson 補外 → 0.3667892·4πε0a = 40.810 pF | 1% |
 | `tnetwork_spara.peec` 抵抗性 T 型 2 ポート | Z = [[75,50],[50,75]], Z0 = 50 → S11 = 1/21、S21 = 8/21 (実数)。相反性 S12 = S21、対称性 S11 = S22 | 0.1% |
 | `tnetwork_l_spara.peec` 直列 L 入り T 型 2 ポート | ωL = 50 Ω で S11 = 0.101124+j0.561798、S21 = 0.359551−j0.224719、S22 = 0.056180+j0.089888。非対称だが相反 | 0.1% |
+| `mm_attenuator.peec` 混合モード S (結合なし・非対称) | 強さの違う π 型回路 2 本。単端 S を ABCD 行列から作り、定義式 Sdd = (Spp−Spn−Snp+Snn)/2 などで全 16 成分を比較 (Sdd21 = 23/60、Scd21 = 7/60 …)。対 1 つ + 単端 2 ポートの版も (S(s3,d1) = (S31−S32)/√2 …) | 絶対 1e-9 |
+| `mm_balanced.peec` 混合モードの基準抵抗 | 平衡負荷 : Zd = R‖2Rg を 2Z0 で、Zc = Rg/2 を Z0/2 で反射係数にした Sdd11 = 1/7、Scc11 = 0.6、Scd = Sdc = 0 | 絶対 1e-9 |
+| `mm_twinline.peec` 地板上の対称 2 本線路 (PEEC) | 鏡映対称なのでモード変換なし (\|Scd\|/max\|S\| ≤ 1e-9、実測 2e-15)、相反性 Sdd21 = Sdd12、直交変換でノルム保存 (Σ\|S_mm\|² = Σ\|S\|²、Touchstone の 10 桁丸めで実測 1e-10)。非対称版 (半径違い) ではモード変換が 4% 出ること | 1e-9 / 1e-8 |
+| `mm_attenuator.peec` 入力検証 | 奇数個・範囲外・重複のポート番号、対内の基準抵抗の不一致の 4 通りがエラー終了すること | 4/4 拒否 |
 | `wire_dist.peec` 電流分布 (容量なし) | 電荷が溜まらないので全 8 区間に同じ 1 A (キルヒホッフの電流則、厳密) | 1e-9 |
 | `wire_dist.peec` + `capacitance=1` | ポートは 1 A を入れて 1 A を出すので構造の総電荷は 0 | max\|q\| 比 1e-6 |
 | `plate_cap.peec` スレッド数不変性 | `-n 1` と `-n 4` の `zin.csv` が完全一致 (未知数 225 で LU 並列経路も通る) | 完全一致 |

@@ -1117,6 +1117,165 @@ else
 	     END {printf "%-24s -> OK\n", "Touchstone s2p format"}' "$WORK/peec.s2p" || status=1
 fi
 
+# --- 混合モード S パラメータ (mixedmode)
+# (au) 結合の無い非対称な 2 本の π 型回路 : 単端 S を ABCD 行列から組み、
+#      Bockelman-Eisenstadt の定義式 (Sdd = (Spp - Spn - Snp + Snn)/2 など) で
+#      混合モードの全成分を作って mixed.csv と比べる (コードの組替え行列は
+#      使わない)。pass = 1 は対 1 だけを差動対にして port#3/#4 を単端のまま
+#      通す版 (S(s3,d1) = (S31 - S32)/sqrt(2) など)。
+mmatt() {
+	awk -F, -v pass="$2" -v lb="$1" '
+	function pinet(rp, rs,   y, a, b, c, den) {
+		y = 1 / rp; a = 1 + (rs * y); b = rs; c = y * (2 + (rs * y));
+		den = a + (b / Z0) + (c * Z0) + a;
+		s21 = 2 / den; s11 = ((b / Z0) - (c * Z0)) / den
+	}
+	BEGIN {
+		Z0 = 50; h = 1 / sqrt(2);
+		for (i = 1; i <= 4; i++) for (j = 1; j <= 4; j++) S[i, j] = 0;
+		pinet(150, 37.5); S[1, 1] = S[3, 3] = s11; S[1, 3] = S[3, 1] = s21;
+		pinet(100, 100);  S[2, 2] = S[4, 4] = s11; S[2, 4] = S[4, 2] = s21;
+		P[1] = 1; N[1] = 2; P[2] = 3; N[2] = 4;
+		np = pass ? 1 : 2;
+		for (i = 1; i <= np; i++) for (j = 1; j <= np; j++) {
+			pp = S[P[i], P[j]]; pn = S[P[i], N[j]]; nq = S[N[i], P[j]]; nn = S[N[i], N[j]];
+			E["d" i, "d" j] = (pp - pn - nq + nn) / 2;
+			E["c" i, "d" j] = (pp - pn + nq - nn) / 2;
+			E["d" i, "c" j] = (pp + pn - nq - nn) / 2;
+			E["c" i, "c" j] = (pp + pn + nq + nn) / 2;
+		}
+		if (pass) {
+			for (k = 3; k <= 4; k++) {
+				E["s" k, "d1"] = (S[k, 1] - S[k, 2]) * h;
+				E["s" k, "c1"] = (S[k, 1] + S[k, 2]) * h;
+				E["d1", "s" k] = (S[1, k] - S[2, k]) * h;
+				E["c1", "s" k] = (S[1, k] + S[2, k]) * h;
+				for (l = 3; l <= 4; l++) E["s" k, "s" l] = S[k, l];
+			}
+		}
+	}
+	NR > 1 {
+		key = $2 SUBSEP $3;
+		if (!(key in E)) {bad++; next}
+		d = $4 - E[key]; if (d < 0) d = -d; if (d > mx) mx = d;
+		d = $5;          if (d < 0) d = -d; if (d > mx) mx = d;
+		n++
+	}
+	END {
+		ok = (n == 32) && (bad == 0) && (mx <= 1e-9);
+		printf "%-24s entries=%d max|err|=%.3e -> %s (<= 1e-9)\n", lb, n, mx, ok ? "OK" : "NG";
+		exit ok ? 0 : 1
+	}' "$WORK/mixed.csv" || status=1
+}
+cp "$SRC/mm_attenuator.peec" "$WORK/"
+run mm_attenuator.peec
+mmatt "mixed-mode (2 pairs)" 0
+sed 's/^mixedmode = .*/mixedmode = 1 2/' "$SRC/mm_attenuator.peec" > "$WORK/mm_attenuator_s.peec"
+run mm_attenuator_s.peec
+mmatt "mixed-mode (pair + s3/s4)" 1
+
+# (av) 平衡負荷 : モードごとの入力インピーダンス Zd = R || 2Rg、Zc = Rg/2 を
+#      基準 2 Z0 / Z0/2 で反射係数にしたものと比べる (基準抵抗の約束の番人)。
+#      対称なので Scd11 = Sdc11 = 0。
+cp "$SRC/mm_balanced.peec" "$WORK/"
+run mm_balanced.peec
+awk -F, 'BEGIN {
+	Z0 = 50; R = 200; Rg = 200;
+	zd = (R * 2 * Rg) / (R + (2 * Rg)); zc = Rg / 2;
+	E["d1", "d1"] = (zd - (2 * Z0)) / (zd + (2 * Z0));
+	E["c1", "c1"] = (zc - (Z0 / 2)) / (zc + (Z0 / 2));
+	E["c1", "d1"] = 0; E["d1", "c1"] = 0
+}
+NR > 1 {
+	key = $2 SUBSEP $3;
+	if (!(key in E)) {bad++; next}
+	d = $4 - E[key]; if (d < 0) d = -d; if (d > mx) mx = d;
+	d = $5;          if (d < 0) d = -d; if (d > mx) mx = d;
+	n++
+}
+END {
+	ok = (n == 8) && (bad == 0) && (mx <= 1e-9);
+	printf "%-24s Sdd11=1/7 Scc11=0.6 max|err|=%.3e -> %s (<= 1e-9)\n", "mixed-mode Zref (2Z0,Z0/2)", mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/mixed.csv" || status=1
+
+# (aw) 地板上の対称な 2 本線路 (PEEC) : 鏡映対称なのでモード変換が無いこと、
+#      相反性、組替えの直交性 (sum |S_mm|^2 = sum |S|^2、peec.s4p と比較)。
+cp "$SRC/mm_twinline.peec" "$WORK/"
+run mm_twinline.peec
+awk -F, 'NR > 1 {
+	a = sqrt(($4 * $4) + ($5 * $5)); if (a > smax) smax = a;
+	if (substr($2, 1, 1) != substr($3, 1, 1)) {if (a > cmax) cmax = a; nc++}
+	v[$1, $2, $3, 1] = $4; v[$1, $2, $3, 2] = $5; f[$1] = 1
+}
+END {
+	for (q in f) {
+		split("d c", t, " ");
+		for (m = 1; m <= 2; m++) {
+			x = v[q, t[m] "2", t[m] "1", 1] - v[q, t[m] "1", t[m] "2", 1];
+			y = v[q, t[m] "2", t[m] "1", 2] - v[q, t[m] "1", t[m] "2", 2];
+			e = sqrt((x * x) + (y * y)); if (e > rmax) rmax = e
+		}
+	}
+	rel = cmax / smax;
+	ok1 = (nc == 32) && (rel <= 1e-9);
+	ok2 = (rmax <= 1e-9);
+	printf "%-24s max|Scd,Sdc|/max|S|=%.3e -> %s (<= 1e-9)\n", "twinline no conversion", rel, ok1 ? "OK" : "NG";
+	printf "%-24s max|S21-S12| (dd, cc)=%.3e -> %s (<= 1e-9)\n", "twinline reciprocity", rmax, ok2 ? "OK" : "NG";
+	exit (ok1 && ok2) ? 0 : 1
+}' "$WORK/mixed.csv" || status=1
+# 単端 S のノルム (Touchstone 4 ポート : 周波数行 + 継続行 3 本、各 4 成分)。
+# peec.s4p は有効 10 桁 (%.9e) で書かれるので、比較の精度はその丸め (~1e-10)
+# で決まる : 判定は相対 1e-8 (組替えが壊れればノルムは O(1) で変わる)
+awk '/^[!#]/ {next}
+FNR == NR {
+	if ($0 !~ /^ /) {k++; i0 = 2} else i0 = 1;
+	for (i = i0; i < NF; i += 2) se[k] += ($i * $i) + ($(i + 1) * $(i + 1));
+	next
+}
+FNR > 1 {
+	split($0, c, ",");
+	if (c[1] != last) {m++; last = c[1]}
+	sm[m] += (c[4] * c[4]) + (c[5] * c[5])
+}
+END {
+	for (j = 1; j <= k; j++) {
+		d = (sm[j] - se[j]) / se[j]; if (d < 0) d = -d; if (d > mx) mx = d
+	}
+	ok = (k == 4) && (m == 4) && (mx <= 1e-8);
+	printf "%-24s freqs=%d max rel diff=%.3e -> %s (<= 1e-8)\n", "twinline norm preserved", k, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/peec.s4p" "$WORK/mixed.csv" || status=1
+# 非対称版 (線 2 の半径 0.5 -> 0.3 mm) : モード変換が丸め誤差よりはるかに大きく
+# 出ること (対称版の判定が自明に通っているのではないことの確認)
+sed 's/^\(wire = 0 -0.005 .*\) 5e-4 /\1 3e-4 /' "$SRC/mm_twinline.peec" > "$WORK/mm_twinline_asym.peec"
+run mm_twinline_asym.peec
+awk -F, 'NR > 1 {
+	a = sqrt(($4 * $4) + ($5 * $5)); if (a > smax) smax = a;
+	if (substr($2, 1, 1) != substr($3, 1, 1) && (a > cmax)) cmax = a
+}
+END {
+	rel = cmax / smax; ok = (rel >= 1e-3);
+	printf "%-24s max|Scd,Sdc|/max|S|=%.3e -> %s (>= 1e-3)\n", "twinline asym converts", rel, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/mixed.csv" || status=1
+
+# 書き間違いは拒否されること : 奇数個のポート番号、範囲外、重複、
+# 対内の基準抵抗の不一致
+nbad=0
+for mm in "mixedmode = 1 2 3" "mixedmode = 1 5" "mixedmode = 1 2 2 3"; do
+	sed "s/^mixedmode = .*/$mm/" "$SRC/mm_attenuator.peec" > "$WORK/mm_bad.peec"
+	if (cd "$WORK" && "$PEEC" -n 1 mm_bad.peec > mm_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+done
+sed 's/^port = 2 0 50/port = 2 0 75/' "$SRC/mm_attenuator.peec" > "$WORK/mm_bad.peec"
+if (cd "$WORK" && "$PEEC" -n 1 mm_bad.peec > mm_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+if [ "$nbad" -eq 4 ]; then
+	printf "%-24s -> OK (4/4 malformed inputs rejected)\n" "mixedmode parser guard"
+else
+	printf "%-24s -> NG (%d/4 malformed inputs rejected)\n" "mixedmode parser guard" "$nbad" >&2
+	status=1
+fi
+
 echo "--- current / charge distribution"
 # (s) 単線 8 分割、容量なし : 電荷が溜まらないので全区間に同じ 1A が流れる
 #     (キルヒホッフの電流則。分割数・周波数・材料に依らず厳密)

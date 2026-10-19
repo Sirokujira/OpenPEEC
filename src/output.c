@@ -188,6 +188,141 @@ int output_touchstone(const peec_t *p)
 
 
 /*
+混合モード S パラメータ (mixed.csv) — mixedmode 指定時のみ
+
+差動対 k = (正側ポート p_k, 負側ポート n_k) について、電力波を
+    a_dk = (a_pk - a_nk)/sqrt(2),  a_ck = (a_pk + a_nk)/sqrt(2)
+と組み替える (Bockelman & Eisenstadt 1995)。対に入らないポートは単端のまま
+通す。この組替え行列 M は直交 (M^-1 = M^T) なので
+    S_mm = M S M^T
+が混合モード S 行列で、行と列の並びは d1..dP, c1..cP, 単端ポート (番号順)。
+例えば 2 対の 4 ポートでは S(d2,d1) が差動伝送 Sdd21、S(c2,d1) が差動 -> 同相
+の変換 Scd21 になる。基準抵抗は対の 2 ポートの z0 が等しいことを入力検査で
+保証しており、差動モードは 2 z0、同相モードは z0/2 になる (この関係は z0 が
+等しいときにだけ成り立つ)。M は直交なので行列全体の |S|^2 の和 (フロベニウス
+ノルム) は組替えで変わらない。
+
+書式 : frequency[Hz],row,col,real,imag,|S|[dB] (row/col は d1 / c1 / s3 など。
+s の番号は元の単端ポート番号)。peec.log にも S 表と同じ体裁で出す。
+*/
+int output_mixed(const peec_t *p, const char *fn, FILE *fp_log)
+{
+	const int np = p->nport;
+	if ((p->nmm <= 0) || (np <= 0) || (p->smat == NULL)) return 0;
+
+	const int nmm = p->nmm;
+	double *mt = (double *)calloc((size_t)np * np, sizeof(double));
+	char (*lab)[16] = malloc((size_t)np * sizeof(*lab));
+	double *zref = (double *)malloc((size_t)np * sizeof(double));
+	d_complex_t *tmp = (d_complex_t *)malloc((size_t)np * np * sizeof(d_complex_t));
+	d_complex_t *smm = (d_complex_t *)malloc((size_t)p->nfreq * np * np * sizeof(d_complex_t));
+	int *inpair = (int *)calloc((size_t)np, sizeof(int));
+	if ((mt == NULL) || (lab == NULL) || (zref == NULL) || (tmp == NULL) ||
+	    (smm == NULL) || (inpair == NULL)) {
+		printf("%s\n", "*** memory allocation error (mixed-mode S)");
+		free(mt); free(lab); free(zref); free(tmp); free(smm); free(inpair);
+		return 1;
+	}
+
+	// 組替え行列 M (行 = 混合モードのポート、列 = 単端ポート)
+	const double h = 1 / sqrt(2.0);
+	for (int k = 0; k < nmm; k++) {
+		const int ip = p->mmport[2 * k];
+		const int in = p->mmport[(2 * k) + 1];
+		inpair[ip] = inpair[in] = 1;
+		mt[((size_t)k * np) + ip] = h;
+		mt[((size_t)k * np) + in] = -h;
+		mt[((size_t)(nmm + k) * np) + ip] = h;
+		mt[((size_t)(nmm + k) * np) + in] = h;
+		snprintf(lab[k], sizeof(lab[k]), "d%d", k + 1);
+		snprintf(lab[nmm + k], sizeof(lab[nmm + k]), "c%d", k + 1);
+		zref[k] = 2 * p->port[ip].z0;
+		zref[nmm + k] = p->port[ip].z0 / 2;
+	}
+	int r = 2 * nmm;
+	for (int i = 0; i < np; i++) {
+		if (inpair[i]) continue;
+		mt[((size_t)r * np) + i] = 1;
+		snprintf(lab[r], sizeof(lab[r]), "s%d", i + 1);
+		zref[r] = p->port[i].z0;
+		r++;
+	}
+
+	// S_mm = M S M^T (周波数ごと)
+	for (int ifreq = 0; ifreq < p->nfreq; ifreq++) {
+		// tmp = S M^T
+		for (int a = 0; a < np; a++) {
+			for (int j = 0; j < np; j++) {
+				d_complex_t v = d_complex(0, 0);
+				for (int b = 0; b < np; b++) {
+					const double m = mt[((size_t)j * np) + b];
+					if (m != 0) v = d_add(v, d_rmul(m, p->smat[ZIDX(p, ifreq, a, b)]));
+				}
+				tmp[((size_t)a * np) + j] = v;
+			}
+		}
+		for (int i = 0; i < np; i++) {
+			for (int j = 0; j < np; j++) {
+				d_complex_t v = d_complex(0, 0);
+				for (int a = 0; a < np; a++) {
+					const double m = mt[((size_t)i * np) + a];
+					if (m != 0) v = d_add(v, d_rmul(m, tmp[((size_t)a * np) + j]));
+				}
+				smm[ZIDX(p, ifreq, i, j)] = v;
+			}
+		}
+	}
+
+	FILE *fp = fopen(fn, "w");
+	if (fp == NULL) {
+		printf("*** file %s open error.\n", fn);
+		free(mt); free(lab); free(zref); free(tmp); free(smm); free(inpair);
+		return 1;
+	}
+	fprintf(fp, "frequency[Hz],row,col,real,imag,|S|[dB]\n");
+	for (int ifreq = 0; ifreq < p->nfreq; ifreq++) {
+		for (int i = 0; i < np; i++) {
+			for (int j = 0; j < np; j++) {
+				const d_complex_t s = smm[ZIDX(p, ifreq, i, j)];
+				const double mag = d_abs(s);
+				const double db = (mag > 1e-30) ? (20 * log10(mag)) : -600;
+				fprintf(fp, "%.9e,%s,%s,%.12e,%.12e,%.6f\n",
+					freq_at(p, ifreq), lab[i], lab[j], s.r, s.i, db);
+			}
+		}
+	}
+	fclose(fp);
+
+	// peec.log : モードの定義と S 表と同じ体裁の表
+	fprintf(fp_log, "=== mixed-mode S parameters === (S_mm = M S M^T)\n");
+	for (int k = 0; k < nmm; k++) {
+		fprintf(fp_log, "d%d / c%d = port#%d - port#%d (Zdiff = %.2f ohm, Zcomm = %.2f ohm)\n",
+			k + 1, k + 1, p->mmport[2 * k] + 1, p->mmport[(2 * k) + 1] + 1, zref[k], zref[nmm + k]);
+	}
+	for (int i = 2 * nmm; i < np; i++) {
+		fprintf(fp_log, "%s = single-ended (Z0 = %.2f ohm)\n", lab[i], zref[i]);
+	}
+	for (int i = 0; i < np; i++) {
+		for (int j = 0; j < np; j++) {
+			fprintf(fp_log, "S%s%s\n", lab[i], lab[j]);
+			fprintf(fp_log, "  %s\n", "frequency[Hz]      real      imag   |S|[dB]  phase[deg]");
+			for (int ifreq = 0; ifreq < p->nfreq; ifreq++) {
+				const d_complex_t s = smm[ZIDX(p, ifreq, i, j)];
+				const double mag = d_abs(s);
+				const double db = (mag > 1e-30) ? (20 * log10(mag)) : -600;
+				fprintf(fp_log, "%13.5e%10.5f%10.5f%10.3f%12.3f\n",
+					freq_at(p, ifreq), s.r, s.i, db, atan2(s.i, s.r) * 180 / PI);
+			}
+		}
+	}
+	fflush(fp_log);
+
+	free(mt); free(lab); free(zref); free(tmp); free(smm); free(inpair);
+	return 0;
+}
+
+
+/*
 平面波入射の応答 (pw.csv) — planewave 指定時のみ
 
 ポート自体は MNA に何もスタンプしない (観測点にすぎない) ので、solve() が

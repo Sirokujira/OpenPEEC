@@ -35,7 +35,8 @@ cmake --build build -j"$(nproc)"
 # 回帰 : 解析解・文献値との比較 (MNA / 部分 L / 表皮効果 / 容量 / 遅延 / 角線 /
 #        面導体 / 体積セル / パネル / 地板 / 遠方界 / 近傍界 / 誘電体 /
 #        対数掃引 /
-#        平面波入射 / 過渡応答 / 縁寄せ格子 / Debye・Lorentz 分散)
+#        平面波入射 / 過渡応答 / 縁寄せ格子 / Debye・Lorentz 分散 /
+#        混合モード S)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 ```
 
@@ -61,7 +62,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 | `src/hmatrix.c` | Lp / P の H 行列圧縮 (クラスタツリー + ACA、compression = 1) |
 | `src/precond.c` | 葉ブロック消去 + 回路 Schur 補元の前処理 (compression = 1) |
 | `src/solve.c` | 周波数掃引 |
-| `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、`dist.csv` |
+| `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、混合モード `mixed.csv`、`dist.csv` |
 | `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率) |
 | `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv` / 平面波の全界 `nearpw.csv`、E / H の遅延ポテンシャル) |
 | `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
@@ -75,7 +76,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 - `.claude/rules/portability.md` — MSVC で実際に踏んだ落とし穴
   (VLA 禁止 / OpenMP インデックス事前宣言 / `<complex.h>` 不可 など)。
   編集のたびに `.claude/hooks/check-portability.sh` が自動検査する。
-- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 18 個の
+- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 19 個の
   不変条件**と、その番人になっている検証判定の対応。幾何積分・セル構成・
   MNA・圧縮経路に触る前に必読。
 - `.claude/rules/validation.md` — 入力キーの後方互換規則と、検証ケースの
@@ -109,6 +110,11 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 Touchstone `peec.sNp` に出力する。基準抵抗はポートごとに指定できるが、
 Touchstone 1.1 は 1 個しか記録できないので port#1 の値を書いて注記する。
 2 ポートだけ Touchstone の列順が S11 S21 S12 S22 と転置になる (仕様)。
+
+`mixedmode = p1 n1 [p2 n2 ...]` を書くと単端 S を直交行列 M で組み替えた
+混合モード S_mm = M S Mᵀ (差動 / 同相) を `mixed.csv` と `peec.log` に出す
+(`output.c` の `output_mixed()`、不変条件 19)。対の 2 ポートの z0 は等しく
+なければならない (差動 2·z0 / 同相 z0/2 の基準が定義できるのはその場合だけ)。
 
 ## 並列化とスレッド数不変性
 
