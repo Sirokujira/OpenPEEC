@@ -28,12 +28,16 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 #define FN_TRAN "tran.csv"
 #define FN_NEAR "near.csv"
 #define FN_NEARPW "nearpw.csv"
+#define FN_MM "mixed.csv"
 
 // 数学・物理定数 (自前マクロ : <math.h> の M_PI には依存しない)
 #define PI   (4.0 * atan(1.0))
 #define C0   (2.99792458e8)
 #define MU0  (4.0 * PI * 1e-7)
 #define EPS0 (1.0 / (C0 * C0 * MU0))
+
+// mixedmode で組める差動対の上限 (ポート数の半分まで。実用上は数対)
+#define MM_MAXPAIR 32
 
 // 誘電体 1 種あたりの分散極 (Debye + Lorentz) の上限 (広帯域の実測フィットでも数極で足りる)
 #define DIEL_MAXPOLE 8
@@ -245,6 +249,10 @@ typedef struct {
 	int    ffnth, ffnph;          // farfield = 分割数theta 分割数phi (0 = 無効)
 	int    nnf;                   // nearfield = ... の行数 (0 = 無効)
 	nf_t   *nf;                   // [nnf] 観測格子
+	// 混合モード S (mixedmode = p1 n1 [p2 n2 ...]) : 差動対 k は単端ポート
+	// mmport[2k] (正側) と mmport[2k+1] (負側)。0 始まり。nmm = 0 で無効
+	int    nmm;
+	int    mmport[2 * MM_MAXPAIR];
 	int    pw;                    // planewave : 平面波入射 (外部界励振)
 	double pwth, pwph;            // 平面波の到来方向 (theta, phi) [deg]
 	int    pwpol;                 // 偏波 : 1 = theta 偏波、2 = phi 偏波
@@ -442,6 +450,7 @@ void output_zin(const peec_t *p, FILE *fp_log);
 int  output_csv(const peec_t *p, const char *fn);
 void output_spara(const peec_t *p, FILE *fp_log);
 int  output_touchstone(const peec_t *p);
+int  output_mixed(const peec_t *p, const char *fn, FILE *fp_log);
 int  output_dist(const peec_t *p, const char *fn);
 int  output_pw(const peec_t *p, const char *fn, FILE *fp_log);
 

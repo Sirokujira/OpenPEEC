@@ -112,6 +112,7 @@ int main(int argc, char *argv[])
 	output_zin(&peec, fp_log);
 	output_spara(&peec, fp_log);
 	if (output_csv(&peec, FN_CSV) || output_touchstone(&peec) ||
+	    output_mixed(&peec, FN_MM, fp_log) ||
 	    output_dist(&peec, FN_DIST) || output_far(&peec, FN_FAR, fp_log) ||
 	    output_near(&peec, FN_NEAR, FN_NEARPW, fp_log) ||
 	    output_pw(&peec, FN_PW, fp_log) || output_tran(&peec, FN_TRAN, fp_log)) {
@@ -121,6 +122,10 @@ int main(int argc, char *argv[])
 	}
 	snprintf(str, sizeof(str), "output filename : %s, %s, peec.s%dp",
 		FN_LOG, FN_CSV, peec.nport);
+	if (peec.nmm > 0) {
+		strcat(str, ", ");
+		strcat(str, FN_MM);
+	}
 	if (peec.dist) {
 		strcat(str, ", ");
 		strcat(str, FN_DIST);

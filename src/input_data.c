@@ -632,6 +632,22 @@ int input_data(FILE *fp, peec_t *p)
 				return 1;
 			}
 		}
+		else if (!strcmp(strkey, "mixedmode")) {
+			// mixedmode = p1 n1 [p2 n2 ...] : 単端ポート番号 (1 始まり) の対
+			// (正側, 負側) を差動対にして混合モード S を出す (mixed.csv)。
+			// ポート番号の範囲・重複・対内の基準抵抗の一致はポートが
+			// 出揃ってから (ファイル末尾で) 検査する
+			const int nw = ntoken - 2;
+			if ((nw < 2) || ((nw % 2) != 0) || (nw > 2 * MM_MAXPAIR)) err = 1;
+			else {
+				p->nmm = nw / 2;
+				for (int k = 0; k < nw; k++) p->mmport[k] = atoi(token[2 + k]) - 1;
+			}
+			if (err) {
+				printf(errfmt2, "mixedmode");
+				return 1;
+			}
+		}
 		else if (!strcmp(strkey, "frequency")) {
 			if (ntoken < 5) err = 1;
 			else {
@@ -780,6 +796,24 @@ int input_data(FILE *fp, peec_t *p)
 	if (p->nfreq <= 0) {
 		printf("%s\n", "*** no frequency data");
 		return 1;
+	}
+	// mixedmode : 各ポートは 1 つの対にしか入れない。差動 / 同相の基準
+	// (2 z0 / z0/2) は対の 2 ポートの z0 が等しいときだけ定義できる
+	for (int k = 0; k < 2 * p->nmm; k++) {
+		const int ip = p->mmport[k];
+		int bad = (ip < 0) || (ip >= p->nport);
+		for (int l = 0; !bad && (l < k); l++) {
+			if (p->mmport[l] == ip) bad = 1;
+		}
+		if (!bad && ((k % 2) == 1) && (p->port[ip].z0 != p->port[p->mmport[k - 1]].z0)) {
+			printf("*** mixedmode : ports %d and %d must have the same reference impedance\n",
+				p->mmport[k - 1] + 1, ip + 1);
+			return 1;
+		}
+		if (bad) {
+			printf("*** mixedmode : invalid or duplicated port number %d\n", ip + 1);
+			return 1;
+		}
 	}
 	if ((p->nres + p->ncap + p->nind + p->nwire + p->nplate + p->npanel) <= 0) {
 		printf("%s\n", "*** no element data (resistor/capacitor/inductor/wire/bar/plate/polygon/disk)");

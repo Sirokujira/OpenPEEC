@@ -31,7 +31,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、143 判定)
+# 検証 (解析解・文献値との比較、151 判定)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -42,7 +42,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 143 判定すべて OK (h5py が
+**変更したら必ず `peec_check.sh` を通すこと。** 151 判定すべて OK (h5py が
 無い環境の `peec2h5 converter` だけは SKIP) でなければ完了ではない。
 「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
@@ -69,7 +69,7 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/pe
 | `src/hmatrix.c` | Lp / P の H 行列圧縮 (クラスタツリー + ACA、compression = 1) |
 | `src/precond.c` | 葉ブロック消去 + 回路 Schur 補元の前処理 (compression = 1) |
 | `src/solve.c` | 周波数掃引、Z → S 変換 |
-| `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、`dist.csv` |
+| `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、混合モード `mixed.csv`、`dist.csv` |
 | `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率) |
 | `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv` / 平面波の全界 `nearpw.csv`、E / H の遅延ポテンシャル) |
 | `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
@@ -228,6 +228,13 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
     ポート経路と突き合わせる。
     (`near loop Hz` / `near disk Ez` / `near vs far` / `near gp boundary` /
     `pw standing` / `loop shield` / `pw compensation` / `nearpw gp boundary`)
+18. **混合モード S は単端 S の直交な組替えで作る** — `S_mm = M S Mᵀ`、M は
+    差動対ごとに a_d = (a_p − a_n)/√2、a_c = (a_p + a_n)/√2 (対に入らない
+    ポートは 1)。√2 を落とすと |S| が 2 倍、符号を落とすと d と c が入れ替わる。
+    基準は差動 2·z0、同相 z0/2 で、対の z0 が等しいときだけ成り立つので
+    入力検査で強制する。並びは d1..dP, c1..cP, 単端 (番号順)。
+    (`mixed-mode (2 pairs)` / `mixed-mode Zref (2Z0,Z0/2)` /
+    `twinline no conversion` / `twinline norm preserved`)
 
 ## メモリ
 
@@ -292,6 +299,10 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
 `peec.sNp` に出力する。基準抵抗はポートごとに指定できるが、Touchstone 1.1 は
 1 個しか記録できないので port#1 の値を書いて注記する。
 **2 ポートだけ Touchstone の列順が S11 S21 S12 S22 と転置になる** (仕様)。
+
+`mixedmode = p1 n1 [p2 n2 ...]` で混合モード S_mm = M S Mᵀ (差動 / 同相) を
+`mixed.csv` と `peec.log` に出す (`output_mixed()`)。対の 2 ポートの z0 は
+等しいこと (差動 2·z0 / 同相 z0/2 の基準はその場合だけ定義できる)。
 
 ## CI
 

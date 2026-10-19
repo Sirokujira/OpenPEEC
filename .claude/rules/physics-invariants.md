@@ -428,6 +428,30 @@ OpenMP でもスレッド数によらずビット一致する。
 電荷の受け渡しをポート経路と突き合わせる) / `nearpw gp boundary` /
 `nearpw thread invariance`
 
+## (19) 混合モード S は単端 S の直交な組替えで作る (mixedmode)
+
+混合モード S (output.c の `output_mixed()`) は後処理なので壊れても Zin や
+`peec.sNp` は変わらない。`mixed.csv` だけが静かに狂う。守るべき約束は 3 つ。
+
+- **組替え行列 M は直交**。差動対 k = (p_k, n_k) について
+  a_dk = (a_pk − a_nk)/√2、a_ck = (a_pk + a_nk)/√2、対に入らないポートは
+  そのまま (係数 1)。S_mm = M S Mᵀ (M⁻¹ = Mᵀ)。√2 を落とすと |S| が 2 倍に
+  なり受動性が壊れ、符号を落とすと d と c が入れ替わる。直交なので
+  Σ|S_mm|² = Σ|S|² (フロベニウスノルム保存) が組替えの番人になる。
+- **基準抵抗は差動 2·z0、同相 z0/2**。電力波の組替えがこの基準と整合するのは
+  対の 2 ポートの z0 が等しいときだけなので、入力検査で強制する (異なる z0 を
+  黙って通すと、どちらの基準でも正しくない値が出る)。
+- **並びは d1..dP, c1..cP, 単端 (元の番号順)**。ラベル (`d1` / `c2` / `s3`) は
+  この並びと 1 対 1。Sdd21 は S(d2,d1) (行 = 応答、列 = 励振)。
+
+**番人**: `mixed-mode (2 pairs)` / `mixed-mode (pair + s3/s4)` (ABCD 行列から
+作った単端 S を Bockelman-Eisenstadt の定義式で組み替えた全成分との比較 :
+組替え行列とは独立な期待値) / `mixed-mode Zref (2Z0,Z0/2)` (平衡負荷の
+モード別入力インピーダンスからの反射係数 : 基準抵抗の約束) /
+`twinline no conversion` (鏡映対称な線路でモード変換が丸め誤差のみ) /
+`twinline reciprocity` / `twinline norm preserved` / `twinline asym converts` /
+`mixedmode parser guard`
+
 ## 並列化
 
 `lp_fill` / `pot_fill` / 近傍界の観測点ループは OpenMP 並列。並列ループ内で
