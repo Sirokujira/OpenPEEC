@@ -32,7 +32,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、165 判定)
+# 検証 (解析解・文献値との比較、169 判定)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -43,7 +43,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 165 判定すべて OK (h5py が
+**変更したら必ず `peec_check.sh` を通すこと。** 169 判定すべて OK (h5py が
 無い環境の `peec2h5 converter` だけは SKIP) でなければ完了ではない。
 「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
@@ -179,9 +179,13 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
    (mna.c) が周波数ごとの εr*(f) から過剰分だけを組む。定数 tanδ と分散の
    併用は損失の二重計上なので入力検証で拒否する。Lorentz 極
    Δε f0²/(f0²−f²+jfg) は分母の虚部が +jfg (e^{jωt} 規約で因果的・損失側)。
+   導電性の Drude 項 −fp²/(f²−jfg) と導電率 −jσ/(ωε0) は直流で発散するので
+   直流極限の和 ε∞ + ΣΔε = εr に入れない (Y は直流で σA/len に収まる)。
+   導電性があれば εr = 1 でもセルを作る。
    (`dielectric dC (pp)` / `dielectric epsr=1 noop` / `dielectric G (tand)` /
    `dielectric tand=0 noop` / `debye dY (3 freqs)` / `lorentz dY (5 freqs)` /
-   `lorentz+debye dY`)
+   `lorentz+debye dY` / `drude dY (5 freqs)` / `sigma dY (5 freqs)` /
+   `sigma brick (epsr=1) G`)
 10. **遠方界の規格化とポインティング整合** — r E = −j(ωμ0/4π)[N − (N·r̂)r̂]、
     U = |rE|²/(2η0)。係数を触るとパターン (D) は変わらず**効率だけが静かに
     狂う**ため、Prad = ∮U dΩ が Pin = Re(Zin)/2 と一致することが番人になる。
@@ -366,9 +370,10 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
 - 地板 (`groundplane`) は z = 一定の無限 PEC 面 1 枚のみ。積分回数は 2 倍に
   なるが未知数は増えない。導体は z ≥ 地板に置く (下はエラー)。
 - 誘電体 (`dielectric`) は直交直方体のみ。損失は一定 tanδ または多極分散
-  (Debye 極 `f de` と Lorentz 極 `lorentz f0 de g` の任意の組合せ) の
-  どちらか (併用は損失の二重計上なので入力検証で拒否)。直流極限が有限で
-  ない模型 (Drude) は未対応。
+  (Debye 極 `f de`、Lorentz 極 `lorentz f0 de g`、導電性の Drude 項
+  `drude fp g` と導電率 `sigma s` の任意の組合せ) のどちらか (併用は損失の
+  二重計上なので入力検証で拒否)。Drude と導電率は直流で発散するので直流極限の
+  和 ε∞ + ΣΔε = εr には入れない (枝のアドミタンスは直流で σA/len に収まる)。
 - 面格子の縁寄せは `grading = 1` (plate/quad 余弦・disk 正弦)。plate の
   メッシュ生成は非一様間隔対応 : 幅・中心・電荷セルは格子座標配列の
   隣接中点 (双対区間) から導く。等間隔時の式は従来と同一で省略時は

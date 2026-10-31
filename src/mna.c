@@ -133,6 +133,8 @@ int mna_numbering(peec_t *p, FILE *fp_log)
   Lorentz : chi_k = de_k f_k^2/(f_k^2 - f^2 + j f g_k)
           = de_k/(1 - q^2 + j q r)   (q = f/f_k、r = g_k/f_k)
 (各項が因果的で Kramers-Kronig を満たすので、和も満たす)。
+  Drude   : chi_k = -fp_k^2/(f^2 - j f g_k)   (導電性 : 直流導電率 2 pi eps0 fp^2/g)
+  導電率  : chi_k = -j sigma/(w eps0)          (Drude の g -> 無限大の極限)
 Debye 極が 1 個で de = epsr - eps_inf のときが従来の単極で、式は完全に同じ
 (Lorentz 極の分岐は Debye 極の式に触らない : 既存入力は bit 互換)。
 epsr* = a + jb (b <= 0) とすると
@@ -140,7 +142,11 @@ epsr* = a + jb (b <= 0) とすると
 で、-b >= 0 が損失のコンダクタンスになる。極ごとの寄与は
   Debye   : b_k = -de_k q/(1 + q^2) <= 0
   Lorentz : b_k = -de_k q r/((1 - q^2)^2 + (q r)^2) <= 0
-なので、和も必ず損失側に入る。Lorentz では a - 1 が負 (共振の少し上で
+  Drude   : b_k = -(fp/f)^2 (g/f)/(1 + (g/f)^2) <= 0
+  導電率  : b_k = -sigma/(w eps0) <= 0
+なので、和も必ず損失側に入る。Drude / 導電率の項は f -> 0 で -b が 1/f で
+発散するが、Y = w eps0 gfac (-b + ...) の w が打ち消して Y -> sigma A/len
+(有限) に収まる (分極電流の枝が伝導電流の枝になる)。Lorentz では a - 1 が負 (共振の少し上で
 epsr' < 1) になり得て、そのとき枝のサセプタンスは誘導性になる
 (-b > 0 が残るので Y は 0 にならず、Z = 1/Y は有限)。
 */
@@ -150,11 +156,22 @@ static d_complex_t zint_diel(const peec_t *p, const seg_t *s, double omega, doub
 	if (dl->npole > 0) {
 		d_complex_t er = d_complex(dl->epsinf, 0);
 		for (int k = 0; k < dl->npole; k++) {
-			if (dl->plor[k]) {
+			if (dl->pkind[k] == POLE_LORENTZ) {
 				const double q = f / dl->pf[k];
 				const double r = dl->pg[k] / dl->pf[k];
 				er = d_add(er, d_div(d_complex(dl->pde[k], 0),
 					d_complex(1 - (q * q), q * r)));
+				continue;
+			}
+			if (dl->pkind[k] == POLE_DRUDE) {
+				// -fp^2/(f^2 - j f g) = -(fp/f)^2/(1 - j g/f) (f > 0)
+				const double u = dl->pf[k] / f;
+				er = d_add(er, d_div(d_complex(-(u * u), 0),
+					d_complex(1, -dl->pg[k] / f)));
+				continue;
+			}
+			if (dl->pkind[k] == POLE_SIGMA) {
+				er = d_add(er, d_complex(0, -dl->pde[k] / (omega * EPS0)));
 				continue;
 			}
 			er = d_add(er, d_div(d_complex(dl->pde[k], 0),

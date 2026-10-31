@@ -132,21 +132,29 @@ typedef struct {
 // 3 方向の枝 (体積セル) に過剰容量 C_e = eps0 (epsr-1) A/len を直列に置き、
 // 節点の束縛電荷が電位係数 P に参加する。導体と接する面のノードは
 // nodetol マージで導体ノードと共有される。
+#define POLE_DEBYE   0
+#define POLE_LORENTZ 1
+#define POLE_DRUDE   2
+#define POLE_SIGMA   3
 typedef struct {
 	double org[3], ea[3], eb[3];
 	double thick, epsr, tand;
 	// 多極分散 : epsr*(f) = eps_inf + sum_k chi_k(f)
 	//   Debye 極   : chi_k = de[k]/(1 + j f/pf[k])
 	//   Lorentz 極 : chi_k = de[k] pf[k]^2/(pf[k]^2 - f^2 + j f pg[k])
+	//   Drude 項   : chi_k = -pf[k]^2/(f^2 - j f pg[k])   (pf = プラズマ周波数、
+	//                pg = 衝突周波数 [Hz]。直流導電率 2 pi eps0 pf^2/pg)
+	//   導電率     : chi_k = -j pde[k]/(w eps0)           (pde = sigma [S/m])
 	// npole = 0 で分散なし。Debye 1 極は従来の単極と完全に同じ式になる。
-	// どちらの極も f -> 0 で de[k] に戻るので、直流極限は
-	// eps_inf + sum de[k] = epsr (パーサが一致を要求する)。
+	// Debye / Lorentz 極は f -> 0 で de[k] に戻るので、直流極限は
+	// eps_inf + sum de[k] = epsr (パーサが一致を要求する)。Drude 項と導電率は
+	// 直流で発散する (導電性) ので、この和に入れない。
 	double epsinf;
 	int    npole;
-	double pf[DIEL_MAXPOLE];      // Debye : 緩和周波数 / Lorentz : 共振周波数 [Hz] (> 0)
-	double pde[DIEL_MAXPOLE];     // 強度 de_k (> 0)
-	double pg[DIEL_MAXPOLE];      // Lorentz の減衰幅 g_k [Hz] (> 0)。Debye 極では 0
-	int    plor[DIEL_MAXPOLE];    // 1 = Lorentz 極、0 = Debye 極
+	double pf[DIEL_MAXPOLE];      // Debye : 緩和周波数 / Lorentz : 共振周波数 / Drude : プラズマ周波数 [Hz] (> 0)
+	double pde[DIEL_MAXPOLE];     // Debye / Lorentz : 強度 de_k (> 0)、導電率 : sigma [S/m] (> 0)
+	double pg[DIEL_MAXPOLE];      // Lorentz の減衰幅 / Drude の衝突周波数 g_k [Hz] (> 0)
+	int    pkind[DIEL_MAXPOLE];   // POLE_DEBYE / POLE_LORENTZ / POLE_DRUDE / POLE_SIGMA
 	int    ndiva, ndivb, ndivt;
 } diel_t;
 

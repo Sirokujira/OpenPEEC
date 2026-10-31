@@ -858,6 +858,66 @@ else
 	status=1
 fi
 
+# (ba) 導電性の誘電体 : Drude 項 (eps_inf = 3、fp = 4 MHz、g = 1 MHz) と一定の
+#      導電率 (epsr = 4、sigma = 1e-3 S/m)。空気ケースとの差
+#      dY(f) = j w eps0 (epsr*(f) - 1) A/d を 5 点 x (G, B) で解析式と比べる。
+#      ddy <ファイル> <a/b の式の種類> : 最大相対誤差と点数
+ddy() {
+	paste -d, "$1" "$csv" | awk -F, -v kind="$2" 'BEGIN {
+		PI = atan2(0, -1); e0 = 8.854187817620389e-12; K = e0 * 0.0016 / 4e-4
+	}
+	NR > 1 {
+		f = $2; w = 2 * PI * f;
+		da = ($3 * $3) + ($4 * $4);     g1 = $3 / da;  b1 = -$4 / da;
+		db = ($10 * $10) + ($11 * $11); g2 = $10 / db; b2 = -$11 / db;
+		if (kind == "drude") {
+			fp = 4e6; g = 1e6; den = (f ^ 4) + ((f * g) ^ 2);
+			a = 3 - (fp * fp * f * f / den); b = -(fp * fp * f * g / den)
+		} else {
+			a = 4; b = -1e-3 / (w * e0)
+		}
+		eG = w * K * (-b); eB = w * K * (a - 1);
+		dg = ((g1 - g2) / eG) - 1; if (dg < 0) dg = -dg; if (dg > mx) mx = dg;
+		dbv = ((b1 - b2) / eB) - 1; if (dbv < 0) dbv = -dbv; if (dbv > mx) mx = dbv;
+		n++
+	} END {printf "%d %.3e\n", n, mx}'
+}
+for kind in drude sigma; do
+	cp "$SRC/diel_$kind.peec" "$WORK/"
+	run "diel_$kind.peec"
+	cp "$csv" "$WORK/zin_$kind.csv"
+	sed '/^dielectric/d' "$SRC/diel_$kind.peec" > "$WORK/diel_${kind}_air.peec"
+	run "diel_${kind}_air.peec"
+	cp "$csv" "$WORK/zin_${kind}_air.csv"
+	set -- $(ddy "$WORK/zin_$kind.csv" "$kind")
+	awk -v n="$1" -v e="$2" -v lb="$kind dY (5 freqs)" 'BEGIN {
+		ok = (n == 5) && (e <= 2e-3);
+		printf "%-24s freqs=%d max rel err=%.3e -> %s (<= 2e-3)\n", lb, n, e, ok ? "OK" : "NG";
+		exit ok ? 0 : 1
+	}' || status=1
+done
+# epsr = 1 でも導電性があればセルを作る (分極なし・伝導だけ) : G = sigma A/d = 4 mS
+sed 's/ 0.0004 4 8 8 2 0 4 sigma 1e-3$/ 0.0004 1 8 8 2 0 1 sigma 1e-3/' "$SRC/diel_sigma.peec" > "$WORK/diel_sigma1.peec"
+run diel_sigma1.peec
+cp "$csv" "$WORK/zin_sigma1.csv"
+chk "sigma brick (epsr=1) G" "$(paste -d, "$WORK/zin_sigma1.csv" "$WORK/zin_sigma_air.csv" | awk -F, 'NR == 2 {
+	print ($3 / (($3 * $3) + ($4 * $4))) - ($10 / (($10 * $10) + ($11 * $11)))}')" 4e-3 1e-3
+
+# 書き間違いは拒否されること : Drude の fp <= 0・g <= 0・語の不足、
+# 導電率 <= 0 (2 通り)、tand と導電率の併用
+nbad=0
+for dl in "0.0004 3 8 8 2 0 3 drude 0 1e6" "0.0004 3 8 8 2 0 3 drude 4e6 0" "0.0004 3 8 8 2 0 3 drude 4e6" \
+          "0.0004 4 8 8 2 0 4 sigma 0" "0.0004 4 8 8 2 0 4 sigma -1e-3" "0.0004 4 8 8 2 0.01 4 sigma 1e-3"; do
+	sed "s/ 0.0004 4 8 8 2 0 4 sigma 1e-3\$/ $dl/" "$SRC/diel_sigma.peec" > "$WORK/diel_bad.peec"
+	if (cd "$WORK" && "$PEEC" -n 1 diel_bad.peec > diel_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+done
+if [ "$nbad" -eq 6 ]; then
+	printf "%-24s -> OK (6/6 malformed inputs rejected)\n" "drude/sigma parser guard"
+else
+	printf "%-24s -> NG (%d/6 malformed inputs rejected)\n" "drude/sigma parser guard" "$nbad" >&2
+	status=1
+fi
+
 # --- 平面波の散乱遠方界とレーダー断面積 (planewave + farfield -> farpw.csv)
 # getsig <key> [n] : peec.log の "farfield (planewave)" 行の n 番目 (既定 1) から
 # sigma_scat / sigma_ext / sigma_abs を取り出す

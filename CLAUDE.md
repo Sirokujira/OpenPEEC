@@ -13,7 +13,7 @@ OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を�
 `near.csv`、平面波併用時は全界 `nearpw.csv`)、平面波入射 (`planewave` → `pw.csv`、
 EMC イミュニティ)、過渡応答 (`transient` → `tran.csv`、掃引の逆 FFT)、
 対数掃引 (`frequency ... log`)、縁寄せ格子 (`grading`)、
-誘電損 tanδ / 多極 Debye・Lorentz 分散 (`dielectric` の省略可能引数)。
+誘電損 tanδ / 多極 Debye・Lorentz 分散 / 導電性の Drude 項・導電率 σ (`dielectric` の省略可能引数)。
 `capacitance` / `skineffect` / `retardation` / `groundplane` / `farfield` /
 `nearfield` / `planewave` / `transient` は既定で無効 (キー省略時は従来動作と
 完全一致)。

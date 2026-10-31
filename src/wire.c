@@ -927,9 +927,16 @@ int wire_build(peec_t *p, FILE *fp_log)
 		fprintf(fp_log, "dielectric #%d : epsr = %g, eps_inf = %g, %d poles\n",
 			idl + 1, dl->epsr, dl->epsinf, dl->npole);
 		for (int k = 0; k < dl->npole; k++) {
-			if (dl->plor[k]) {
+			if (dl->pkind[k] == POLE_LORENTZ) {
 				fprintf(fp_log, "  pole %d : Lorentz f0 = %g Hz, de = %g, g = %g Hz (Q = %g)\n",
 					k + 1, dl->pf[k], dl->pde[k], dl->pg[k], dl->pf[k] / dl->pg[k]);
+			}
+			else if (dl->pkind[k] == POLE_DRUDE) {
+				fprintf(fp_log, "  pole %d : Drude   fp = %g Hz, g = %g Hz (sigma_dc = %g S/m)\n",
+					k + 1, dl->pf[k], dl->pg[k], 2 * PI * EPS0 * dl->pf[k] * dl->pf[k] / dl->pg[k]);
+			}
+			else if (dl->pkind[k] == POLE_SIGMA) {
+				fprintf(fp_log, "  pole %d : sigma   = %g S/m\n", k + 1, dl->pde[k]);
 			}
 			else {
 				fprintf(fp_log, "  pole %d : Debye   fr = %g Hz, de = %g\n",

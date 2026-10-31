@@ -216,8 +216,10 @@ same portability rules, no external numerical libraries.
   多極分散 (Debye 極 Δε_k/(1+jf/f_k) と Lorentz 極
   Δε_k f_k²/(f_k²−f²+jf g_k) の任意の組合せ。どちらも因果的で KK 整合)
   のどちらかで指定します (併用は損失の二重計上になるため拒否されます)。
-  Drude (自由電子、直流で発散) のように直流極限が有限でない模型は
-  未対応です (直流極限 ε∞ + ΣΔε_k = εr の一致を要求しているため)。
+  導電性の項として Drude 項 −f_p²/(f²−jf g) (自由電子・ドープ半導体。直流導電率
+  2πε0 f_p²/g) と一定の導電率 −jσ/(ωε0) (損失性基板) も同じ並びに書けます。
+  この 2 つは直流で発散するので直流極限の和 ε∞ + ΣΔε_k = εr には入れません
+  (枝のアドミタンスは直流で σA/len に収まり有限)。
   節点の束縛電荷は a–b 面内の双対矩形パネルで表すため、
   側面の束縛電荷は面直位置がセル幅の範囲で近似になります (表面電荷が
   a–b 面に支配的な配置 — 基板・平行平板など — で正確)。
@@ -234,7 +236,7 @@ same portability rules, no external numerical libraries.
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値と比較、165 判定。許容は判定ごとに 1e-12 〜 3%)
+# 検証 (解析解・文献値と比較、169 判定。許容は判定ごとに 1e-12 〜 3%)
 # 実行ファイルは相対パスでもよい (スクリプトが絶対パスに直す)
 sh data/sample/peec_check.sh bin/peec /tmp/peec-check
 
@@ -388,7 +390,7 @@ d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 
 | `plate` | `plate = ox oy oz ax ay az bx by bz 厚さ 導電率 分割数a 分割数b [分割数t]` | 平面矩形の面導体 (2 辺ベクトルは直交)。`分割数t` (省略時 1) ≥ 2 で厚み方向も分割 (体積セル) |
 | `quad` | `quad = x1 y1 z1 x2 y2 z2 x3 y3 z3 x4 y4 z4 厚さ 導電率 分割数a 分割数b` | 凸な一般四辺形の面導体 (頂点は一周順)。分割 a は辺 1-2 方向、b は辺 1-4 方向 |
 | `disk` | `disk = cx cy cz nx ny nz 半径 厚さ 導電率 nring nsec` | 円板の面導体 (中心 c、法線 n)。nsec ≤ 32 |
-| `dielectric` | `dielectric = ox oy oz ax ay az bx by bz 厚さ εr 分割数a 分割数b 分割数t [tanδ [ε∞ 分散]]` | 誘電体ブリック (過剰容量)。org を底面として法線 (a×b) 方向へ厚さぶん押し出した直方体。`capacitance = 1` 必須。εr = 1 は無効果。tanδ (省略時 0) で誘電損 εr\* = εr(1−j tanδ)。ε∞ の後ろに分散を書くと多極分散 εr\*(f) = ε∞ + Σ_k χ_k(f) (このとき tanδ = 0 を書く)。**1 語**なら `f_r` の単極 Debye (強度は εr−ε∞)。それ以外は極の並びで、Debye 極 `f_k Δε_k` (χ = Δε_k/(1+jf/f_k)) と Lorentz 極 `lorentz f_k Δε_k g_k` (共振周波数 f_k・減衰幅 g_k [Hz] > 0 : χ = Δε_k f_k²/(f_k²−f²+jf g_k)) を任意の順・組合せで書ける (極は合わせて 8 個まで)。多極は直流極限 ε∞ + ΣΔε_k = εr の一致が必要 |
+| `dielectric` | `dielectric = ox oy oz ax ay az bx by bz 厚さ εr 分割数a 分割数b 分割数t [tanδ [ε∞ 分散]]` | 誘電体ブリック (過剰容量)。org を底面として法線 (a×b) 方向へ厚さぶん押し出した直方体。`capacitance = 1` 必須。εr = 1 は無効果。tanδ (省略時 0) で誘電損 εr\* = εr(1−j tanδ)。ε∞ の後ろに分散を書くと多極分散 εr\*(f) = ε∞ + Σ_k χ_k(f) (このとき tanδ = 0 を書く)。**1 語**なら `f_r` の単極 Debye (強度は εr−ε∞)。それ以外は極の並びで、Debye 極 `f_k Δε_k` (χ = Δε_k/(1+jf/f_k)) と Lorentz 極 `lorentz f_k Δε_k g_k` (共振周波数 f_k・減衰幅 g_k [Hz] > 0 : χ = Δε_k f_k²/(f_k²−f²+jf g_k))、導電性の Drude 項 `drude f_p g` (プラズマ周波数・衝突周波数 [Hz] > 0 : χ = −f_p²/(f²−jf g)、直流導電率 2πε0 f_p²/g) と導電率 `sigma σ` ([S/m] > 0 : χ = −jσ/(ωε0)) を任意の順・組合せで書ける (合わせて 8 個まで)。直流極限 ε∞ + ΣΔε_k = εr の一致が必要 (和は Debye / Lorentz 極だけ。Drude と導電率は直流で発散するので入れない)。導電性があれば εr = 1 でもセルを作る |
 | `grading` | `grading = 1` | 面格子の縁寄せ (plate/quad 余弦、disk 正弦)。省略時 0 = 等間隔 |
 | `port` | `port = n1 n2 Z0` | ポート (Zin / S パラメータの基準抵抗 Z0 [Ω])。複数書くと多ポート解析になる |
 | `mixedmode` | `mixedmode = p1 n1 [p2 n2 ...]` | 単端ポート番号 (1 始まり、`port` 行の順) の対 (正側, 負側) を差動対にし、混合モード S を `mixed.csv` に出す。各ポートは 1 つの対にしか入れられず、対の 2 ポートの Z0 は等しいこと。対に入らないポートは単端のまま通る |
@@ -513,6 +515,9 @@ d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 
 | `diel_lorentz.peec` Lorentz 分散 | 1 極 (Δε=2@f0=1MHz, g=200kHz, Q=5) で共振をまたぐ 0.8〜1.2 MHz の 5 点 × (G, B) を ΔY の解析式と比較。共振の上で εr′ < 0 (枝が誘導性) になる 2 点を含む (実測 3.5e-5) | 2e-3 |
 | `diel_lorentz2.peec` Lorentz + Debye 混在 | Lorentz (2@100kHz, g=50kHz) を先、Debye (1@1kHz) を後に書いた 2 極で 5 点 × (G, B) を極の和の解析式と比較 (実測 4.3e-4) | 2e-3 |
 | `diel_lorentz.peec` 入力検証 | 減衰幅 g ≤ 0、語の不足、強度の和の不一致の 3 通りがエラー終了すること | 3/3 拒否 |
+| `diel_drude.peec` 導電性の誘電体 (Drude) | ε∞ = 3、f_p = 4 MHz、g = 1 MHz の平行平板で ΔY(f) = jωε₀(εr\*(f)−1)A/d を 1 kHz〜10 MHz の 5 点 × (G, B) で解析式と比較。低域で G = σ_dc A/d (σ_dc = 2πε₀f_p²/g)、f = g で半分、εr′ < 1 で枝が誘導性になる点を含む (実測 1.5e-3、最大は G ≪ B の 10 MHz) | 2e-3 |
+| `diel_sigma.peec` 一定の導電率 | εr = 4、σ = 1e-3 S/m : G = σA/d = 4 mS が周波数に依らない (tanδ の G ∝ f とは別経路)、B = 3ωε₀A/d (実測 2.1e-4)。εr = 1 + σ でもセルを作り G = 4 mS | 2e-3 / 0.1% |
+| `diel_sigma.peec` 入力検証 | Drude の f_p ≤ 0・g ≤ 0・語の不足、σ ≤ 0 (2 通り)、tanδ との併用の 6 通りがエラー終了すること | 6/6 拒否 |
 | `tline_term.peec` 抵抗終端した線路 | Zin = Z0(ZL + jZ0 tanθ)/(Z0 + jZL tanθ) (Z0 = 50, ZL = 100) を θ = π/4〜5π/4 の 5 点で。λ/4 で Z0²/ZL = 25 Ω、λ/2 で ZL。損失 2 dB の版は tanh γl の式と比べる | 1e-8 |
 | `tline_matched.peec` 整合した損失線路 | 基準 75 Ω で S11 = S22 = 0、S21 = S12 = 10^(−3/20) e^{−j2πf·td} (td = 2 ns、10 点)。位相の向き = 遅延の符号 | 1e-9 |
 | `tline_tdr.peec` 線路の TDR (transient 併用) | 整合線路の先の R = 150 Ω で y(t) = Γ x(t − 2td) (Γ = 0.5、2td = 32Δt で厳密)。遅延の符号を取り違えると前進して落ちる | 1e-9 |

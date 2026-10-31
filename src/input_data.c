@@ -493,20 +493,30 @@ int input_data(FILE *fp, peec_t *p)
 								printf("%s\n", "*** dielectric : too many poles");
 								return 1;
 							}
-							const int lor = !strcmp(token[it], "lorentz");
-							if (lor) it++;
-							const int nw = lor ? 3 : 2;
+							// 種類 : lorentz f0 de g / drude fp g / sigma s / (既定) Debye f de
+							int kind = POLE_DEBYE;
+							if (!strcmp(token[it], "lorentz")) kind = POLE_LORENTZ;
+							else if (!strcmp(token[it], "drude")) kind = POLE_DRUDE;
+							else if (!strcmp(token[it], "sigma")) kind = POLE_SIGMA;
+							if (kind != POLE_DEBYE) it++;
+							const int nw = (kind == POLE_LORENTZ) ? 3 : (kind == POLE_SIGMA) ? 1 : 2;
 							if ((it + nw) > ntoken) {
 								err = 1;
 								break;
 							}
 							const int k = e->npole;
-							e->pf[k] = atof(token[it]);
-							e->pde[k] = atof(token[it + 1]);
-							if (lor) {
-								e->plor[k] = 1;
-								e->pg[k] = atof(token[it + 2]);
-								if (e->pg[k] <= 0) err = 1;
+							e->pkind[k] = kind;
+							if (kind == POLE_SIGMA) {
+								e->pde[k] = atof(token[it]);
+							}
+							else if (kind == POLE_DRUDE) {
+								e->pf[k] = atof(token[it]);
+								e->pg[k] = atof(token[it + 1]);
+							}
+							else {
+								e->pf[k] = atof(token[it]);
+								e->pde[k] = atof(token[it + 1]);
+								if (kind == POLE_LORENTZ) e->pg[k] = atof(token[it + 2]);
 							}
 							e->npole++;
 							it += nw;
@@ -516,9 +526,18 @@ int input_data(FILE *fp, peec_t *p)
 					// eps_inf は 1 以上 epsr 以下 (強度 de_k > 0 の和だけ下がる)。
 					// 定数 tand と分散の併用は損失の二重計上なので拒否する
 					if ((e->epsinf < 1) || (e->epsinf > e->epsr) || (e->tand != 0)) err = 1;
+					// 各項の正値性。Drude / 導電率は直流で発散するので直流極限の和に入れない
 					double sde = 0;
 					for (int k = 0; k < e->npole; k++) {
-						if ((e->pf[k] <= 0) || (e->pde[k] <= 0)) err = 1;
+						const int kind = e->pkind[k];
+						if (kind == POLE_SIGMA) {
+							if (e->pde[k] <= 0) err = 1;
+							continue;
+						}
+						if (e->pf[k] <= 0) err = 1;
+						if (((kind == POLE_LORENTZ) || (kind == POLE_DRUDE)) && (e->pg[k] <= 0)) err = 1;
+						if (kind == POLE_DRUDE) continue;
+						if (e->pde[k] <= 0) err = 1;
 						sde += e->pde[k];
 					}
 					// 直流極限の整合 : eps_inf + sum de_k = epsr
@@ -537,8 +556,13 @@ int input_data(FILE *fp, peec_t *p)
 					printf("%s\n", "*** dielectric : the two edge vectors must be perpendicular");
 					return 1;
 				}
-				// epsr = 1 は真空と同じ : セルを作らない (完全に無効果、空気と bit 一致)
-				if (!err && (e->epsr > 1)) p->ndiel++;
+				// epsr = 1 は真空と同じ : セルを作らない (完全に無効果、空気と bit 一致)。
+				// ただし導電性 (Drude / 導電率) があれば epsr = 1 でも電流が流れる
+				int cond = 0;
+				for (int k = 0; k < e->npole; k++) {
+					if ((e->pkind[k] == POLE_DRUDE) || (e->pkind[k] == POLE_SIGMA)) cond = 1;
+				}
+				if (!err && ((e->epsr > 1) || cond)) p->ndiel++;
 			}
 			if (err) {
 				printf(errfmt2, "dielectric");
