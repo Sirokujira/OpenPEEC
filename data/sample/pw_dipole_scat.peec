@@ -1,0 +1,43 @@
+# 検証 (ay) : 平面波の散乱 — 負荷付き半波長ダイポールのエネルギー保存と補償定理
+#
+# 目的
+#   dipole_pw.peec と同じ半波長ダイポール (全長 1 m、半径 1 mm 銅、片腕 16
+#   分割、中央ポート) のポートを R_L = 50 ohm で終端し、broadside から
+#   theta 偏波の平面波 (E0 = 1 V/m) を当てる。散乱界 (farpw.csv) と断面積
+#   (peec.log) を、コードとは別経路の 2 つの恒等式で判定する。
+#
+# 1. エネルギー保存 (光学定理)
+#      sigma_e = sigma_s + sigma_L + sigma_wire
+#    sigma_e : 前方散乱振幅から光学定理で出した消光断面積 (peec.log)
+#    sigma_s : 散乱パターンの全立体角積分 (peec.log)
+#    sigma_L : 負荷の吸収 (1/2)|V|^2/R_L を入射電力密度 E0^2/(2 eta0) で
+#              割ったもの = eta0 |V|^2 / (R_L E0^2)。V は pw.csv の端子電圧
+#              (散乱計算とは独立に回路側から読む)
+#    sigma_wire : 銅線の導体損。R_wire ~ 5.5e-3 ohm は負荷 50 ohm の 1e-4
+#              なので判定の許容内 (sigma_L の 1e-4 程度)
+#    PEEC の放射は L と P の遅延 (retardation = 1) から出るので、これは
+#    dipole ff efficiency (送信側の Prad = Pin) の受信・散乱版になる。
+#    掃引は共振をまたぐ 3 点 (130 / 145 / 160 MHz)。判定は相対 2e-3。
+#
+# 2. 補償定理 (受信アンテナの散乱の分解)
+#      F_B(r^) = F_A,pw(r^) - I_L F_A,port(r^)
+#    A = ポート開放 (負荷なし)、B = 負荷付き (このファイル)。F_A,pw は A の
+#    散乱界 (farpw.csv)、F_A,port は A の port #1 を 1 A で励振した放射界
+#    (far.csv)、I_L = Voc_A / (Zin_A + R_L) は B の負荷電流 (Voc_A と Zin_A は
+#    A の pw.csv と zin.csv)。両辺は離散系で厳密に一致するので、
+#    平面波経路の誘起電流がポート経路と整合していること (散乱界の符号・
+#    規格化・鏡像なしの全方向) の番人になる。判定は max|差| / max|F_B| <= 1e-6。
+OpenPEEC 1 0
+title = loaded half-wave dipole scattering a plane wave (energy balance)
+capacitance = 1
+retardation = 1
+farfield = 36 48
+planewave = 90 0 1 1.0
+node = 1 0 0 -0.0005
+node = 2 0 0 0.0005
+wire = 0 0 -0.5 0 0 -0.0005 1e-3 5.8e7 16
+wire = 0 0 0.0005 0 0 0.5 1e-3 5.8e7 16
+resistor = 1 2 50
+port = 1 2 50
+frequency = 1.3e8 1.6e8 2
+end

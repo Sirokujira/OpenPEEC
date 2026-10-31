@@ -58,3 +58,15 @@ else()
 endif()
 
 target_link_libraries(peec PRIVATE ${MATH_LIB})
+
+# GCC : 浮動小数点の縮約 (a*b+c -> FMA) を禁止して式どおりに評価させる。
+# GCC 15.2 (ubuntu-26.04 の既定は -march=x86-64-v3 = AVX2 + FMA) の SLP
+# ベクトル化は、FMA 縮約が使えるときに farfield.c の放射ベクトルの累積を
+# 誤ってコンパイルし、far.csv / farpw.csv が丸め誤差どころではなく狂った
+# (相反判定で 16%〜500%、ループの RCS で 2000 倍)。-ffp-contract=off、
+# -fno-tree-slp-vectorize、FMA なしの -march のどれでも正しくなる。
+# 縮約を切ると結果が FMA の有無 (CPU / -march) に依存しなくなる利点もある。
+# FMA の無い既定の x86-64 では生成コードの意味は変わらない (出力はバイト一致)。
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(peec PRIVATE -ffp-contract=off)
+endif()

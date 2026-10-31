@@ -8,7 +8,7 @@ OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を�
 導体は丸線 (`wire`) / 角線 (`bar`) / 面導体 (`plate` = 矩形、
 `quad` = 凸四辺形、`disk` = 円板)、らせん / 円形ループ (`helix`、直線 `wire` 列に展開)。ほかに無限 PEC 地板 (`groundplane`、
 鏡像法)、誘電体ブリック (`dielectric`、Ruehli の過剰容量)、
-遠方界後処理 (`farfield` → `far.csv`)、近傍界後処理 (`nearfield` →
+遠方界後処理 (`farfield` → `far.csv`、平面波併用時は散乱界・RCS `farpw.csv`)、近傍界後処理 (`nearfield` →
 `near.csv`、平面波併用時は全界 `nearpw.csv`)、平面波入射 (`planewave` → `pw.csv`、
 EMC イミュニティ)、過渡応答 (`transient` → `tran.csv`、掃引の逆 FFT)、
 対数掃引 (`frequency ... log`)、縁寄せ格子 (`grading`)、
@@ -36,7 +36,7 @@ cmake --build build -j"$(nproc)"
 #        面導体 / 体積セル / パネル / 地板 / 遠方界 / 近傍界 / 誘電体 /
 #        対数掃引 /
 #        平面波入射 / 過渡応答 / 縁寄せ格子 / Debye・Lorentz 分散 /
-#        混合モード S)
+#        混合モード S / 散乱遠方界・RCS)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 ```
 
@@ -63,7 +63,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 | `src/precond.c` | 葉ブロック消去 + 回路 Schur 補元の前処理 (compression = 1) |
 | `src/solve.c` | 周波数掃引 |
 | `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、混合モード `mixed.csv`、`dist.csv` |
-| `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率) |
+| `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率。平面波の散乱界・RCS・光学定理 → `farpw.csv`) |
 | `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv` / 平面波の全界 `nearpw.csv`、E / H の遅延ポテンシャル) |
 | `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
 | `tools/peec2h5.py` | CSV → HDF5 変換 (本体の依存を増やさないための外付け) |
@@ -76,7 +76,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 - `.claude/rules/portability.md` — MSVC で実際に踏んだ落とし穴
   (VLA 禁止 / OpenMP インデックス事前宣言 / `<complex.h>` 不可 など)。
   編集のたびに `.claude/hooks/check-portability.sh` が自動検査する。
-- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 19 個の
+- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 20 個の
   不変条件**と、その番人になっている検証判定の対応。幾何積分・セル構成・
   MNA・圧縮経路に触る前に必読。
 - `.claude/rules/validation.md` — 入力キーの後方互換規則と、検証ケースの

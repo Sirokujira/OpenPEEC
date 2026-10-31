@@ -31,6 +31,22 @@ Linux/macOS では通るが Windows (MSVC) で落ちるものだけを挙げる�
    検証スクリプトからこの種のツールを呼ぶときは、依存が無ければ SKIP する
    (`peec_check.sh` の `peec2h5 converter` が例)。
 
+## GCC の最適化で踏んだもの (Linux CI)
+
+9. **FMA 縮約は切る (`-ffp-contract=off`、CMakeLists の GNU ブロック)**。
+   ubuntu-26.04 ランナーの GCC 15.2 は既定で `-march=x86-64-v3` (AVX2 + FMA)
+   になり、`-O2` 以上の SLP ベクトル化が farfield.c の放射ベクトルの累積
+   (`ff_nvec()`) を誤ってコンパイルした。far.csv / farpw.csv が丸め誤差では
+   なく狂う (相反判定 16%〜500%、ループの RCS 2000 倍) のに、Debug の
+   sanitize ジョブ・macOS・Windows・ローカルの GCC 13/14 (v3 指定でも)・clang は
+   すべて通る。`-ffp-contract=off` / `-fno-tree-slp-vectorize` / FMA なしの
+   `-march` のどれでも正しくなる (noinline・noipa・引数のスカラー化・ループの
+   書き換えでは直らない)。縮約を切ると結果が FMA の有無に依存しなくなり、
+   FMA の無い既定の x86-64 では出力がバイト一致のまま。
+   **ランナーのコンパイラが変わって Linux だけ落ちたら**、まず
+   `gcc -Q --help=target | grep march` で既定の -march を確かめ、ファイル単位の
+   `-O0` とフラグ単位の切り分けを CI 上で回す (ローカルで再現しないことが多い)。
+
 ## 検査
 
 ```bash

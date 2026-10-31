@@ -29,6 +29,7 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 #define FN_NEAR "near.csv"
 #define FN_NEARPW "nearpw.csv"
 #define FN_MM "mixed.csv"
+#define FN_FARPW "farpw.csv"
 
 // 数学・物理定数 (自前マクロ : <math.h> の M_PI には依存しない)
 #define PI   (4.0 * atan(1.0))
@@ -456,6 +457,7 @@ int  output_pw(const peec_t *p, const char *fn, FILE *fp_log);
 
 // farfield.c
 int  output_far(const peec_t *p, const char *fn, FILE *fp_log);
+int  output_farpw(const peec_t *p, const char *fn, FILE *fp_log);
 
 // nearfield.c
 int  output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log);

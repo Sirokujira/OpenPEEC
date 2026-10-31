@@ -101,6 +101,13 @@ same portability rules, no external numerical libraries.
   球面 (地板ありは鏡像込みで上半球) のグリッド積分、放射効率 = Prad/Pin
   (Pin = Re Zin/2) を `peec.log` に出します。効率が意味を持つのは
   `retardation = 1` のときです (準静的電流は放射を含まないため)。
+  `planewave` と併用すると、平面波が誘起した電流を放射源にした**散乱界**も
+  同じ式で求め、`farpw.csv` に r·E_s の θ/φ 成分と双方向レーダー断面積
+  σ = 4π|r·E_s|²/|E₀|² [m², dBsm] を出します。`peec.log` には全散乱断面積
+  σ_s = ∮|r·E_s|²dΩ/|E₀|² と、前方散乱振幅から光学定理で求めた消光断面積
+  σ_e = −(4π/k) Im[ê·r·E_s(前方)/E₀]、吸収断面積 σ_a = σ_e − σ_s を出します
+  (σ_e は地板なしのときのみ。エネルギー保存 σ_e = σ_s + σ_a が成り立つのは
+  `retardation = 1` のとき)。
 - **近傍界の後処理** — `nearfield = x1 y1 z1 x2 y2 z2 n1 n2 n3` で有効
   (複数行可) : 角 `(x1,y1,z1)` から角 `(x2,y2,z2)` までを各軸 n 分割した
   格子点 (n = 0 の軸は固定) で E と H を求め、`near.csv` に出します。
@@ -174,8 +181,11 @@ same portability rules, no external numerical libraries.
   線半径の数倍以上になるように取ってください)。
 - 地板 (`groundplane`) は z = 一定の無限 PEC 面 1 枚のみです。有限サイズ・
   有限導電率の地板は `plate` でモデル化してください (鏡像との併用は可)。
-- 遠方界 (`farfield`) は port #1 の 1 A 励振に対する値です。指向性 D は
-  電流分布だけで決まりますが、利得 G と効率は導体損を含みます。
+- 遠方界 (`farfield`) の `far.csv` は port #1 の 1 A 励振に対する値です。指向性 D は
+  電流分布だけで決まりますが、利得 G と効率は導体損を含みます。平面波併用時の
+  `farpw.csv` は誘起電流による散乱界のみ (入射波は含みません)。地板があると
+  入射が直接波と反射波の 2 波になるので、光学定理の消光断面積は出しません
+  (RCS と全散乱断面積は上半球で出します)。
 - 近傍界 (`nearfield`) の `near.csv` は port #1 の 1 A 励振、`nearpw.csv` は
   平面波入射時の全界 (入射 + 反射 + 散乱) です。入射界は物理的な平面波なので
   `retardation` に依らず k = ω/c で評価し、散乱界は以下の規約に従います。
@@ -212,7 +222,7 @@ same portability rules, no external numerical libraries.
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値と比較、151 判定。許容は判定ごとに 1e-12 〜 3%)
+# 検証 (解析解・文献値と比較、157 判定。許容は判定ごとに 1e-12 〜 3%)
 # 実行ファイルは相対パスでもよい (スクリプトが絶対パスに直す)
 sh data/sample/peec_check.sh bin/peec /tmp/peec-check
 
@@ -294,6 +304,7 @@ peec [-n <threads>] input.peec
 | `mixed.csv` | 混合モード S パラメータ (差動 / 同相、`mixedmode` 指定時のみ)。1 行 1 成分で `frequency[Hz],row,col,real,imag,\|S\|[dB]`、row/col は `d1` / `c1` / `s3` など |
 | `dist.csv` | 電流・電荷分布 (`distribution = 1` のときのみ)。`port` 列が励振ポート番号 (多ポートではポートごとに 1 組)、平面波による誘起電流 `Ipw` は 0 |
 | `far.csv` | 遠方界パターン rE と D / G [dBi] (`farfield` 指定時のみ) |
+| `farpw.csv` | 平面波の散乱遠方界 r·E_s と双方向レーダー断面積 RCS [m²] / [dBsm] (`farfield` と `planewave` の併用時のみ) |
 | `near.csv` | 近傍界 E / H の各成分と |E| / |H| (`nearfield` 指定時のみ) |
 | `nearpw.csv` | 平面波入射時の全界 (入射 + 反射 + 散乱)。列は `near.csv` と同じ (`nearfield` と `planewave` の併用時のみ) |
 | `pw.csv` | 平面波入射の端子電圧・実効長・利用可能電力 (`planewave` 指定時のみ) |
@@ -370,7 +381,7 @@ d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 
 | `mixedmode` | `mixedmode = p1 n1 [p2 n2 ...]` | 単端ポート番号 (1 始まり、`port` 行の順) の対 (正側, 負側) を差動対にし、混合モード S を `mixed.csv` に出す。各ポートは 1 つの対にしか入れられず、対の 2 ポートの Z0 は等しいこと。対に入らないポートは単端のまま通る |
 | `frequency` | `frequency = f開始 f終了 分割数 [log]` | 周波数掃引 (分割数+1 点)。`log` で等比 (対数) 掃引、省略時は線形 |
 | `groundplane` | `groundplane = z` | 無限 PEC 地板 (z = 一定、鏡像法)。導体は z ≥ 地板に置く |
-| `farfield` | `farfield = 分割数θ 分割数φ` | 遠方界の後処理を有効化 (`far.csv` 出力)。地板ありは上半球のみ |
+| `farfield` | `farfield = 分割数θ 分割数φ` | 遠方界の後処理を有効化 (`far.csv` 出力)。地板ありは上半球のみ。`planewave` と併用すると散乱界と RCS も出す (`farpw.csv`) |
 | `nearfield` | `nearfield = x1 y1 z1 x2 y2 z2 n1 n2 n3` | 近傍界の観測格子 (`near.csv` 出力、`planewave` 併用時は `nearpw.csv` も)。複数行可、n = 0 の軸は固定 |
 | `planewave` | `planewave = θ φ 偏波 振幅 [位相deg]` | 平面波入射 (外部界励振)。(θ, φ) は**到来方向**、偏波 1 = θ / 2 = φ、振幅 [V/m] |
 | `transient` | `transient = 1 [減衰dB]` | 過渡応答 (掃引の逆フーリエ変換、`tran.csv` 出力)。等間隔・DC の整数倍の掃引が必須。減衰は帯域端でのガウス励振の減衰 (省略時 40 dB) |
@@ -468,6 +479,9 @@ d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 
 | `dipole_pw.peec` 半波長ダイポールの受信 | 実効長 \|l_eff\| = λ/π = 0.663793 m (正弦電流分布の教科書値) | 1% |
 | `loop_pw.peec` 微小ループの磁界結合 | \|Voc\| = kE₀A = 8.38338 mV (ファラデーの法則、電界結合とは別経路)。Voc がほぼ純虚数 | 0.5% |
 | `loop_pw.peec` + 50 Ω 負荷 | 誘起電流 \|I\| = \|Voc\|/\|R+R_w+jωL\| = 123.961 µA (検証済みの L と組合せ)。直列ループの KCL | 0.5% / 厳密 |
+| `pw_loop_rcs.peec` 微小ループの散乱 (RCS) | 短絡した正方ループ (磁気双極子) : y 方向の RCS = k⁴ω²μ₀²A⁴/(4π\|Z\|²)、全散乱断面積 = 2/3 × それ、光学定理の消光断面積 = 吸収 (η₀Rk²A²/\|Z\|²) + 散乱。L は Grover 式、R は DC 抵抗 (実測 −0.04%)。軸方向の散乱 0 も判定 | 1% |
+| `pw_dipole_scat.peec` 負荷付きダイポールの散乱 | エネルギー保存 σ_e (光学定理) = σ_s (パターン積分) + σ_L (負荷吸収 = η₀\|V\|²/(R_L E₀²)、V は回路側の端子電圧)。共振をまたぐ 3 周波数 (実測 4e-4) | 2e-3 |
+| `pw_dipole_scat.peec` 補償定理 (遠方界) | F_負荷 = F_開放,pw − I_L F_開放,port (I_L = Voc/(Zin+R_L))。平面波経路の散乱界とポート経路の放射界の整合 (実測 3e-10) | 1e-6 |
 | `bent_pw.peec` 相反定理 (非対称構造) | 送信パス (`farfield` の放射ベクトル) と受信パス (`planewave` の起電力) が `Voc = -E₀(ê·l_eff)` で一致。5 方向 × 偏波 + 地板ありモノポール | 1e-6 |
 | `tdr_resistor.peec` 過渡応答 | 周波数に依らない反射係数で y(t) = S11·x(t) が全時刻で厳密 (S11 = 0 / +0.5 / −1 / +1) | 1e-9 |
 | `tdr_resistor.peec` 励振・時間軸 | 合成された励振が解析ガウス (ピーク 1、t0 = 4σ) と一致。サンプル数 2N、Δt = 1/(2f_max)。対数掃引は拒否 | 5e-3 / 厳密 |
