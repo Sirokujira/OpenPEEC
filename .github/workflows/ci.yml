@@ -25,11 +25,6 @@ jobs:
       - name: Build
         run: cmake --build build -j"$(nproc)"
 
-      # TEMPORARY (PR #24) : GCC 15 -O3 failure diagnosis, to be removed
-      - name: Diagnose GCC 15 (temporary)
-        continue-on-error: true
-        run: sh .github/diag_gcc15.sh
-
       - name: Validation tests (analytic solutions)
         run: sh data/sample/peec_check.sh "$GITHUB_WORKSPACE/bin/peec" /tmp/peec-check
 
