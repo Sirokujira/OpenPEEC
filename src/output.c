@@ -460,3 +460,46 @@ int output_dist(const peec_t *p, const char *fn)
 	fclose(fp);
 	return 0;
 }
+
+
+/*
+励振の重み (excitation) による重ね合わせ
+
+ポート j の解は「ポート j に 1 A、他のポートは開放」なので、線形性から
+  x = sum_j w_j x_j
+が「全ポートに電流 w_j を同時に注入した」解になる (近似なし)。遠方界・
+近傍界はこの電流・電荷で評価し、入力電力は
+  Pin = (1/2) Re(sum_i conj(w_i) V_i) = (1/2) Re(w^H Z w)
+(V = Z w、相互結合 Z_ij を含む)。excitation の行が無ければ port #1 に 1 A
+(base をそのまま返す・Pin = Re(Zin_1)/2) で、従来とビット一致する。
+*/
+const d_complex_t *exc_mix(const peec_t *p, const d_complex_t *base, int n, d_complex_t *buf)
+{
+	if (p->nexc <= 0) return base;
+	for (int m = 0; m < n; m++) {
+		buf[m] = d_complex(0, 0);
+	}
+	for (int k = 0; k < p->nexc; k++) {
+		const d_complex_t w = d_polar_deg(p->exc[k].amp, p->exc[k].phase);
+		const d_complex_t *xj = &base[(size_t)p->exc[k].port * n];
+		for (int m = 0; m < n; m++) {
+			buf[m] = d_add(buf[m], d_mul(w, xj[m]));
+		}
+	}
+	return buf;
+}
+
+double exc_pin(const peec_t *p, int ifreq)
+{
+	if (p->nexc <= 0) return 0.5 * p->zin[ifreq].r;
+	d_complex_t s = d_complex(0, 0);
+	for (int a = 0; a < p->nexc; a++) {
+		const d_complex_t wa = d_polar_deg(p->exc[a].amp, p->exc[a].phase);
+		for (int b = 0; b < p->nexc; b++) {
+			const d_complex_t wb = d_polar_deg(p->exc[b].amp, p->exc[b].phase);
+			const d_complex_t z = p->zmat[ZIDX(p, ifreq, p->exc[a].port, p->exc[b].port)];
+			s = d_add(s, d_mul(d_conj(wa), d_mul(z, wb)));
+		}
+	}
+	return 0.5 * s.r;
+}

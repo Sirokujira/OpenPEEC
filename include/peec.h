@@ -52,6 +52,10 @@ typedef struct {char name[NAMELEN]; int n1, n2; double val;} ind_t;           //
 typedef struct {char name1[NAMELEN], name2[NAMELEN]; int l1, l2; double k;} mut_t;  // M = k*sqrt(L1*L2)
 typedef struct {int n1, n2, isvsrc, ibr; double amp, phase;} src_t;           // phase [deg]
 typedef struct {int n1, n2; double z0;} port_t;
+// 励振 (excitation = ポート番号 振幅[A] [位相deg]) : 遠方界・近傍界はポート解
+// (ポート j に 1 A、他は開放) を重み w_j = 振幅 e^{j 位相} で重ね合わせた電流・電荷で
+// 評価する。port は 0 始まり。行が無ければ従来どおり port #1 に 1 A
+typedef struct {int port; double amp, phase;} exc_t;
 // 伝送線路 (tline = n1 n2 n3 n4 Z0 遅延 [損失dB]) : 端子対 1 = (n1, n2)、端子対 2 = (n3, n4)。
 // 無損失または無ひずみ線路 (Heaviside、R/L = G/C) : Z0 は実数、att = 10^(-dB/20) は
 // 片道の振幅減衰で周波数に依らない
@@ -205,6 +209,8 @@ typedef struct {
 	ind_t  *ind;
 	mut_t  *mut;
 	src_t  *src;
+	int    nexc;                  // excitation の行数 (0 = port #1 に 1 A)
+	exc_t  *exc;                  // [nexc] 励振の重み
 	int    ntl;                   // tline の本数
 	tline_t *tl;                  // [ntl] 伝送線路
 	port_t *port;
@@ -469,6 +475,11 @@ int  output_touchstone(const peec_t *p);
 int  output_mixed(const peec_t *p, const char *fn, FILE *fp_log);
 int  output_dist(const peec_t *p, const char *fn);
 int  output_pw(const peec_t *p, const char *fn, FILE *fp_log);
+
+// output.c : 励振の重み (excitation) による重ね合わせ
+// base はポート 0 の解 (周波数 ifreq の区画の先頭)、ポート j は base + j*n
+const d_complex_t *exc_mix(const peec_t *p, const d_complex_t *base, int n, d_complex_t *buf);
+double exc_pin(const peec_t *p, int ifreq);
 
 // farfield.c
 int  output_far(const peec_t *p, const char *fn, FILE *fp_log);

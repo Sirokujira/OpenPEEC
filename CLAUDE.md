@@ -9,7 +9,7 @@ OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を�
 導体は丸線 (`wire`) / 角線 (`bar`) / 面導体 (`plate` = 矩形、
 `quad` = 凸四辺形、`disk` = 円板)、らせん / 円形ループ (`helix`、直線 `wire` 列に展開)。ほかに無限 PEC 地板 (`groundplane`、
 鏡像法)、誘電体ブリック (`dielectric`、Ruehli の過剰容量)、
-遠方界後処理 (`farfield` → `far.csv`、平面波併用時は散乱界・RCS `farpw.csv`)、近傍界後処理 (`nearfield` →
+遠方界後処理 (`farfield` → `far.csv`、平面波併用時は散乱界・RCS `farpw.csv`、`excitation` で多ポートの重み付き励振)、近傍界後処理 (`nearfield` →
 `near.csv`、平面波併用時は全界 `nearpw.csv`)、平面波入射 (`planewave` → `pw.csv`、
 EMC イミュニティ)、過渡応答 (`transient` → `tran.csv`、掃引の逆 FFT)、
 対数掃引 (`frequency ... log`)、縁寄せ格子 (`grading`)、
@@ -77,7 +77,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 - `.claude/rules/portability.md` — MSVC で実際に踏んだ落とし穴
   (VLA 禁止 / OpenMP インデックス事前宣言 / `<complex.h>` 不可 など)。
   編集のたびに `.claude/hooks/check-portability.sh` が自動検査する。
-- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 21 個の
+- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 22 個の
   不変条件**と、その番人になっている検証判定の対応。幾何積分・セル構成・
   MNA・圧縮経路に触る前に必読。
 - `.claude/rules/validation.md` — 入力キーの後方互換規則と、検証ケースの

@@ -474,6 +474,97 @@ run monopole_ff.peec
 chk "monopole D = 2 x dipole" "$(awk -v m="$(getD)" -v d="$dd" 'BEGIN{printf "%.6f", m/d}')" 2.0 0.01
 chk "monopole ff efficiency" "$(getEff)" 1.0 0.005
 
+# (bb) 励振の重み (excitation) : 2 素子ダイポールアレイ (逆相・同相)
+#      ffpin <ログ> : "farfield : ..." 行の Pin と eff
+ffval() { awk -v key="$1" 'index($0, "farfield : f =") {i = index($0, key " = "); s = substr($0, i + length(key) + 3); split(s, a, " "); print a[1]; exit}' "$log"; }
+cp "$SRC/array_dipoles.peec" "$WORK/"
+run array_dipoles.peec
+cp "$WORK/far.csv" "$WORK/far_arr.csv"
+# 鏡映対称 + 反対称励振 : ±y 方向の遠方界と x = 0 面の E_z が厳密に 0
+awk -F, 'NR > 1 {
+	a = sqrt(($4 ^ 2) + ($5 ^ 2) + ($6 ^ 2) + ($7 ^ 2)); if (a > mx) mx = a;
+	if (($2 + 0 == 90) && (($3 + 0 == 90) || ($3 + 0 == 270))) {if (a > nul) nul = a; n++}
+} END {
+	r = nul / mx; ok = (n == 2) && (r <= 1e-9);
+	printf "%-24s |rE(+-y)|/max|rE|=%.3e -> %s (<= 1e-9)\n", "array antiphase null", r, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/far_arr.csv" || status=1
+awk -F, 'NR > 1 {
+	ez = sqrt(($9 ^ 2) + ($10 ^ 2)); if (ez > mz) mz = ez; if ($17 > me) me = $17; n++
+} END {
+	r = mz / me; ok = (n == 4) && (r <= 1e-9);
+	printf "%-24s points=%d max|Ez|/max|E|=%.3e -> %s (<= 1e-9)\n", "array near Ez (x=0)", n, r, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/near.csv" || status=1
+# Pin = Re(w^H Z w)/2 : Z は peec.s2p の S から Z = z0 (I+S)(I-S)^-1 (z0 = 50)
+s2z() {
+	awk 'function cm(ar, ai, br, bi) {MR = (ar * br) - (ai * bi); MI = (ar * bi) + (ai * br)}
+	function cd(ar, ai, br, bi,   d) {d = (br * br) + (bi * bi); DR = ((ar * br) + (ai * bi)) / d; DI = ((ai * br) - (ar * bi)) / d}
+	NF == 9 && $1 !~ /^[!#]/ {
+		a11r = 1 - $2; a11i = -$3; a21r = -$4; a21i = -$5; a12r = -$6; a12i = -$7; a22r = 1 - $8; a22i = -$9;
+		cm(a11r, a11i, a22r, a22i); dr = MR; di = MI; cm(a12r, a12i, a21r, a21i); dr -= MR; di -= MI;
+		cd(a22r, a22i, dr, di); i11r = DR; i11i = DI; cd(-a12r, -a12i, dr, di); i12r = DR; i12i = DI;
+		cd(-a21r, -a21i, dr, di); i21r = DR; i21i = DI; cd(a11r, a11i, dr, di); i22r = DR; i22i = DI;
+		b11r = 1 + $2; b11i = $3; b21r = $4; b21i = $5; b12r = $6; b12i = $7; b22r = 1 + $8; b22i = $9;
+		cm(b11r, b11i, i11r, i11i); z11 = MR; cm(b12r, b12i, i21r, i21i); z11 += MR;
+		cm(b11r, b11i, i12r, i12i); z12 = MR; cm(b12r, b12i, i22r, i22i); z12 += MR;
+		cm(b21r, b21i, i11r, i11i); z21 = MR; cm(b22r, b22i, i21r, i21i); z21 += MR;
+		cm(b21r, b21i, i12r, i12i); z22 = MR; cm(b22r, b22i, i22r, i22i); z22 += MR;
+		printf "%.10g %.10g %.10g %.10g\n", 50 * z11, 50 * z12, 50 * z21, 50 * z22; exit
+	}' "$WORK/peec.s2p"
+}
+set -- $(s2z)
+chk "array Pin = Re(wHZw)/2" "$(ffval Pin)" "$(awk -v a="$1" -v b="$2" -v c="$3" -v d="$4" 'BEGIN {printf "%.9e", 0.5 * (a + d - b - c)}')" 1e-5
+chk "array ff eff (antiphase)" "$(ffval eff)" 1 0.005
+sed 's/^excitation = 2 1 180$/excitation = 2 1 0/' "$SRC/array_dipoles.peec" > "$WORK/array_inphase.peec"
+run array_inphase.peec
+chk "array ff eff (in-phase)" "$(ffval eff)" 1 0.005
+# 重ね合わせ : (1∠0°, 1∠90°) = port 1 単独 + j × port 2 単独 (全方向、rE の 4 成分)
+sed -e '/^nearfield/d' -e 's/^excitation = 2 1 180$/excitation = 2 1 90/' "$SRC/array_dipoles.peec" > "$WORK/array_q.peec"
+run array_q.peec
+cp "$WORK/far.csv" "$WORK/far_q.csv"
+sed -e '/^nearfield/d' -e '/^excitation = 2/d' "$SRC/array_dipoles.peec" > "$WORK/array_p1.peec"
+run array_p1.peec
+cp "$WORK/far.csv" "$WORK/far_p1.csv"
+sed -e '/^nearfield/d' -e '/^excitation = 1/d' -e 's/^excitation = 2 1 180$/excitation = 2 1 0/' "$SRC/array_dipoles.peec" > "$WORK/array_p2.peec"
+run array_p2.peec
+awk -F, 'FILENAME == ARGV[1] && FNR > 1 {k = $2 SUBSEP $3; a1[k] = $4; b1[k] = $5; c1[k] = $6; d1[k] = $7; next}
+FILENAME == ARGV[2] && FNR > 1 {k = $2 SUBSEP $3; a2[k] = $4; b2[k] = $5; c2[k] = $6; d2[k] = $7; next}
+FILENAME == ARGV[3] && FNR > 1 {
+	k = $2 SUBSEP $3;
+	# F1 + j F2 : (re, im) = (r1 - i2, i1 + r2)
+	d = sqrt((($4 - (a1[k] - b2[k])) ^ 2) + (($5 - (b1[k] + a2[k])) ^ 2) + (($6 - (c1[k] - d2[k])) ^ 2) + (($7 - (d1[k] + c2[k])) ^ 2));
+	if (d > mx) mx = d; a = sqrt(($4 ^ 2) + ($5 ^ 2) + ($6 ^ 2) + ($7 ^ 2)); if (a > am) am = a; n++
+} END {
+	r = mx / am; ok = (n == 888) && (r <= 1e-8);
+	printf "%-24s dirs=%d max|F-(F1+jF2)|/max|F|=%.3e -> %s (<= 1e-8)\n", "excitation superposition", n, r, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/far_p1.csv" "$WORK/far.csv" "$WORK/far_q.csv" || status=1
+# 既定 (port #1 に 1 A) と同じ excitation を書いても far.csv はビット一致
+cp "$SRC/dipole_ff.peec" "$WORK/"
+run dipole_ff.peec
+cp "$WORK/far.csv" "$WORK/far_noexc.csv"
+sed 's/^end$/excitation = 1 1 0\nend/' "$SRC/dipole_ff.peec" > "$WORK/dipole_ff_exc.peec"
+run dipole_ff_exc.peec
+if cmp -s "$WORK/far_noexc.csv" "$WORK/far.csv"; then
+	printf "%-24s -> OK (excitation = 1 1 は省略時と far.csv が完全一致)\n" "excitation default"
+else
+	printf "%-24s -> NG (excitation = 1 1 changed far.csv)\n" "excitation default" >&2
+	status=1
+fi
+# 書き間違いは拒否されること : 範囲外のポート、重複、振幅の欠落
+nbad=0
+for ex in "excitation = 3 1" "excitation = 1 1 0\nexcitation = 1 2" "excitation = 2"; do
+	sed "s/^excitation = 2 1 180\$/$ex/" "$SRC/array_dipoles.peec" > "$WORK/array_bad.peec"
+	if (cd "$WORK" && "$PEEC" -n 1 array_bad.peec > array_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+done
+if [ "$nbad" -eq 3 ]; then
+	printf "%-24s -> OK (3/3 malformed inputs rejected)\n" "excitation parser guard"
+else
+	printf "%-24s -> NG (%d/3 malformed inputs rejected)\n" "excitation parser guard" "$nbad" >&2
+	status=1
+fi
+
 echo "--- near field"
 # near.csv の第 n データ行 (1 始まり) から 1 列を取り出す
 nfcol() { awk -F, -v r="$2" -v c="$3" 'NR == (r + 1) {printf "%.9e", $c}' "$WORK/$1"; }

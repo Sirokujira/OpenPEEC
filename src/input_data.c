@@ -130,7 +130,7 @@ int input_data(FILE *fp, peec_t *p)
 	const char sep[] = " \t";
 	const char errfmt2[] = "*** invalid %s data\n";
 	int    cres = 0, ccap = 0, cind = 0, cmut = 0, csrc = 0, cport = 0, cwire = 0, cnode = 0;
-	int    ctl = 0;
+	int    ctl = 0, cexcit = 0;
 	int    cplate = 0, cpanel = 0, cdiel = 0, cnf = 0, chelix = 0;
 
 	// initialize (既定値 : キー省略時は従来動作)
@@ -238,6 +238,23 @@ int input_data(FILE *fp, peec_t *p)
 			}
 			if (err) {
 				printf(errfmt2, "inductor");
+				return 1;
+			}
+		}
+		else if (!strcmp(strkey, "excitation")) {
+			// excitation = ポート番号 (1 始まり) 振幅[A] [位相deg]
+			if (ntoken < 4) err = 1;
+			else {
+				APPEND(p->exc, p->nexc, cexcit, exc_t);
+				exc_t *e = &p->exc[p->nexc];
+				e->port = nodeid(token[2], &err) - 1;
+				e->amp = atof(token[3]);
+				e->phase = (ntoken > 4) ? atof(token[4]) : 0;
+				if (e->port < 0) err = 1;
+				if (!err) p->nexc++;
+			}
+			if (err) {
+				printf(errfmt2, "excitation");
 				return 1;
 			}
 		}
@@ -867,6 +884,17 @@ int input_data(FILE *fp, peec_t *p)
 			return 1;
 		}
 	}
+	// excitation : 範囲外・重複のポートは拒否 (重ね合わせの重みが曖昧になる)
+	for (int k = 0; k < p->nexc; k++) {
+		int bad = (p->exc[k].port >= p->nport);
+		for (int l = 0; !bad && (l < k); l++) {
+			if (p->exc[l].port == p->exc[k].port) bad = 1;
+		}
+		if (bad) {
+			printf("*** excitation : invalid or duplicated port number %d\n", p->exc[k].port + 1);
+			return 1;
+		}
+	}
 	if ((p->nres + p->ncap + p->nind + p->ntl + p->nwire + p->nplate + p->npanel) <= 0) {
 		printf("%s\n", "*** no element data (resistor/capacitor/inductor/tline/wire/bar/plate/polygon/disk)");
 		return 1;
@@ -914,6 +942,7 @@ void peec_free(peec_t *p)
 	free(p->mut);
 	free(p->src);
 	free(p->tl);
+	free(p->exc);
 	free(p->port);
 	free(p->wire);
 	free(p->helix);

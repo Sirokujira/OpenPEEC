@@ -4,7 +4,8 @@ nearfield.c
 近傍界の後処理 (nearfield = x1 y1 z1 x2 y2 z2 n1 n2 n3)
 
 port #1 を 1 A で励振したときの区間電流 I_m (p->segi) とセル電荷 q_i
-(p->cellq) から、観測点の電界 E と磁界 H を遅延ポテンシャルで求める。
+(p->cellq)、excitation の行があればポート解を重み w_j で重ね合わせた電流・
+電荷 (exc_mix) から、観測点の電界 E と磁界 H を遅延ポテンシャルで求める。
 遠方界 (farfield.c) が r -> inf の漸近形だけを見るのに対し、こちらは
 1/R, 1/R^2, 1/R^3 の全項を残すので、EMC の近傍界スキャンやプローブ位置での
 結合量の見積りに使える。
@@ -290,9 +291,12 @@ int output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log)
 	double *pts = (double *)malloc(npt * 3 * sizeof(double));
 	d_complex_t *ev = (d_complex_t *)malloc(npt * 3 * sizeof(d_complex_t));
 	d_complex_t *hv = (d_complex_t *)malloc(npt * 3 * sizeof(d_complex_t));
-	if ((pts == NULL) || (ev == NULL) || (hv == NULL)) {
+	// excitation の重ね合わせ用 (電流 nseg、電荷 ncell)
+	d_complex_t *cbuf = (d_complex_t *)malloc((size_t)p->nseg * sizeof(d_complex_t));
+	d_complex_t *qbuf = (d_complex_t *)malloc((size_t)((p->ncell > 0) ? p->ncell : 1) * sizeof(d_complex_t));
+	if ((pts == NULL) || (ev == NULL) || (hv == NULL) || (cbuf == NULL) || (qbuf == NULL)) {
 		printf("%s\n", "*** memory allocation error (nearfield)");
-		free(pts); free(ev); free(hv);
+		free(pts); free(ev); free(hv); free(cbuf); free(qbuf);
 		return 1;
 	}
 
@@ -324,7 +328,7 @@ int output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log)
 	    (hascharge && nfq_build(p->chg, p->nchg, &qc))) {
 		printf("%s\n", "*** memory allocation error (nearfield)");
 		nfq_free(&qi); nfq_free(&qc);
-		free(pts); free(ev); free(hv);
+		free(pts); free(ev); free(hv); free(cbuf); free(qbuf);
 		return 1;
 	}
 	if (!hascharge) {
@@ -344,7 +348,7 @@ int output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log)
 		if (fp != NULL) fclose(fp);
 		if (fpw != NULL) fclose(fpw);
 		nfq_free(&qi); nfq_free(&qc);
-		free(pts); free(ev); free(hv);
+		free(pts); free(ev); free(hv); free(cbuf); free(qbuf);
 		return 1;
 	}
 	nf_header(fp);
@@ -355,8 +359,9 @@ int output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log)
 		const double f = freq_at(p, ifreq);
 		// retardation = 0 の解は静的な部分要素から出ているので場も静的に評価する
 		const double kw = p->retardation ? (2 * PI * f / C0) : 0;
-		const d_complex_t *cur = &p->segi[DIDX(p, ifreq, 0, 0)];
-		const d_complex_t *chg = hascharge ? &p->cellq[QIDX(p, ifreq, 0, 0)] : NULL;
+		const d_complex_t *cur = exc_mix(p, &p->segi[DIDX(p, ifreq, 0, 0)], p->nseg, cbuf);
+		const d_complex_t *chg = hascharge
+			? exc_mix(p, &p->cellq[QIDX(p, ifreq, 0, 0)], p->ncell, qbuf) : NULL;
 		int i;
 #ifdef _OPENMP
 #pragma omp parallel for
@@ -396,6 +401,8 @@ int output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log)
 	free(pts);
 	free(ev);
 	free(hv);
+	free(cbuf);
+	free(qbuf);
 	fclose(fp);
 	if (fpw != NULL) fclose(fpw);
 

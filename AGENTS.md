@@ -32,7 +32,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、169 判定)
+# 検証 (解析解・文献値との比較、177 判定)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -43,7 +43,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 169 判定すべて OK (h5py が
+**変更したら必ず `peec_check.sh` を通すこと。** 177 判定すべて OK (h5py が
 無い環境の `peec2h5 converter` だけは SKIP) でなければ完了ではない。
 「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
@@ -274,6 +274,14 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
     圧縮経路では前処理の Schur 補元に入る。
     (`tline Zin (lossless)` / `tline Zin (2 dB loss)` / `tline matched S (3 dB)` /
     `tline TDR delay` / `tline-fed dipole` / `tline compress = dense`)
+21. **励振の重みはポート解の重ね合わせ、Pin は wᴴZw** — `excitation` の重み
+    w_j で電流 (`segi`) と**電荷 (`cellq`) の両方**を重ね合わせる (output.c の
+    `exc_mix()`。近傍界の −∇φ は電荷から来る)。入力電力は相互結合を含む
+    Pin = ½Re(Σ conj(w_i) Z_ij w_j) (`exc_pin()`)。行が無ければ base をそのまま
+    返して従来とビット一致。重みの位相は e^{+j 位相} (電源と同じ規約)。
+    (`array antiphase null` / `array near Ez (x=0)` / `array Pin = Re(wHZw)/2` /
+    `array ff eff (antiphase)` / `array ff eff (in-phase)` /
+    `excitation superposition` / `excitation default`)
 
 ## メモリ
 
@@ -381,10 +389,11 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
   (座標がずれると nodetol マージが外れて接続が切れる)。
   節点の束縛電荷は a–b 面内の双対矩形パネルで表す近似 (表面電荷が a–b 面に
   支配的な配置 — 基板・平行平板 — で正確)。`capacitance = 1` 必須。
-- 遠方界 (`farfield`) の `far.csv` は port #1 の 1 A 励振に対する値。効率が意味を持つのは
+- 遠方界 (`farfield`) の `far.csv` は port #1 の 1 A 励振、または `excitation` の
+  電流励振の重ね合わせ (Pin は相互結合込みの Re(wᴴZw)/2) に対する値。効率が意味を持つのは
   `retardation = 1` のとき (準静的電流は放射を含まない)。平面波併用時の
   `farpw.csv` は誘起電流の散乱界と RCS。光学定理の消光断面積は地板なしのときのみ。
-- 近傍界 (`nearfield`) の `near.csv` は port #1 の 1 A 励振、`nearpw.csv` は
+- 近傍界 (`nearfield`) の `near.csv` は port #1 の 1 A 励振 (または `excitation`)、`nearpw.csv` は
   平面波入射時の全界 (入射 + 反射 + 散乱)。入射界は `retardation` に依らず
   k = ω/c で評価する。観測点はセル寸法
   程度以上離すこと (セル上の積分は数点の求積)。`capacitance = 0` では電荷が

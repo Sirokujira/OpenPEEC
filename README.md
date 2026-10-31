@@ -102,12 +102,20 @@ same portability rules, no external numerical libraries.
   すべて地板より上 (z ≥ 地板) に置きます。λ/4 モノポールの
   Zin = 半波長ダイポール/2 が離散化レベルで厳密に再現されます
   (検証で実測 3e-10)。
+- **励振の重み (アレイ給電)** — `excitation = ポート番号 振幅[A] [位相deg]`
+  (複数行可) : 遠方界・近傍界を、ポート j の解 (1 A、他は開放) を重み
+  w_j = 振幅·e^{j位相} で重ね合わせた電流・電荷で評価します。線形性から
+  これは全ポートに電流 w_j を同時に注入した解そのもの (近似なし) で、
+  入力電力は相互結合を含む Pin = ½Re(wᴴZw)。行を書かないポートは開放
+  (電流 0) です。書かなければ従来どおり port #1 に 1 A (出力はビット一致)。
 - **遠方界の後処理** — `farfield = 分割数θ 分割数φ` で有効 :
-  port #1 を 1 A で励振したときの区間電流から放射ベクトル
+  port #1 を 1 A で励振したときの区間電流 (`excitation` を書けば全ポートの
+  重み付き励振、下記) から放射ベクトル
   `N = Σ I len t̂ sinc(k len (r̂·t̂)/2) e^{jk r̂·rc}` を求め、`far.csv` に
   r·E の θ/φ 成分・指向性 D・利得 G (dBi) を出力します。放射電力 Prad は
   球面 (地板ありは鏡像込みで上半球) のグリッド積分、放射効率 = Prad/Pin
-  (Pin = Re Zin/2) を `peec.log` に出します。効率が意味を持つのは
+  (Pin = Re Zin/2、`excitation` があれば相互結合込みの Re(wᴴZw)/2) を
+  `peec.log` に出します。効率が意味を持つのは
   `retardation = 1` のときです (準静的電流は放射を含まないため)。
   `planewave` と併用すると、平面波が誘起した電流を放射源にした**散乱界**も
   同じ式で求め、`farpw.csv` に r·E_s の θ/φ 成分と双方向レーダー断面積
@@ -119,7 +127,8 @@ same portability rules, no external numerical libraries.
 - **近傍界の後処理** — `nearfield = x1 y1 z1 x2 y2 z2 n1 n2 n3` で有効
   (複数行可) : 角 `(x1,y1,z1)` から角 `(x2,y2,z2)` までを各軸 n 分割した
   格子点 (n = 0 の軸は固定) で E と H を求め、`near.csv` に出します。
-  port #1 の 1 A 励振に対する区間電流と (`capacitance = 1` なら) セル電荷から
+  port #1 の 1 A 励振 (または `excitation` の重み付き励振) に対する区間電流と
+  (`capacitance = 1` なら) セル電荷から
   遅延ポテンシャル `A`・`φ` を積分し、`E = −jωA − ∇φ`、`H = (1/μ0)∇×A` を
   `1/R`・`1/R²`・`1/R³` の全項を残して評価します (遠方界のような漸近近似を
   しません)。地板があれば鏡像を加えるので、地板上で接線 E と法線 H が
@@ -193,12 +202,14 @@ same portability rules, no external numerical libraries.
   線半径の数倍以上になるように取ってください)。
 - 地板 (`groundplane`) は z = 一定の無限 PEC 面 1 枚のみです。有限サイズ・
   有限導電率の地板は `plate` でモデル化してください (鏡像との併用は可)。
-- 遠方界 (`farfield`) の `far.csv` は port #1 の 1 A 励振に対する値です。指向性 D は
+- 遠方界 (`farfield`) の `far.csv` は port #1 の 1 A 励振 (または `excitation` の
+  電流励振の重ね合わせ。電圧源・内部インピーダンス付きの給電は回路素子で組む)
+  に対する値です。指向性 D は
   電流分布だけで決まりますが、利得 G と効率は導体損を含みます。平面波併用時の
   `farpw.csv` は誘起電流による散乱界のみ (入射波は含みません)。地板があると
   入射が直接波と反射波の 2 波になるので、光学定理の消光断面積は出しません
   (RCS と全散乱断面積は上半球で出します)。
-- 近傍界 (`nearfield`) の `near.csv` は port #1 の 1 A 励振、`nearpw.csv` は
+- 近傍界 (`nearfield`) の `near.csv` は port #1 の 1 A 励振 (または `excitation`)、`nearpw.csv` は
   平面波入射時の全界 (入射 + 反射 + 散乱) です。入射界は物理的な平面波なので
   `retardation` に依らず k = ω/c で評価し、散乱界は以下の規約に従います。
   セル上の積分はセルあたり数点の求積なので、観測点はセル寸法程度以上離してください
@@ -236,7 +247,7 @@ same portability rules, no external numerical libraries.
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値と比較、169 判定。許容は判定ごとに 1e-12 〜 3%)
+# 検証 (解析解・文献値と比較、177 判定。許容は判定ごとに 1e-12 〜 3%)
 # 実行ファイルは相対パスでもよい (スクリプトが絶対パスに直す)
 sh data/sample/peec_check.sh bin/peec /tmp/peec-check
 
@@ -380,6 +391,7 @@ d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 
 | `capacitor` | `capacitor = n1 n2 C` | キャパシタ [F] |
 | `inductor` | `inductor = 名前 n1 n2 L` | インダクタ [H] (名前は `mutual` 参照用) |
 | `mutual` | `mutual = 名前1 名前2 k` | 結合係数 k (0 < k ≤ 1)、M = k√(L1L2) |
+| `excitation` | `excitation = ポート番号 振幅 [位相deg]` | 遠方界・近傍界のポート励振の重み (電流 [A]、複数行可)。ポート番号は 1 始まり (`port` 行の順)。書かないポートは開放。省略時は port #1 に 1 A。範囲外・重複はエラー |
 | `tline` | `tline = n1 n2 n3 n4 Z0 遅延 [損失dB]` | 伝送線路 (TEM)。端子対 1 = (n1, n2)、端子対 2 = (n3, n4)。Z0 [Ω] > 0、片道遅延 [s] > 0 (電気長 θ = 2πf·遅延)。損失 (省略時 0) は片道の減衰 [dB] で、無ひずみ線路として周波数に依らない |
 | `vsource` | `vsource = n1 n2 振幅 [位相deg]` | AC 電圧源 (+ 端子 = n1) |
 | `isource` | `isource = n1 n2 振幅 [位相deg]` | AC 電流源 (電源内部を n1→n2、SPICE 規約) |
@@ -518,6 +530,9 @@ d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 
 | `diel_drude.peec` 導電性の誘電体 (Drude) | ε∞ = 3、f_p = 4 MHz、g = 1 MHz の平行平板で ΔY(f) = jωε₀(εr\*(f)−1)A/d を 1 kHz〜10 MHz の 5 点 × (G, B) で解析式と比較。低域で G = σ_dc A/d (σ_dc = 2πε₀f_p²/g)、f = g で半分、εr′ < 1 で枝が誘導性になる点を含む (実測 1.5e-3、最大は G ≪ B の 10 MHz) | 2e-3 |
 | `diel_sigma.peec` 一定の導電率 | εr = 4、σ = 1e-3 S/m : G = σA/d = 4 mS が周波数に依らない (tanδ の G ∝ f とは別経路)、B = 3ωε₀A/d (実測 2.1e-4)。εr = 1 + σ でもセルを作り G = 4 mS | 2e-3 / 0.1% |
 | `diel_sigma.peec` 入力検証 | Drude の f_p ≤ 0・g ≤ 0・語の不足、σ ≤ 0 (2 通り)、tanδ との併用の 6 通りがエラー終了すること | 6/6 拒否 |
+| `array_dipoles.peec` 2 素子アレイ (逆相) | 鏡映対称 + 反対称励振 : ±y 方向の遠方界と x = 0 面の近傍界 E_z が厳密に 0 (電荷も重ね合わせる番人、実測 7e-16 / 2e-15) | 1e-9 |
+| `array_dipoles.peec` 入力電力・効率 | Pin = ½Re(wᴴZw) (Z は peec.s2p の S から z0(I+S)(I−S)⁻¹)。逆相 (R11−R21) と同相 (R11+R21) の両方で放射効率 Prad/Pin = 1 (相互結合の符号の番人、実測 0.9999 / 1.0008) | 1e-5 / 0.5% |
+| `array_dipoles.peec` 重ね合わせ | 重み (1∠0°, 1∠90°) の far.csv = port 1 単独 + j × port 2 単独 (888 方向、位相規約の番人)。`excitation = 1 1` は省略時とビット一致。範囲外・重複・語の不足は拒否 | 1e-8 / 完全一致 / 3/3 |
 | `tline_term.peec` 抵抗終端した線路 | Zin = Z0(ZL + jZ0 tanθ)/(Z0 + jZL tanθ) (Z0 = 50, ZL = 100) を θ = π/4〜5π/4 の 5 点で。λ/4 で Z0²/ZL = 25 Ω、λ/2 で ZL。損失 2 dB の版は tanh γl の式と比べる | 1e-8 |
 | `tline_matched.peec` 整合した損失線路 | 基準 75 Ω で S11 = S22 = 0、S21 = S12 = 10^(−3/20) e^{−j2πf·td} (td = 2 ns、10 点)。位相の向き = 遅延の符号 | 1e-9 |
 | `tline_tdr.peec` 線路の TDR (transient 併用) | 整合線路の先の R = 150 Ω で y(t) = Γ x(t − 2td) (Γ = 0.5、2td = 32Δt で厳密)。遅延の符号を取り違えると前進して落ちる | 1e-9 |

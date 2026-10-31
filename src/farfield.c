@@ -3,8 +3,9 @@ farfield.c
 
 遠方界の後処理 (farfield = 分割数theta 分割数phi)
 
-port #1 を 1 A で励振したときの区間電流 I_m (solve.c が捕捉する p->segi)
-から放射ベクトル
+port #1 を 1 A で励振したときの区間電流 I_m (solve.c が捕捉する p->segi、
+excitation の行があればポート解を重み w_j で重ね合わせた電流 : exc_mix) から
+放射ベクトル
 
   N(r^) = sum_m I_m len_m t^_m sinc(k len_m (r^・t^_m)/2) exp(+j k r^・r_cm)
 
@@ -20,7 +21,8 @@ port #1 を 1 A で励振したときの区間電流 I_m (solve.c が捕捉す�
   Prad = ∫∫ (|Et|^2 + |Ep|^2) / (2 eta0) sin(theta) dtheta dphi
 
 (theta は台形則、phi は周期矩形則)。指向性 D = 4 pi U / Prad、
-利得 G = 4 pi U / Pin (Pin = Re(Zin_port1) / 2 : 1 A 励振の入力電力)、
+利得 G = 4 pi U / Pin (Pin = Re(Zin_port1) / 2 : 1 A 励振の入力電力。
+excitation があれば Pin = Re(w^H Z w)/2 : 相互結合を含む全ポートの入力電力)、
 放射効率 eff = Prad / Pin。G は導体損を含み、D は含まない。
 
 地板 (groundplane) があるときは鏡像電流を加算して上半球のみを評価する。
@@ -100,11 +102,16 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 	d_complex_t *et = (d_complex_t *)malloc((size_t)ndir * sizeof(d_complex_t));
 	d_complex_t *ep = (d_complex_t *)malloc((size_t)ndir * sizeof(d_complex_t));
 	double *uu = (double *)malloc((size_t)ndir * sizeof(double));
-	if ((et == NULL) || (ep == NULL) || (uu == NULL)) {
+	d_complex_t *cbuf = (d_complex_t *)malloc((size_t)p->nseg * sizeof(d_complex_t));
+	if ((et == NULL) || (ep == NULL) || (uu == NULL) || (cbuf == NULL)) {
 		printf("%s\n", "*** memory allocation error (farfield)");
-		free(et); free(ep); free(uu);
+		free(et); free(ep); free(uu); free(cbuf);
 		fclose(fp);
 		return 1;
+	}
+	for (int k = 0; k < p->nexc; k++) {
+		fprintf(fp_log, "farfield : excitation port %d = %g A (%g deg)\n",
+			p->exc[k].port + 1, p->exc[k].amp, p->exc[k].phase);
 	}
 
 	fprintf(fp, "frequency[Hz],theta[deg],phi[deg],rEtheta_real[V],rEtheta_imag[V],rEphi_real[V],rEphi_imag[V],D[dBi],G[dBi]\n");
@@ -113,6 +120,7 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 		const double f = freq_at(p, ifreq);
 		const double kw = 2 * PI * f / C0;
 		const double coef = 2 * PI * f * MU0 / (4 * PI);   // omega mu0 / 4 pi
+		const d_complex_t *cur = exc_mix(p, &p->segi[DIDX(p, ifreq, 0, 0)], p->nseg, cbuf);
 
 		// 方向ごとの遠方界と放射強度 U
 		for (int it = 0; it <= nth; it++) {
@@ -128,7 +136,7 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 				const double phh[3] = {-sp, cp, 0};
 
 				d_complex_t nv[3];
-				ff_nvec(p, &p->segi[DIDX(p, ifreq, 0, 0)], kw, rh, nv);
+				ff_nvec(p, cur, kw, rh, nv);
 
 				// 横成分 : Etheta = -j coef (N・theta^)、Ephi = -j coef (N・phi^)
 				d_complex_t nt = d_complex(0, 0), np = d_complex(0, 0);
@@ -156,8 +164,8 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 		}
 		prad *= (thmax / nth) * (2 * PI / nph);
 
-		// 入力電力 (port #1 に 1 A) と最大指向性
-		const double pin = 0.5 * p->zin[ifreq].r;
+		// 入力電力 (port #1 に 1 A、excitation があれば Re(w^H Z w)/2) と最大指向性
+		const double pin = exc_pin(p, ifreq);
 		int imax = 0;
 		for (int id = 1; id < ndir; id++) {
 			if (uu[id] > uu[imax]) imax = id;
@@ -187,6 +195,7 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 	free(et);
 	free(ep);
 	free(uu);
+	free(cbuf);
 	fclose(fp);
 
 	return 0;

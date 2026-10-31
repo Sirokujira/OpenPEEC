@@ -537,6 +537,32 @@ b1 = T a2、b2 = T a1 : Branin の方法の周波数領域版)。守るべき約
 (容量性 + 遅延の PEEC との接続、実測 1.7e-10) / `tline compress = dense`
 (圧縮経路の回路側、ビット一致) / `tline parser guard`
 
+## (22) 励振の重みはポート解の重ね合わせ (excitation)
+
+`excitation` があると遠方界・近傍界はポート解 (ポート j に 1 A、他は開放) を
+重み w_j = 振幅 e^{j 位相} で重ね合わせた電流・電荷で評価する。線形性から
+全ポートに電流 w_j を同時に注入した解そのもので近似は無い。守るべき約束は 3 つ。
+
+- **電流と電荷の両方を重ね合わせる** (output.c の `exc_mix()` を `segi` と
+  `cellq` の両方に通す)。電流だけ重ね合わせると近傍界の −∇φ が port #1 の
+  電荷のまま残り、E が静かに狂う (遠方界は電流だけなので気付けない)。
+- **入力電力は相互結合込みの Pin = ½Re(wᴴZw)** (`exc_pin()`、
+  Z_ij = `zmat[ZIDX(ifreq, i, j)]` = V_i/I_j)。対角だけ (ΣRe Z_jj|w_j|²/2) に
+  すると、逆相と同相で相互抵抗 R21 の寄与が逆符号に効く分だけ効率が狂う
+  (λ/2 間隔の半波長ダイポール対で ±15%)。
+- **行が無ければ base をそのまま返す**。port #1 に 1 A の従来出力とビット一致
+  (`excitation = 1 1` を書いても一致)。
+
+`dist.csv` は従来どおりポートごとの分布 (重ね合わせない)。平面波 (`farpw.csv` /
+`nearpw.csv`) は励振と無関係。
+
+**番人**: `array antiphase null` (鏡映対称 + 反対称励振で ±y の遠方界が 0 :
+実測 7e-16) / `array near Ez (x=0)` (x = 0 面の E_z = 0 : 電荷の重ね合わせの
+番人、実測 2e-15) / `array Pin = Re(wHZw)/2` (S から組んだ Z との一致) /
+`array ff eff (antiphase)` / `array ff eff (in-phase)` (相互結合の符号) /
+`excitation superposition` (位相の規約) / `excitation default` (後方互換) /
+`excitation parser guard`
+
 ## 並列化
 
 `lp_fill` / `pot_fill` / 近傍界の観測点ループは OpenMP 並列。並列ループ内で
