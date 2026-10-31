@@ -47,17 +47,30 @@ build() {
 	probe $W/peec_$lb $lb
 }
 
-probe $R/bin/peec cmake
-build O3 "-O3 -fopenmp"
-build O2 "-O2 -fopenmp"
-build O3noomp "-O3"
-build O3novec "-O3 -fopenmp -fno-tree-vectorize"
-build O3noipa "-O3 -fopenmp -fno-ipa-sra -fno-ipa-cp -fno-ipa-modref"
-build O3noinl "-O3 -fopenmp -fno-inline"
-build O3nofma "-O3 -fopenmp -ffp-contract=off"
-build O3solve0 "-O3 -fopenmp" "solve.c=-O0 -fopenmp"
-build O3far0 "-O3 -fopenmp" "farfield.c=-O0 -fopenmp"
-build O3mna0 "-O3 -fopenmp" "mna.c=-O0 -fopenmp"
-build O3main0 "-O3 -fopenmp" "main.c=-O0 -fopenmp"
-build O3lu0 "-O3 -fopenmp" "lu.c=-O0 -fopenmp"
-build O3part0 "-O3 -fopenmp" "partial.c=-O0 -fopenmp"
+build2() {
+	lb=$1; fsrc=$2; ffl=$3
+	rm -f $W/obj/*.o
+	for f in src/*.c; do
+		[ "$(basename $f)" = farfield.c ] && continue
+		gcc -std=gnu11 -DNDEBUG -O3 -fopenmp -Iinclude -c $f -o $W/obj/$(basename $f .c).o || echo "compile fail $f"
+	done
+	gcc -std=gnu11 -DNDEBUG $ffl -Iinclude -c $fsrc -o $W/obj/farfield.o || echo "compile fail $fsrc"
+	gcc -O3 -fopenmp $W/obj/*.o -o $W/peec_$lb -lm || echo "link fail $lb"
+	probe $W/peec_$lb $lb
+}
+
+D=.github/diag
+build2 F0_current $D/F0.c "-O3 -fopenmp"
+build2 F1_noinline $D/F1.c "-O3 -fopenmp"
+build2 F2_noipa $D/F2.c "-O3 -fopenmp"
+build2 F3_52ebebd $D/F3.c "-O3 -fopenmp"
+build2 F4_inline_far $D/F4.c "-O3 -fopenmp"
+build2 F5_scalars $D/F5.c "-O3 -fopenmp"
+build2 F0_noslp $D/F0.c "-O3 -fopenmp -fno-tree-slp-vectorize"
+build2 F0_noloopvec $D/F0.c "-O3 -fopenmp -fno-tree-loop-vectorize"
+build2 F0_noinlfn $D/F0.c "-O3 -fopenmp -fno-inline-functions -fno-inline-small-functions"
+build2 F0_x8664 $D/F0.c "-O3 -fopenmp -march=x86-64"
+build2 F0_v3nofma $D/F0.c "-O3 -fopenmp -march=x86-64-v3 -mno-fma"
+build2 F0_v2 $D/F0.c "-O3 -fopenmp -march=x86-64-v2"
+build2 F0_O1 $D/F0.c "-O1 -fopenmp"
+build2 F0_O2novec $D/F0.c "-O2 -fopenmp -fno-tree-vectorize"
