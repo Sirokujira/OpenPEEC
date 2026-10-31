@@ -858,6 +858,89 @@ else
 	status=1
 fi
 
+# --- 平面波の散乱遠方界とレーダー断面積 (planewave + farfield -> farpw.csv)
+# getsig <key> [n] : peec.log の "farfield (planewave)" 行の n 番目 (既定 1) から
+# sigma_scat / sigma_ext / sigma_abs を取り出す
+getsig() {
+	awk -v key="$1" -v nn="${2:-1}" 'index($0, "farfield (planewave)") {
+		if (++n != nn) next;
+		i = index($0, key " = "); s = substr($0, i + length(key) + 3);
+		split(s, a, " "); print a[1]; exit
+	}' "$log"
+}
+
+# (ax) 短絡した微小ループ (磁気双極子) : y^ 方向の双方向 RCS、全散乱断面積、
+#      光学定理の消光断面積を、ファラデー + オーム + 磁気双極子の放射から
+#      作った解析値と比べる (L は Grover 式、R は DC 抵抗 : コード非依存)。
+cp "$SRC/pw_loop_rcs.peec" "$WORK/"
+run pw_loop_rcs.peec
+lrcs() {
+	awk -v q="$1" 'BEGIN {
+		PI = atan2(0, -1); c = 299792458; mu0 = 4 * PI * 1e-7; eta0 = mu0 * c;
+		w = 2 * PI * 1e7; k = w / c; A = 0.04; L = 7.24689e-7; R = 4.3906e-3 + 1e-6;
+		z2 = (R * R) + (w * w * L * L);
+		sy = (k ^ 4) * w * w * mu0 * mu0 * (A ^ 4) / (4 * PI * z2);
+		sa = eta0 * R * k * k * A * A / z2;
+		if (q == "y") printf "%.12e\n", sy;
+		if (q == "s") printf "%.12e\n", 2 * sy / 3;
+		if (q == "e") printf "%.12e\n", sa + (2 * sy / 3);
+	}'
+}
+chk "loop RCS sigma(y^)" "$(awk -F, 'NR > 1 && ($2 + 0 == 90) && ($3 + 0 == 90) {print $8}' "$WORK/farpw.csv")" "$(lrcs y)" 0.01
+chk "loop sigma_scat" "$(getsig sigma_scat)" "$(lrcs s)" 0.01
+chk "loop sigma_ext (optical)" "$(getsig sigma_ext)" "$(lrcs e)" 0.01
+# ループ軸方向 (theta = 0) : 閉じたループの放射ベクトルは 0 (残りは 1 um の
+# ポートギャップ分だけ)
+awk -F, 'NR > 1 {if ($2 + 0 == 0) {if ($8 > z) z = $8} if (($2 + 0 == 90) && ($3 + 0 == 90)) y = $8}
+END {
+	r = z / y; ok = (y > 0) && (r <= 1e-6);
+	printf "%-24s sigma(axis)/sigma(y^)=%.3e -> %s (<= 1e-6)\n", "loop RCS axial null", r, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/farpw.csv" || status=1
+
+# (ay) 負荷付き半波長ダイポール : エネルギー保存 sigma_e = sigma_s + sigma_L
+#      (sigma_L = eta0 |V|^2 / (R_L E0^2)、V は pw.csv の端子電圧)。3 周波数。
+cp "$SRC/pw_dipole_scat.peec" "$WORK/"
+run pw_dipole_scat.peec
+awk -F, -v RL=50 'FNR == NR {if (FNR > 1) v2[FNR - 1] = ($3 * $3) + ($4 * $4); next}
+index($0, "farfield (planewave)") {
+	n++;
+	split($0, a, "sigma_scat = "); split(a[2], b, " "); ss = b[1];
+	split($0, a, "sigma_ext = ");  split(a[2], b, " "); se = b[1];
+	eta0 = 4 * atan2(0, -1) * 1e-7 * 299792458;
+	d = (se - ss - (eta0 * v2[n] / RL)) / se; if (d < 0) d = -d; if (d > mx) mx = d
+}
+END {
+	ok = (n == 3) && (mx <= 2e-3);
+	printf "%-24s freqs=%d max|1-(s+L)/e|=%.3e -> %s (<= 2e-3)\n", "dipole scat energy", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/pw.csv" "$log" || status=1
+
+# 補償定理 F_B = F_A,pw - I_L F_A,port (A = ポート開放、B = 負荷付き)。
+# 平面波経路の誘起電流とポート経路の放射界の整合 (CSV の有効 10 桁で厳密)
+cp "$WORK/farpw.csv" "$WORK/farpw_B.csv"
+sed '/^resistor/d' "$SRC/pw_dipole_scat.peec" > "$WORK/pw_dipole_scat_open.peec"
+run pw_dipole_scat_open.peec
+awk -F, -v RL=50 '
+FILENAME == ARGV[1] && FNR > 1 {vr[FNR - 1] = $3; vi[FNR - 1] = $4; next}
+FILENAME == ARGV[2] && FNR > 1 {zr[FNR - 1] = $3; zi[FNR - 1] = $4; next}
+FILENAME == ARGV[3] && FNR > 1 {k = $1 SUBSEP $2 SUBSEP $3; pt[k] = $4; pti[k] = $5; pp[k] = $6; ppi[k] = $7; next}
+FILENAME == ARGV[4] && FNR > 1 {k = $1 SUBSEP $2 SUBSEP $3; at[k] = $4; ati[k] = $5; ap[k] = $6; api[k] = $7; if (!($1 in fi)) fi[$1] = ++nf; next}
+FILENAME == ARGV[5] && FNR > 1 {
+	k = $1 SUBSEP $2 SUBSEP $3; j = fi[$1];
+	dr = zr[j] + RL; di = zi[j]; dd = (dr * dr) + (di * di);
+	ir = ((vr[j] * dr) + (vi[j] * di)) / dd; ii = ((vi[j] * dr) - (vr[j] * di)) / dd;
+	et = at[k] - ((ir * pt[k]) - (ii * pti[k])); eti = ati[k] - ((ir * pti[k]) + (ii * pt[k]));
+	ep = ap[k] - ((ir * pp[k]) - (ii * ppi[k])); epi = api[k] - ((ir * ppi[k]) + (ii * pp[k]));
+	d = sqrt((($4 - et) ^ 2) + (($5 - eti) ^ 2) + (($6 - ep) ^ 2) + (($7 - epi) ^ 2)); if (d > mx) mx = d;
+	a = sqrt(($4 ^ 2) + ($5 ^ 2) + ($6 ^ 2) + ($7 ^ 2)); if (a > amax) amax = a; n++
+}
+END {
+	r = (amax > 0) ? (mx / amax) : 1; ok = (n == 5328) && (r <= 1e-6);
+	printf "%-24s dirs=%d max|F_B-(F_A-I_L F_port)|/max|F_B|=%.3e -> %s (<= 1e-6)\n", "farpw compensation", n, r, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/pw.csv" "$WORK/zin.csv" "$WORK/far.csv" "$WORK/farpw.csv" "$WORK/farpw_B.csv" || status=1
+
 echo "--- transient (inverse FFT of the sweep)"
 # (al) 周波数に依らない反射係数 : y(t) = S11 x(t) が全時刻で厳密に成り立つ。
 #      励振と応答を同じ合成式で作るので帯域打ち切りも相殺する。

@@ -1,0 +1,54 @@
+# 検証 (ax) : 平面波の散乱遠方界とレーダー断面積 — 短絡した微小ループ
+#
+# 目的
+#   planewave + farfield で出す散乱界 (farpw.csv) と断面積 (peec.log) を、
+#   磁気双極子の教科書式と比べる。loop_pw.peec と同じ正方ループ
+#   (一辺 s = 0.2 m、面積 A = 0.04 m^2、z = 0 面、法線 z^、線半径 1 mm 銅) を
+#   1e-6 ohm で短絡し、f = 10 MHz (s/lambda = 0.0067) で
+#     planewave = 90 0 2 1.0 (+x から到来、E = E0 y^、H = -(E0/eta0) z^)
+#   を当てる。H がループ法線に平行なので最大結合。
+#
+# 解析解 (ファラデーの法則 + オームの法則 + 磁気双極子の放射)
+#   起電力 Voc = j k E0 A (loop_pw.peec で検証済み)、ループのインピーダンス
+#   Z = R + j omega L、L = 7.24689e-7 H (Grover : loop_square.peec で検証済み)、
+#   R = R_wire + R_short = 4.3906e-3 + 1e-6 ohm (4 x 0.2 / (sigma pi a^2))。
+#   誘起電流 I = Voc / Z、磁気双極子 m = I A (z 向き)。
+#   - y^ 方向 (theta = 90, phi = 90) の双方向 RCS : 磁気双極子の放射は
+#     |r E| = eta0 k^2 |m| / (4 pi) (m に垂直な方向)。電気双極子 (y 向きの
+#     電荷分離) はこの方向に放射しないので、磁気双極子だけで決まる :
+#       sigma(y^) = 4 pi |r E|^2 / E0^2 = k^4 omega^2 mu0^2 A^4 / (4 pi |Z|^2)
+#   - 全散乱断面積 (双極子パターン sin^2 の積分 8 pi / 3) :
+#       sigma_s = (2/3) sigma(y^)
+#   - 吸収断面積 (導体損 |I|^2 R / 2 を入射電力密度 E0^2 / (2 eta0) で割る) :
+#       sigma_a = eta0 R k^2 A^2 / |Z|^2
+#     消光断面積 (光学定理) は sigma_e = sigma_a + sigma_s。R が放射抵抗
+#     (~6e-5 ohm) の 70 倍あるので吸収が支配的 : 光学定理の前方振幅が
+#     コードの散乱計算とは別経路の量 (オーム損) と一致することを見る。
+#   - ループ軸方向 (theta = 0) : 閉じたループの放射ベクトルは
+#     sum I len t^ = 0 なので散乱は 0 (残るのは 1 um のポートギャップ分だけ)。
+#   誤差は O((ks)^2) ~ 2e-3 程度。判定は 1% (軸方向は比 1e-6)。
+#
+#   遅延あり (retardation = 1) が必須 : 誘起電流に放射の反作用 (放射抵抗) が
+#   入って初めて、回路が入射波から受け取る電力 (= 光学定理の消光) が
+#   吸収 + 散乱になる。retardation = 0 では回路に放射抵抗が無いので、光学定理は
+#   吸収分 sigma_a だけを返す (peec.log に注意が出る)。容量なし
+#   (capacitance = 0) : 微小ループの磁気結合には電荷が要らない。
+#   実測 : sigma(y^) -0.044%、sigma_s -0.026%、sigma_e -0.032%。
+OpenPEEC 1 0
+title = scattering by a short-circuited small loop (magnetic dipole RCS)
+retardation = 1
+planewave = 90 0 2 1.0
+farfield = 18 24
+node = 1 0 0 0
+node = 2 0.2 0 0
+node = 3 0.2 0.2 0
+node = 4 0 0.2 0
+node = 5 0 1e-6 0
+wire = 0 0 0 0.2 0 0 1e-3 5.8e7 1
+wire = 0.2 0 0 0.2 0.2 0 1e-3 5.8e7 1
+wire = 0.2 0.2 0 0 0.2 0 1e-3 5.8e7 1
+wire = 0 0.2 0 0 1e-6 0 1e-3 5.8e7 1
+resistor = 1 5 1e-6
+port = 1 5 50
+frequency = 1e7 1e7 0
+end

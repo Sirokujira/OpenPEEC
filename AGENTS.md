@@ -11,7 +11,7 @@
 `disk` = 円板)、らせん / 円形ループ (`helix`、直線 `wire` 列に展開)。`plate` は `分割数t` (省略時 1) を 2 以上にすると厚み方向にも
 分割し、体積セル (矩形バー) として厚み方向の電流分布 (表皮効果) を解く。
 ほかに無限 PEC 地板 (`groundplane`、鏡像法)、誘電体ブリック (`dielectric`、
-Ruehli の過剰容量)、遠方界後処理 (`farfield` → `far.csv`)、近傍界後処理
+Ruehli の過剰容量)、遠方界後処理 (`farfield` → `far.csv`、平面波併用時は散乱界・RCS `farpw.csv`)、近傍界後処理
 (`nearfield` → `near.csv`、平面波併用時は全界 `nearpw.csv`)、平面波入射
 (`planewave` → `pw.csv`、EMC イミュニティ)、過渡応答 (`transient` →
 `tran.csv`、掃引の逆フーリエ変換)、対数掃引 (`frequency ... log`)。
@@ -31,7 +31,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、151 判定)
+# 検証 (解析解・文献値との比較、157 判定)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -42,7 +42,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 151 判定すべて OK (h5py が
+**変更したら必ず `peec_check.sh` を通すこと。** 157 判定すべて OK (h5py が
 無い環境の `peec2h5 converter` だけは SKIP) でなければ完了ではない。
 「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
@@ -70,7 +70,7 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/pe
 | `src/precond.c` | 葉ブロック消去 + 回路 Schur 補元の前処理 (compression = 1) |
 | `src/solve.c` | 周波数掃引、Z → S 変換 |
 | `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、混合モード `mixed.csv`、`dist.csv` |
-| `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率) |
+| `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率。平面波の散乱界・RCS・光学定理 → `farpw.csv`) |
 | `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv` / 平面波の全界 `nearpw.csv`、E / H の遅延ポテンシャル) |
 | `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
 | `tools/peec2h5.py` | CSV → HDF5 変換 (本体の依存を増やさないための外付け) |
@@ -235,6 +235,15 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
     入力検査で強制する。並びは d1..dP, c1..cP, 単端 (番号順)。
     (`mixed-mode (2 pairs)` / `mixed-mode Zref (2Z0,Z0/2)` /
     `twinline no conversion` / `twinline norm preserved`)
+19. **散乱遠方界は送信と同じ放射ベクトルで作り、光学定理は回路と恒等的** —
+    `farpw.csv` の散乱界は `segipw` (誘起電流) を `ff_nvec()` (far.csv と共通)
+    に通すだけ。消光断面積 σ_e = −(4π/k) Im[ê·rE_s(d)/E₀] (exp(+jωt) 規約。
+    e^{−iωt} の教科書式の複素共役で符号が逆) は、離散系では回路が受け取る電力
+    ½ Re Σ emf conj(I) と恒等的に等しい。したがってエネルギー保存
+    σ_e = σ_s + σ_a は誘起電流に放射の反作用がある retardation = 1 でだけ
+    成り立つ (retardation = 0 では σ_e は吸収分のみ)。
+    (`loop RCS sigma(y^)` / `loop sigma_ext (optical)` / `dipole scat energy` /
+    `farpw compensation`)
 
 ## メモリ
 
@@ -341,8 +350,9 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
   (座標がずれると nodetol マージが外れて接続が切れる)。
   節点の束縛電荷は a–b 面内の双対矩形パネルで表す近似 (表面電荷が a–b 面に
   支配的な配置 — 基板・平行平板 — で正確)。`capacitance = 1` 必須。
-- 遠方界 (`farfield`) は port #1 の 1 A 励振に対する値。効率が意味を持つのは
-  `retardation = 1` のとき (準静的電流は放射を含まない)。
+- 遠方界 (`farfield`) の `far.csv` は port #1 の 1 A 励振に対する値。効率が意味を持つのは
+  `retardation = 1` のとき (準静的電流は放射を含まない)。平面波併用時の
+  `farpw.csv` は誘起電流の散乱界と RCS。光学定理の消光断面積は地板なしのときのみ。
 - 近傍界 (`nearfield`) の `near.csv` は port #1 の 1 A 励振、`nearpw.csv` は
   平面波入射時の全界 (入射 + 反射 + 散乱)。入射界は `retardation` に依らず
   k = ω/c で評価する。観測点はセル寸法

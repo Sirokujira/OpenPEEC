@@ -217,11 +217,12 @@ int solve(peec_t *p, FILE *fp_log)
 	d_complex_t *scol = (d_complex_t *)malloc((size_t)np * sizeof(d_complex_t));
 	int *spiv = (int *)malloc((size_t)np * sizeof(int));
 
-	// 平面波入射 (planewave) : 各ポートの端子電圧と、分布 (distribution = 1) か
-	// 近傍界 (nearfield) があれば誘起電流。近傍界はさらに誘起電荷も使う。
+	// 平面波入射 (planewave) : 各ポートの端子電圧と、分布 (distribution = 1)・
+	// 近傍界 (nearfield)・遠方界 (farfield : 散乱界と RCS) があれば誘起電流。
+	// 近傍界はさらに誘起電荷も使う。
 	if (p->pw) {
 		p->voc = (d_complex_t *)malloc((size_t)p->nport * p->nfreq * sizeof(d_complex_t));
-		if ((p->dist || (p->nnf > 0)) && (p->nseg > 0)) {
+		if ((p->dist || (p->nnf > 0) || (p->ffnth > 0)) && (p->nseg > 0)) {
 			p->segipw = (d_complex_t *)malloc((size_t)p->nfreq * p->nseg * sizeof(d_complex_t));
 		}
 		if ((p->nnf > 0) && p->capacitance && (p->ncell > 0)) {

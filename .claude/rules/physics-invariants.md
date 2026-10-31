@@ -452,6 +452,38 @@ OpenMP でもスレッド数によらずビット一致する。
 `twinline reciprocity` / `twinline norm preserved` / `twinline asym converts` /
 `mixedmode parser guard`
 
+## (20) 散乱遠方界は送信と同じ放射ベクトルで作る (planewave + farfield)
+
+平面波の散乱界 (`farpw.csv`、farfield.c の `output_farpw()`) は後処理なので
+壊れても Zin・Voc は変わらない。`farpw.csv` と peec.log の断面積だけが静かに
+狂う。守るべき約束は 3 つ。
+
+- **放射ベクトルは `ff_nvec()` の 1 箇所**。port #1 励振 (`far.csv`) と平面波の
+  散乱 (`farpw.csv`) は電流配列 (`segi` / `segipw`) を差し替えるだけで、
+  sinc・位相 exp(+jk r̂·r)・鏡像規約 (8) を共有する。散乱側だけ式を書き直すと
+  相反 (11) と補償定理の整合が崩れる。`ff_nvec()` へ切り出したとき far.csv は
+  main とバイト一致することを確認済み。
+- **光学定理の符号は exp(+jωt) 規約で決まる**。
+  σ_e = −(4π/k) Im[ê·rE_s(d)/E₀] (d = 伝搬方向 = −到来方向)。Bohren-Huffman の
+  (4π/k) Im[...] は e^{−iωt} 規約なので、複素共役を取ると符号が反転する。
+  符号を取り違えると σ_e が負になる。
+- **エネルギー保存は retardation = 1 が前提**。離散系では前方散乱振幅と回路が
+  入射波から受け取る電力 ½ Re Σ_m emf_m conj(I_m) が恒等的に等しい
+  (起電力と放射ベクトルが同じ区間積分を共有するため)。だから
+  σ_e = σ_s + σ_a は回路に放射抵抗 (遅延) が入っているときだけ成り立つ。
+  retardation = 0 では σ_e は吸収分 σ_a だけを返す (実際に踏んだ : 短絡
+  ループで σ_e がちょうど σ_s の分だけ 1.4% 小さく出た)。ログに注意を出す。
+
+地板があるときは入射が 2 波 (直接 + 反射) になって前方方向が 1 つに
+決まらないので、σ_e は出さない (RCS と σ_s は上半球で出す)。
+
+**番人**: `loop RCS sigma(y^)` / `loop sigma_scat` / `loop sigma_ext (optical)`
+(短絡した微小ループ : ファラデー + オーム + 磁気双極子の放射。L は Grover 式、
+R は DC 抵抗 : 実測 −0.04%) / `loop RCS axial null` (閉ループの放射ベクトル 0) /
+`dipole scat energy` (負荷付きダイポールで σ_e = σ_s + σ_L、σ_L は回路側の
+端子電圧から : 実測 4e-4) / `farpw compensation` (F_負荷 = F_開放,pw − I_L F_port :
+実測 3e-10)
+
 ## 並列化
 
 `lp_fill` / `pot_fill` / 近傍界の観測点ループは OpenMP 並列。並列ループ内で

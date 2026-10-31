@@ -114,6 +114,7 @@ int main(int argc, char *argv[])
 	if (output_csv(&peec, FN_CSV) || output_touchstone(&peec) ||
 	    output_mixed(&peec, FN_MM, fp_log) ||
 	    output_dist(&peec, FN_DIST) || output_far(&peec, FN_FAR, fp_log) ||
+	    output_farpw(&peec, FN_FARPW, fp_log) ||
 	    output_near(&peec, FN_NEAR, FN_NEARPW, fp_log) ||
 	    output_pw(&peec, FN_PW, fp_log) || output_tran(&peec, FN_TRAN, fp_log)) {
 		peec_free(&peec);
@@ -133,6 +134,10 @@ int main(int argc, char *argv[])
 	if (peec.ffnth > 0) {
 		strcat(str, ", ");
 		strcat(str, FN_FAR);
+		if (peec.pw) {
+			strcat(str, ", ");
+			strcat(str, FN_FARPW);
+		}
 	}
 	if (peec.nnf > 0) {
 		strcat(str, ", ");
