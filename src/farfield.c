@@ -47,47 +47,33 @@ static double sinc(double x)
 static void ff_nvec(const peec_t *p, const d_complex_t *cur, double kw,
 	const double rh[3], d_complex_t nv[3])
 {
-	// 成分ごとの明示的なスカラー演算 (3 要素の小ループと構造体の一時値を
-	// 避ける)。演算の順序はインライン版 (main の output_far) と同一なので
-	// far.csv はビット単位で変わらない
-	const double r0 = rh[0], r1 = rh[1], r2 = rh[2];
-	double n0r = 0, n0i = 0, n1r = 0, n1i = 0, n2r = 0, n2i = 0;
+	for (int c = 0; c < 3; c++) nv[c] = d_complex(0, 0);
 	const int npass = p->gp ? 2 : 1;
 	for (int pass = 0; pass < npass; pass++) {
 		for (int m = 0; m < p->nseg; m++) {
 			const seg_t *s = &p->seg[m];
-			const double t0 = (s->x2[0] - s->x1[0]) / s->len;
-			const double t1 = (s->x2[1] - s->x1[1]) / s->len;
-			double t2 = (s->x2[2] - s->x1[2]) / s->len;
-			const double c0 = 0.5 * (s->x1[0] + s->x2[0]);
-			const double c1 = 0.5 * (s->x1[1] + s->x2[1]);
-			double c2 = 0.5 * (s->x1[2] + s->x2[2]);
+			double tv[3], rc[3];
+			for (int c = 0; c < 3; c++) {
+				tv[c] = (s->x2[c] - s->x1[c]) / s->len;
+				rc[c] = 0.5 * (s->x1[c] + s->x2[c]);
+			}
 			double sgn = 1;
 			if (pass == 1) {
 				// 鏡像 : 幾何鏡像 + 電流 -I (水平反転・垂直保存)
-				t2 = -t2;
-				c2 = (2 * p->gpz) - c2;
+				tv[2] = -tv[2];
+				rc[2] = (2 * p->gpz) - rc[2];
 				sgn = -1;
 			}
-			const double rt = (r0 * t0) + (r1 * t1) + (r2 * t2);
-			const double rr = (r0 * c0) + (r1 * c1) + (r2 * c2);
+			const double rt = (rh[0] * tv[0]) + (rh[1] * tv[1]) + (rh[2] * tv[2]);
+			const double rr = (rh[0] * rc[0]) + (rh[1] * rc[1]) + (rh[2] * rc[2]);
 			const double amp = sgn * s->len * sinc(0.5 * kw * s->len * rt);
-			const double pr = cos(kw * rr);
-			const double pi_ = sin(kw * rr);
-			// w = amp * (cur[m] * ph)
-			const double wr = amp * ((cur[m].r * pr) - (cur[m].i * pi_));
-			const double wi = amp * ((cur[m].r * pi_) + (cur[m].i * pr));
-			n0r = n0r + (t0 * wr);
-			n0i = n0i + (t0 * wi);
-			n1r = n1r + (t1 * wr);
-			n1i = n1i + (t1 * wi);
-			n2r = n2r + (t2 * wr);
-			n2i = n2i + (t2 * wi);
+			const d_complex_t ph = d_complex(cos(kw * rr), sin(kw * rr));
+			const d_complex_t w = d_rmul(amp, d_mul(cur[m], ph));
+			for (int c = 0; c < 3; c++) {
+				nv[c] = d_add(nv[c], d_rmul(tv[c], w));
+			}
 		}
 	}
-	nv[0] = d_complex(n0r, n0i);
-	nv[1] = d_complex(n1r, n1i);
-	nv[2] = d_complex(n2r, n2i);
 }
 
 int output_far(const peec_t *p, const char *fn, FILE *fp_log)

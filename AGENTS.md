@@ -99,6 +99,19 @@ Linux/macOS では通るが Windows で落ちるものだけを挙げる。
    `tools/` の後処理スクリプトは対象外で、そこでなら numpy / h5py 等を使ってよい
    (`tools/peec2h5.py` の HDF5 出力がこれ)。ビルドと CI に影響しないことが条件。
 
+GCC の最適化で踏んだもの (Linux CI) :
+
+9. **FMA 縮約は切る (`-ffp-contract=off`、CMakeLists の GNU ブロック)**。
+   ubuntu-26.04 ランナーの GCC 15.2 は既定で `-march=x86-64-v3` (AVX2 + FMA)
+   になり、`-O2` 以上の SLP ベクトル化が farfield.c の `ff_nvec()` を誤って
+   コンパイルした (far.csv / farpw.csv が丸め誤差ではなく狂う。Debug の
+   sanitize・macOS・Windows・ローカル GCC 13/14・clang はすべて通る)。
+   `-ffp-contract=off` / `-fno-tree-slp-vectorize` / FMA なしの `-march` の
+   どれでも直る。縮約を切ると結果が FMA の有無に依存しなくなり、FMA の無い
+   既定の x86-64 では出力がバイト一致のまま。Linux だけ落ちたら既定の -march
+   (`gcc -Q --help=target | grep march`) を確かめ、CI 上でファイル単位の `-O0`
+   とフラグ単位の切り分けを回す。
+
 `.claude/hooks/check-portability.sh` が (1)(2)(3) を機械的に検査する。
 Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩ける。
 
