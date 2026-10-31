@@ -130,6 +130,7 @@ int input_data(FILE *fp, peec_t *p)
 	const char sep[] = " \t";
 	const char errfmt2[] = "*** invalid %s data\n";
 	int    cres = 0, ccap = 0, cind = 0, cmut = 0, csrc = 0, cport = 0, cwire = 0, cnode = 0;
+	int    ctl = 0;
 	int    cplate = 0, cpanel = 0, cdiel = 0, cnf = 0, chelix = 0;
 
 	// initialize (既定値 : キー省略時は従来動作)
@@ -237,6 +238,33 @@ int input_data(FILE *fp, peec_t *p)
 			}
 			if (err) {
 				printf(errfmt2, "inductor");
+				return 1;
+			}
+		}
+		else if (!strcmp(strkey, "tline")) {
+			// tline = n1 n2 n3 n4 Z0 遅延[s] [損失dB]
+			if (ntoken < 8) err = 1;
+			else {
+				APPEND(p->tl, p->ntl, ctl, tline_t);
+				tline_t *e = &p->tl[p->ntl];
+				e->n1 = nodeid(token[2], &err);
+				e->n2 = nodeid(token[3], &err);
+				e->n3 = nodeid(token[4], &err);
+				e->n4 = nodeid(token[5], &err);
+				e->z0 = atof(token[6]);
+				e->td = atof(token[7]);
+				const double db = (ntoken >= 9) ? atof(token[8]) : 0;
+				if ((e->z0 <= 0) || (e->td <= 0) || (db < 0) ||
+				    (e->n1 == e->n2) || (e->n3 == e->n4)) err = 1;
+				e->att = pow(10, -db / 20);
+				updatemax(p, e->n1);
+				updatemax(p, e->n2);
+				updatemax(p, e->n3);
+				updatemax(p, e->n4);
+				if (!err) p->ntl++;
+			}
+			if (err) {
+				printf(errfmt2, "tline");
 				return 1;
 			}
 		}
@@ -815,8 +843,8 @@ int input_data(FILE *fp, peec_t *p)
 			return 1;
 		}
 	}
-	if ((p->nres + p->ncap + p->nind + p->nwire + p->nplate + p->npanel) <= 0) {
-		printf("%s\n", "*** no element data (resistor/capacitor/inductor/wire/bar/plate/polygon/disk)");
+	if ((p->nres + p->ncap + p->nind + p->ntl + p->nwire + p->nplate + p->npanel) <= 0) {
+		printf("%s\n", "*** no element data (resistor/capacitor/inductor/tline/wire/bar/plate/polygon/disk)");
 		return 1;
 	}
 	// 誘電体は電位係数 (束縛電荷) が無いと意味を持たない
@@ -861,6 +889,7 @@ void peec_free(peec_t *p)
 	free(p->ind);
 	free(p->mut);
 	free(p->src);
+	free(p->tl);
 	free(p->port);
 	free(p->wire);
 	free(p->helix);

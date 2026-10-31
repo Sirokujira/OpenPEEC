@@ -13,8 +13,16 @@ same portability rules, no external numerical libraries.
 ## Theory / 理論概要
 
 - **MNA (修正節点解析)** : 集中定数素子 R / L / C / 相互インダクタンス K /
-  独立電源 (AC) をスタンプした複素連立一次方程式を、周波数ごとに自前の
-  複素 LU 分解 (部分ピボット) で解きます。
+  伝送線路 T / 独立電源 (AC) をスタンプした複素連立一次方程式を、周波数ごとに
+  自前の複素 LU 分解 (部分ピボット) で解きます。
+- **伝送線路 (`tline`)** : 特性インピーダンス Z0・片道遅延 td の TEM 線路
+  (SPICE の T 素子に相当) を 2 つの端子対の間に置きます。端子対ごとの
+  入射波 a = (v + Z0 i)/2 と反射波 b = (v − Z0 i)/2 が b1 = T a2、b2 = T a1
+  (T = a e^{−jω td}) で結ばれる進行波の形 (Branin) で MNA に組むので、
+  Z / Y 行列の形と違って ω td = nπ でも特異になりません。省略可能な損失 [dB]
+  は無ひずみ線路 (Heaviside、R/L = G/C) の片道減衰 a = 10^(−dB/20) で、
+  Z0 は実数のまま周波数に依りません。給電線・整合スタブ・ケーブルを PEEC
+  構造と同じ回路に入れられます (線路自体は幾何を持たず、場とは結合しません)。
 - **部分インダクタンス (L)** : 直線導体 (`wire` / `bar` キー) を区間分割し、
   幾何二重積分 `I = ∬ dl₁dl₂/R` から `Lp = (μ0/4π)(t̂₁·t̂₂) I` を求めて
   区間枝電流を MNA に組み込みます。ポートは 1 A 電流源励振で Zin(f) を
@@ -153,6 +161,10 @@ same portability rules, no external numerical libraries.
 
 ### 制限 / Limitations
 
+- `tline` は理想 TEM 線路です (無損失、または一定減衰の無ひずみ線路)。
+  Z0 と遅延は周波数に依らず、表皮効果のような √f の損失や分散は持ちません。
+  線路は幾何を持たないので、遠方界・近傍界・平面波入射とは結合しません
+  (外部導体が完全に遮蔽している同軸に相当)。
 - `skineffect` / `capacitance` / `retardation` は既定で無効です
   (キー省略時は従来動作と完全に一致)。
 - `retardation = 0` は準静的モデルです。寸法 ≪ λ/10 で正確ですが、
@@ -222,7 +234,7 @@ same portability rules, no external numerical libraries.
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値と比較、157 判定。許容は判定ごとに 1e-12 〜 3%)
+# 検証 (解析解・文献値と比較、165 判定。許容は判定ごとに 1e-12 〜 3%)
 # 実行ファイルは相対パスでもよい (スクリプトが絶対パスに直す)
 sh data/sample/peec_check.sh bin/peec /tmp/peec-check
 
@@ -366,6 +378,7 @@ d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 
 | `capacitor` | `capacitor = n1 n2 C` | キャパシタ [F] |
 | `inductor` | `inductor = 名前 n1 n2 L` | インダクタ [H] (名前は `mutual` 参照用) |
 | `mutual` | `mutual = 名前1 名前2 k` | 結合係数 k (0 < k ≤ 1)、M = k√(L1L2) |
+| `tline` | `tline = n1 n2 n3 n4 Z0 遅延 [損失dB]` | 伝送線路 (TEM)。端子対 1 = (n1, n2)、端子対 2 = (n3, n4)。Z0 [Ω] > 0、片道遅延 [s] > 0 (電気長 θ = 2πf·遅延)。損失 (省略時 0) は片道の減衰 [dB] で、無ひずみ線路として周波数に依らない |
 | `vsource` | `vsource = n1 n2 振幅 [位相deg]` | AC 電圧源 (+ 端子 = n1) |
 | `isource` | `isource = n1 n2 振幅 [位相deg]` | AC 電流源 (電源内部を n1→n2、SPICE 規約) |
 | `node` | `node = n x y z` | 回路ノード n を 3D 座標に束縛 (ワイヤ接続点) |
@@ -500,6 +513,11 @@ d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 
 | `diel_lorentz.peec` Lorentz 分散 | 1 極 (Δε=2@f0=1MHz, g=200kHz, Q=5) で共振をまたぐ 0.8〜1.2 MHz の 5 点 × (G, B) を ΔY の解析式と比較。共振の上で εr′ < 0 (枝が誘導性) になる 2 点を含む (実測 3.5e-5) | 2e-3 |
 | `diel_lorentz2.peec` Lorentz + Debye 混在 | Lorentz (2@100kHz, g=50kHz) を先、Debye (1@1kHz) を後に書いた 2 極で 5 点 × (G, B) を極の和の解析式と比較 (実測 4.3e-4) | 2e-3 |
 | `diel_lorentz.peec` 入力検証 | 減衰幅 g ≤ 0、語の不足、強度の和の不一致の 3 通りがエラー終了すること | 3/3 拒否 |
+| `tline_term.peec` 抵抗終端した線路 | Zin = Z0(ZL + jZ0 tanθ)/(Z0 + jZL tanθ) (Z0 = 50, ZL = 100) を θ = π/4〜5π/4 の 5 点で。λ/4 で Z0²/ZL = 25 Ω、λ/2 で ZL。損失 2 dB の版は tanh γl の式と比べる | 1e-8 |
+| `tline_matched.peec` 整合した損失線路 | 基準 75 Ω で S11 = S22 = 0、S21 = S12 = 10^(−3/20) e^{−j2πf·td} (td = 2 ns、10 点)。位相の向き = 遅延の符号 | 1e-9 |
+| `tline_tdr.peec` 線路の TDR (transient 併用) | 整合線路の先の R = 150 Ω で y(t) = Γ x(t − 2td) (Γ = 0.5、2td = 32Δt で厳密)。遅延の符号を取り違えると前進して落ちる | 1e-9 |
+| `dipole_halfwave.peec` + `tline` | 線路の先の半波長ダイポール : Zin = Z0(Zd + jZ0 tanθ)/(Z0 + jZd tanθ) (Zd は線路なしの Zin、13 点)。容量性 + 遅延の PEEC と浮いた端子対で繋がること。`compression = 1` でも密経路とビット一致 | 1e-7 / 1e-12 |
+| `tline_term.peec` 入力検証 | 語の不足、Z0 ≤ 0、遅延 ≤ 0、損失 < 0、端子対の 2 ノード同一の 5 通りがエラー終了すること | 5/5 拒否 |
 
 ## License
 

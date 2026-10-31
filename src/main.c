@@ -69,8 +69,8 @@ int main(int argc, char *argv[])
 	fclose(fp_in);
 	printf("title = %s\n", peec.title);
 	fprintf(fp_log, "title = %s\n", peec.title);
-	snprintf(str, sizeof(str), "R=%d C=%d L=%d K=%d source=%d wire=%d plate=%d diel=%d port=%d frequency=%d",
-		peec.nres, peec.ncap, peec.nind, peec.nmut, peec.nsrc,
+	snprintf(str, sizeof(str), "R=%d C=%d L=%d K=%d T=%d source=%d wire=%d plate=%d diel=%d port=%d frequency=%d",
+		peec.nres, peec.ncap, peec.nind, peec.nmut, peec.ntl, peec.nsrc,
 		peec.nwire, peec.nplate, peec.ndiel, peec.nport, peec.nfreq);
 	monitor(fp_log, str);
 

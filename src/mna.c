@@ -2,7 +2,8 @@
 mna.c
 
 修正節点解析 (MNA)
-未知数の並び : [節点電位 (基準除く) | i_L (L 素子) | i_V (電圧源) | i_S (ワイヤ区間)]
+未知数の並び : [節点電位 (基準除く) | i_L (L 素子) | i_V (電圧源) | i_T (伝送線路の
+端子電流、1 本 2 個) | i_S (ワイヤ区間)]
 ワイヤ区間の枝方程式 : v_a - v_b - R_k i_k - jw Σ_m Lp[k][m] i_m = 0
 */
 
@@ -34,6 +35,12 @@ int mna_numbering(peec_t *p, FILE *fp_log)
 	for (int i = 0; i < p->nsrc; i++) {
 		markused(used, p->src[i].n1);
 		markused(used, p->src[i].n2);
+	}
+	for (int i = 0; i < p->ntl; i++) {
+		markused(used, p->tl[i].n1);
+		markused(used, p->tl[i].n2);
+		markused(used, p->tl[i].n3);
+		markused(used, p->tl[i].n4);
 	}
 	for (int i = 0; i < p->nport; i++) {
 		markused(used, p->port[i].n1);
@@ -80,7 +87,8 @@ int mna_numbering(peec_t *p, FILE *fp_log)
 
 	p->offL = p->nnode;
 	p->offV = p->offL + p->nind;
-	p->offS = p->offV + nvsrc;
+	p->offT = p->offV + nvsrc;
+	p->offS = p->offT + (2 * p->ntl);
 	p->nunknown = p->offS + p->nseg;
 
 	/*
@@ -260,6 +268,53 @@ static void assemble(const peec_t *p, double f, sink_t *s, int skiplp)
 		stamp(s, r, i1, d_complex(1, 0));
 		stamp(s, i2, r, d_complex(-1, 0));
 		stamp(s, r, i2, d_complex(-1, 0));
+	}
+
+	/*
+	伝送線路 (tline) : 端子電流 i1 は n1 -> 線路 -> n2、i2 は n3 -> 線路 -> n4
+	(どちらも線路へ流れ込む向き、v1 = v(n1) - v(n2)、v2 = v(n3) - v(n4))。
+	端子対ごとの入射波 a = (v + Z0 i)/2 と反射波 b = (v - Z0 i)/2 が
+	b1 = T a2、b2 = T a1 (T = att e^{-j w td}) で結ばれる進行波 (Branin) の形
+
+	  v1 - Z0 i1 - T (v2 + Z0 i2) = 0
+	  v2 - Z0 i2 - T (v1 + Z0 i1) = 0
+
+	で組む。Z / Y 行列の形 (cot, csc を含む) と違い w td = n pi で特異に
+	ならず、対角は常に -Z0。T の偏角 -w td は exp(+j w t) 規約での遅延。
+	各端子対の電流は行き帰りで等しい (同相の経路を作らない) ので、容量性
+	PEEC の総電荷の保存 (不変条件 3) も壊さない。
+	*/
+	for (int i = 0; i < p->ntl; i++) {
+		const tline_t *t = &p->tl[i];
+		const int a1 = map[t->n1];
+		const int b1 = map[t->n2];
+		const int a2 = map[t->n3];
+		const int b2 = map[t->n4];
+		const int r1 = p->offT + (2 * i);
+		const int r2 = r1 + 1;
+		const double ph = omega * t->td;
+		const d_complex_t tt = d_complex(t->att * cos(ph), -t->att * sin(ph));
+		const d_complex_t mt = d_rmul(-1, tt);
+		const d_complex_t mtz = d_rmul(-t->z0, tt);
+		// KCL : 端子電流は n1 (n3) から出て n2 (n4) へ戻る
+		stamp(s, a1, r1, d_complex(1, 0));
+		stamp(s, b1, r1, d_complex(-1, 0));
+		stamp(s, a2, r2, d_complex(1, 0));
+		stamp(s, b2, r2, d_complex(-1, 0));
+		// v1 - Z0 i1 - T v2 - T Z0 i2 = 0
+		stamp(s, r1, a1, d_complex(1, 0));
+		stamp(s, r1, b1, d_complex(-1, 0));
+		stamp(s, r1, r1, d_complex(-t->z0, 0));
+		stamp(s, r1, a2, mt);
+		stamp(s, r1, b2, tt);
+		stamp(s, r1, r2, mtz);
+		// v2 - Z0 i2 - T v1 - T Z0 i1 = 0
+		stamp(s, r2, a2, d_complex(1, 0));
+		stamp(s, r2, b2, d_complex(-1, 0));
+		stamp(s, r2, r2, d_complex(-t->z0, 0));
+		stamp(s, r2, a1, mt);
+		stamp(s, r2, b1, tt);
+		stamp(s, r2, r1, mtz);
 	}
 
 	// ワイヤ区間 (枝電流 + 密な相互インダクタンスブロック)

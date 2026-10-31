@@ -1,0 +1,23 @@
+# 検証 (az) : 伝送線路 (tline) — 抵抗終端した線路の入力インピーダンス
+#   無損失線路 Z0 = 50 Ω、片道遅延 td = 1 ns、終端 ZL = 100 Ω (resistor)。
+#   電気長 θ = 2π f td。入力インピーダンスの教科書式 (Pozar, Microwave
+#   Engineering, 式 2.44)
+#     Zin = Z0 (ZL + j Z0 tan θ) / (Z0 + j ZL tan θ)
+#   f = 125 / 250 / 375 / 500 / 625 MHz で θ = π/4, π/2, 3π/4, π, 5π/4 :
+#     θ = π/4       : Zin = 50 (100 + j50)/(50 + j100) = 40 - j30 Ω
+#     θ = π/2 (λ/4) : Zin = Z0²/ZL = 25 Ω (1/4 波長インピーダンス変換器)
+#     θ = 3π/4      : Zin = 40 + j30 Ω
+#     θ = π   (λ/2) : Zin = ZL = 100 Ω (半波長線路は終端をそのまま見せる)
+#   損失 L dB の版 (検証スクリプトが末尾に 2 dB を足して作る) は無ひずみ線路
+#   (Heaviside、R/L = G/C) : Z0 は実数のまま、片道の振幅 a = 10^(-L/20) で
+#     Zin = Z0 (ZL + Z0 tanh γl) / (Z0 + ZL tanh γl),  γl = -ln a + jθ
+#   実装は進行波の関係 (b1 = T a2, b2 = T a1, T = a e^{-jθ}) を MNA に組むだけで
+#   tan / tanh を使わないので、式とは独立に代数的に一致するはず。
+#   判定は相対 1e-8 (zin.csv の有効 10 桁)。
+OpenPEEC 1 0
+title = terminated transmission line (input impedance)
+tline = 1 0 2 0 50 1e-9
+resistor = 2 0 100
+port = 1 0 50
+frequency = 1.25e8 6.25e8 4
+end

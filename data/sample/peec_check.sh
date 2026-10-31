@@ -1359,6 +1359,113 @@ else
 	status=1
 fi
 
+echo "--- transmission line (tline)"
+# (az) 伝送線路 : 進行波の関係 (Branin) で MNA に組んだ線路を、tan / tanh を使う
+#      教科書の入力インピーダンス式・整合線路の S・時間領域の遅延と比べる。
+#      tlzin <損失dB> : zin.csv と Zin = Z0 (ZL + Z0 tanh γl)/(Z0 + ZL tanh γl)
+#      (Z0 = 50, ZL = 100, td = 1 ns, γl = L ln10/20 + j 2π f td) の最大相対誤差
+tlzin() {
+	awk -F, -v L="$1" 'NR > 1 {
+		PI = atan2(0, -1); z0 = 50; zl = 100;
+		x = L * log(10) / 20; y = 2 * PI * $2 * 1e-9;
+		den = ((exp(2 * x) + exp(-2 * x)) / 2) + cos(2 * y);
+		tr = ((exp(2 * x) - exp(-2 * x)) / 2) / den; ti = sin(2 * y) / den;
+		nr = zl + (z0 * tr); ni = z0 * ti; dr = z0 + (zl * tr); di = zl * ti; dd = (dr * dr) + (di * di);
+		er = z0 * ((nr * dr) + (ni * di)) / dd; ei = z0 * ((ni * dr) - (nr * di)) / dd;
+		e = sqrt((($3 - er) ^ 2) + (($4 - ei) ^ 2)) / sqrt((er * er) + (ei * ei)); if (e > mx) mx = e; n++
+	} END {printf "%d %.3e\n", n, mx}' "$csv"
+}
+cp "$SRC/tline_term.peec" "$WORK/"
+run tline_term.peec
+chk "tline lambda/4 Zin" "$(awk -F, 'NR == 3 {print $3}' "$csv")" 25 1e-9
+set -- $(tlzin 0)
+awk -v n="$1" -v e="$2" 'BEGIN {
+	ok = (n == 5) && (e <= 1e-8);
+	printf "%-24s freqs=%d max rel err=%.3e -> %s (<= 1e-8)\n", "tline Zin (lossless)", n, e, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+sed 's/^tline = 1 0 2 0 50 1e-9$/tline = 1 0 2 0 50 1e-9 2/' "$SRC/tline_term.peec" > "$WORK/tline_term_loss.peec"
+run tline_term_loss.peec
+set -- $(tlzin 2)
+awk -v n="$1" -v e="$2" 'BEGIN {
+	ok = (n == 5) && (e <= 1e-8);
+	printf "%-24s freqs=%d max rel err=%.3e -> %s (<= 1e-8)\n", "tline Zin (2 dB loss)", n, e, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+
+# 整合線路 : S11 = S22 = 0、S21 = S12 = a e^{-j 2π f td} (a = 10^(-3/20)、td = 2 ns)
+cp "$SRC/tline_matched.peec" "$WORK/"
+run tline_matched.peec
+awk 'NF == 9 && $1 !~ /^[!#]/ {
+	PI = atan2(0, -1); a = exp(-3 * log(10) / 20); ph = 2 * PI * $1 * 2e-9;
+	er = a * cos(ph); ei = -a * sin(ph);
+	d = sqrt(($2 ^ 2) + ($3 ^ 2) + ($8 ^ 2) + ($9 ^ 2) + (($4 - er) ^ 2) + (($5 - ei) ^ 2) + (($6 - er) ^ 2) + (($7 - ei) ^ 2));
+	if (d > mx) mx = d; n++
+} END {
+	ok = (n == 10) && (mx <= 1e-9);
+	printf "%-24s freqs=%d max|S-S_exact|=%.3e -> %s (<= 1e-9)\n", "tline matched S (3 dB)", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/peec.s2p" || status=1
+
+# TDR : y(t) = Γ x(t - 2 td)、Γ = 0.5、2 td = 2.5 ns = 32 dt (循環)
+cp "$SRC/tline_tdr.peec" "$WORK/"
+run tline_tdr.peec
+awk -F, '$1 == "X" {x[nx++] = $5} $1 == "S" {y[ny++] = $5}
+END {
+	for (k = 0; k < ny; k++) {d = y[k] - (0.5 * x[(k - 32 + nx) % nx]); if (d < 0) d = -d; if (d > mx) mx = d}
+	ok = (nx == 128) && (ny == 128) && (mx <= 1e-9);
+	printf "%-24s max|y-G x(t-2td)|=%.3e -> %s (<= 1e-9)\n", "tline TDR delay", mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/tran.csv" || status=1
+
+# PEEC 構造との接続 : 半波長ダイポールを線路 (Z0 = 50、td = 1 ns) の先で測ると
+#   Zin = Z0 (Zd + j Z0 tan θ)/(Z0 + j Zd tan θ)、Zd は線路なしのダイポールの Zin
+# (容量性 + 遅延の PEEC に浮いた端子対で繋ぐ : 端子電流は行き帰りで等しいので
+#  総電荷の保存を壊さない)
+cp "$SRC/dipole_halfwave.peec" "$WORK/"
+run dipole_halfwave.peec
+cp "$csv" "$WORK/zin_tl_dip0.csv"
+sed 's/^port = 1 2 50$/port = 10 0 50\ntline = 10 0 1 2 50 1e-9/' "$SRC/dipole_halfwave.peec" > "$WORK/tline_dipole.peec"
+run tline_dipole.peec
+cp "$csv" "$WORK/zin_tl_dip.csv"
+paste -d, "$WORK/zin_tl_dip0.csv" "$WORK/zin_tl_dip.csv" | awk -F, 'NR > 1 {
+	PI = atan2(0, -1); z0 = 50; th = 2 * PI * $2 * 1e-9; t = sin(th) / cos(th);
+	nr = $3; ni = $4 + (z0 * t); dr = z0 - ($4 * t); di = $3 * t; dd = (dr * dr) + (di * di);
+	er = z0 * ((nr * dr) + (ni * di)) / dd; ei = z0 * ((ni * dr) - (nr * di)) / dd;
+	e = sqrt((($10 - er) ^ 2) + (($11 - ei) ^ 2)) / sqrt((er * er) + (ei * ei)); if (e > mx) mx = e; n++
+} END {
+	ok = (n == 13) && (mx <= 1e-7);
+	printf "%-24s freqs=%d max rel err=%.3e -> %s (<= 1e-7)\n", "tline-fed dipole", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+
+# 圧縮経路 : 線路の端子電流は前処理の回路側 (Schur 補元) に入る。近似が入らない
+# 規模なので密経路とビット単位で一致する (不変条件 16)
+sed 's/^end$/compression = 1\nend/' "$WORK/tline_dipole.peec" > "$WORK/tline_dipole_c.peec"
+run tline_dipole_c.peec
+paste -d, "$WORK/zin_tl_dip.csv" "$csv" | awk -F, 'NR > 1 {
+	e = sqrt((($3 - $10) ^ 2) + (($4 - $11) ^ 2)) / sqrt(($3 * $3) + ($4 * $4)); if (e > mx) mx = e; n++
+} END {
+	ok = (n == 13) && (mx <= 1e-12);
+	printf "%-24s max rel diff=%.3e -> %s (<= 1e-12)\n", "tline compress = dense", mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+
+# 書き間違いは拒否されること : 語の不足、Z0 <= 0、遅延 <= 0、損失 < 0、
+# 端子対の 2 ノードが同一
+nbad=0
+for tl in "tline = 1 0 2 0 50" "tline = 1 0 2 0 0 1e-9" "tline = 1 0 2 0 50 -1e-9" \
+          "tline = 1 0 2 0 50 1e-9 -3" "tline = 1 1 2 0 50 1e-9"; do
+	sed "s/^tline = .*/$tl/" "$SRC/tline_term.peec" > "$WORK/tline_bad.peec"
+	if (cd "$WORK" && "$PEEC" -n 1 tline_bad.peec > tline_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+done
+if [ "$nbad" -eq 5 ]; then
+	printf "%-24s -> OK (5/5 malformed inputs rejected)\n" "tline parser guard"
+else
+	printf "%-24s -> NG (%d/5 malformed inputs rejected)\n" "tline parser guard" "$nbad" >&2
+	status=1
+fi
+
 echo "--- current / charge distribution"
 # (s) 単線 8 分割、容量なし : 電荷が溜まらないので全区間に同じ 1A が流れる
 #     (キルヒホッフの電流則。分割数・周波数・材料に依らず厳密)

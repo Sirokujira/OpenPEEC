@@ -7,6 +7,7 @@
 
 集中定数 MNA + 導体形状からの部分要素抽出 (インダクタンス L / 電位係数 P /
 抵抗 R) → 入力インピーダンス Zin(f)、Z / S 行列、電流・電荷分布、遠方界。
+集中定数には伝送線路 (`tline`、TEM 線路を進行波の関係で組む) も含む。
 導体は丸線 (`wire`) / 角線 (`bar`) / 面導体 (`plate` = 矩形、`quad` = 凸四辺形、
 `disk` = 円板)、らせん / 円形ループ (`helix`、直線 `wire` 列に展開)。`plate` は `分割数t` (省略時 1) を 2 以上にすると厚み方向にも
 分割し、体積セル (矩形バー) として厚み方向の電流分布 (表皮効果) を解く。
@@ -31,7 +32,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、157 判定)
+# 検証 (解析解・文献値との比較、165 判定)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -42,7 +43,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 157 判定すべて OK (h5py が
+**変更したら必ず `peec_check.sh` を通すこと。** 165 判定すべて OK (h5py が
 無い環境の `peec2h5 converter` だけは SKIP) でなければ完了ではない。
 「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
@@ -257,6 +258,18 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
     成り立つ (retardation = 0 では σ_e は吸収分のみ)。
     (`loop RCS sigma(y^)` / `loop sigma_ext (optical)` / `dipole scat energy` /
     `farpw compensation`)
+20. **伝送線路は進行波の関係で組み、T = a e^{−jω td} の偏角が遅延** —
+    端子電流 i1 / i2 (どちらも線路へ流れ込む向き) を未知数に足し、
+    `v1 − Z0 i1 = T (v2 + Z0 i2)`、`v2 − Z0 i2 = T (v1 + Z0 i1)` の 2 行を
+    スタンプする (mna.c)。Z / Y 行列の形は cot / csc を含み ω td = nπ で
+    特異になるが、この形は対角が常に −Z0。exp(+jωt) 規約で e^{−jωtd} が遅延
+    なので、符号を取り違えると反射が前進し S21 の位相が逆に回る。端子対ごとに
+    電流は行き帰りで等しい (同相の経路を作らない) ので、容量性 PEEC の総電荷の
+    保存 (3) を壊さず浮いた端子対で構造に繋げる。損失 dB は無ひずみ線路の
+    片道減衰で、Z0 は実数のまま。未知数ブロックは offS より前 (回路側) なので
+    圧縮経路では前処理の Schur 補元に入る。
+    (`tline Zin (lossless)` / `tline Zin (2 dB loss)` / `tline matched S (3 dB)` /
+    `tline TDR delay` / `tline-fed dipole` / `tline compress = dense`)
 
 ## メモリ
 

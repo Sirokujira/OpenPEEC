@@ -52,6 +52,10 @@ typedef struct {char name[NAMELEN]; int n1, n2; double val;} ind_t;           //
 typedef struct {char name1[NAMELEN], name2[NAMELEN]; int l1, l2; double k;} mut_t;  // M = k*sqrt(L1*L2)
 typedef struct {int n1, n2, isvsrc, ibr; double amp, phase;} src_t;           // phase [deg]
 typedef struct {int n1, n2; double z0;} port_t;
+// 伝送線路 (tline = n1 n2 n3 n4 Z0 遅延 [損失dB]) : 端子対 1 = (n1, n2)、端子対 2 = (n3, n4)。
+// 無損失または無ひずみ線路 (Heaviside、R/L = G/C) : Z0 は実数、att = 10^(-dB/20) は
+// 片道の振幅減衰で周波数に依らない
+typedef struct {int n1, n2, n3, n4; double z0, td, att;} tline_t;
 // 導体断面
 //   SHAPE_ROUND = 丸線 (半径 a)
 //   SHAPE_BAR   = 角線 (幅 w x 厚さ t)  — 細線 (等価半径) として扱う
@@ -193,6 +197,8 @@ typedef struct {
 	ind_t  *ind;
 	mut_t  *mut;
 	src_t  *src;
+	int    ntl;                   // tline の本数
+	tline_t *tl;                  // [ntl] 伝送線路
 	port_t *port;
 	wire_t *wire;
 	int    *ncid;                 // node = : ノード id
@@ -231,6 +237,7 @@ typedef struct {
 	int    refnode;               // 基準ノード id
 	int    *nodemap;              // [maxid+1] : id -> 行列 index / -1 = 基準 / -2 = 未使用
 	int    offL, offV, offS;      // 枝電流の先頭 index (L 素子 / 電圧源 / ワイヤ区間)
+	int    offT;                  // 伝送線路の端子電流の先頭 index (線路 i は offT+2i, offT+2i+1)
 	int    offQ;                  // セル電荷の先頭 index (compression = 1 の容量性
 	                              // PEEC のみ。それ以外は nunknown と同値 = 未使用)
 	int    nunknown;

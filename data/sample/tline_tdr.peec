@@ -1,0 +1,20 @@
+# 検証 (az) : 伝送線路 (tline) — 時間領域反射 (TDR、transient と併用)
+#   ポート (Z0 = 50 Ω) -> 線路 (Z0 = 50 Ω、td = 1.25 ns) -> 終端 R = 150 Ω。
+#   線路は整合しているので反射は終端の 1 回だけで、
+#     S11(f) = Γ e^{-j 2π f (2 td)},  Γ = (R - Z0)/(R + Z0) = 0.5
+#   したがって時間波形は励振を往復時間 2 td = 2.5 ns だけ遅らせて Γ 倍した
+#     y(t) = Γ x(t - 2 td)
+#   になる。掃引は df = 100 MHz、f_max = 6.4 GHz (dt = 1/(2 f_max) = 78.125 ps)
+#   なので 2 td = 32 dt はちょうど格子上、合成は周期 T = 1/df = 10 ns で循環する。
+#   DC 項 H(0) = 2 Re H(f1) - Re H(f2) も f1 = 100 MHz で位相 π/2、f2 = 200 MHz で
+#   π なので H(0) = Γ (2 cos(π/2) - cos π) = Γ と厳密になる。よって判定
+#   max|y_n - Γ x_{n-32}| は丸め誤差しか残らない (許容 1e-9)。遅延の符号を
+#   取り違えると y(t) = Γ x(t + 2 td) (前進) になってここで落ちる。
+OpenPEEC 1 0
+title = transmission-line TDR (delayed reflection)
+transient = 1
+tline = 1 0 2 0 50 1.25e-9
+resistor = 2 0 150
+port = 1 0 50
+frequency = 1e8 6.4e9 63
+end
