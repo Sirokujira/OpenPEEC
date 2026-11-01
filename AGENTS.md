@@ -32,7 +32,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、255 判定)
+# 検証 (解析解・文献値との比較、259 判定)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -43,7 +43,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 255 判定すべて OK (h5py が
+**変更したら必ず `peec_check.sh` を通すこと。** 259 判定すべて OK (h5py が
 無い環境の `peec2h5 converter` だけは SKIP) でなければ完了ではない。
 「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
@@ -431,7 +431,7 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
   basis.c) で、粗い格子で正確 (Rin 誤差が片腕 4 分割で 1/3、8 分割で 1/2) だが、
   電荷が区分一定のままなので漸近的には 1 次程度で従来より遅い (電荷も高次に
   すると節点電位 = セル平均の回路解釈が成り立たない)。面導体・体積セル・誘電体・
-  圧縮・近傍界とは併用不可。独立実装の `tools/basis_study.py` で検討を再現できる。
+  圧縮とは併用不可 (近傍界は傾斜関数の電流も電荷サブセルの求積点で積分する)。独立実装の `tools/basis_study.py` で検討を再現できる。
   Xin はデルタギャップのギャップ容量で対数的に増えるので収束判定に使わない。
 - 地板 (`groundplane`) は軸に垂直な無限 PEC 面で、互いに直交する 3 枚まで
   (平行な 2 面・斜めの面は不可)。積分回数は 2^面数 倍になるが未知数は

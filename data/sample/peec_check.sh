@@ -1208,11 +1208,52 @@ paste -d, "$WORK/zin_basis_lf0.csv" "$csv" | awk -F, 'NR == 2 {
 	printf "%-24s rel=%.3e -> %s (<= 1e-9)\n", "basis1 low-f = basis0", e, ok ? "OK" : "NG";
 	exit ok ? 0 : 1
 }' || status=1
-# 書き間違い・未対応の組み合わせは拒否 : capacitance = 0、面導体、近傍界、basis = 2
+# 近傍界 (傾斜関数の電流を電荷サブセルの求積点で積分) : r = 2000 m (kr = 6000) の
+# |E| r が遠方界 (傾斜関数の項は閉形式) の |rE| に一致 (2 方向、1e-4)。
+# 傾斜関数を落とすと 6% ずれる (basis = 0 の 62.52 vs 58.65 V)
+awk '{print} /^title = /{print "nearfield = 2000 0 0  2000 0 0  0 0 0"; print "nearfield = 1500 866.0254037844386 1000  1500 866.0254037844386 1000  0 0 0"}' \
+	"$SRC/basis_dipole.peec" > "$WORK/basis_nf.peec"
+run basis_nf.peec
+awk -F, 'FILENAME == ARGV[1] {if ((FNR > 1) && ((($2 + 0 == 90) && ($3 + 0 == 0)) || (($2 + 0 == 60) && ($3 + 0 == 30)))) ff[$2 + 0] = sqrt(($4 ^ 2) + ($5 ^ 2) + ($6 ^ 2) + ($7 ^ 2)); next}
+FNR > 1 {
+	r = sqrt(($2 ^ 2) + ($3 ^ 2) + ($4 ^ 2)); th = int(atan2(sqrt(($2 ^ 2) + ($3 ^ 2)), $4) * 180 / atan2(0, -1) + 0.5);
+	e = sqrt(($5 ^ 2) + ($6 ^ 2) + ($7 ^ 2) + ($8 ^ 2) + ($9 ^ 2) + ($10 ^ 2)) * r;
+	d = (e / ff[th]) - 1; if (d < 0) d = -d; if (!(d <= mx)) mx = d; n++
+} END {
+	ok = (n == 2) && (mx <= 1e-4);
+	printf "%-24s points=%d max||E|r/|rE|-1|=%.3e -> %s (<= 1e-4)\n", "basis1 near = far", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/far.csv" "$WORK/near.csv" || status=1
+# 地板上の境界条件 (接線 E と法線 H が 0) : ポート励振と平面波 (入射 + 反射 + 散乱)
+addbasis "$SRC/gp_near.peec" > "$WORK/basis_gpn.peec"
+awk '{print} /^title = /{print "planewave = 60 30 1 1.0"}' "$WORK/basis_gpn.peec" > "$WORK/basis_gpn_pw.peec"
+run basis_gpn_pw.peec
+cp "$WORK/near.csv" "$WORK/near_basis_gpn.csv"
+for nf in near_basis_gpn.csv nearpw.csv; do
+	if [ "$nf" = nearpw.csv ]; then lbn="basis1 gp bc (planewave)"; else lbn="basis1 gp bc (port)"; fi
+	awk -F, -v lb="$lbn" 'NR > 1 {
+		n++; et = sqrt(($5 ^ 2) + ($6 ^ 2) + ($7 ^ 2) + ($8 ^ 2)); hz = sqrt(($15 ^ 2) + ($16 ^ 2));
+		re = ($17 > 0) ? (et / $17) : 1; if (!(re <= mre)) mre = re;
+		rh = ($18 > 0) ? (hz / $18) : 1; if (!(rh <= mrh)) mrh = rh
+	} END {
+		ok = (n == 2) && (mre <= 1e-12) && (mrh <= 1e-12);
+		printf "%-24s points=%d |Etan|/|E|=%.3e |Hz|/|H|=%.3e -> %s\n", lb, n, mre, mrh, ok ? "OK" : "NG";
+		exit ok ? 0 : 1
+	}' "$WORK/$nf" || status=1
+done
+# スレッド数不変性 (-n 1 / -n 4 の near.csv がビット一致)
+(cd "$WORK" && "$PEEC" -n 1 basis_gpn_pw.peec > /dev/null && cp near.csv near_b1.csv && "$PEEC" -n 4 basis_gpn_pw.peec > /dev/null)
+if cmp -s "$WORK/near_b1.csv" "$WORK/near.csv"; then
+	printf "%-24s -> OK (near.csv identical for -n 1 / -n 4)\n" "basis1 near threads"
+else
+	printf "%-24s -> NG (near.csv differs between -n 1 and -n 4)\n" "basis1 near threads" >&2
+	status=1
+fi
+# 書き間違い・未対応の組み合わせは拒否 : capacitance = 0、面導体、断面分割、basis = 2
 nbad=0
 awk '{print} /^title = /{print "basis = 1"}' "$SRC/wire_gp.peec" > "$WORK/basis_bad1.peec"
 addbasis "$SRC/compress_cap.peec" | sed '/^compression/d' > "$WORK/basis_bad2.peec"
-addbasis "$SRC/array_dipoles.peec" > "$WORK/basis_bad3.peec"
+awk '{print} /^title = /{print "basis = 1"; print "capacitance = 1"}' "$SRC/wire_prox.peec" > "$WORK/basis_bad3.peec"
 sed 's/^basis = 1$/basis = 2/' "$SRC/basis_dipole.peec" > "$WORK/basis_bad4.peec"
 for k in 1 2 3 4; do
 	if (cd "$WORK" && "$PEEC" -n 1 "basis_bad$k.peec" > basis_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi

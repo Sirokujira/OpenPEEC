@@ -22,7 +22,10 @@
 #   (6) 送受の相反 (bent_pw の 3 方向 + 地板上のモノポール、1e-6) :
 #       遠方界の傾斜関数の項と平面波の右辺の電荷行 <chi_n, E_inc> の整合
 #   (7) 低周波 (1 kHz) で basis = 0 と一致 (結合 K, X は omega^2 で消える)
-#   (8) capacitance = 0 / 面導体 / 近傍界 / basis = 2 は拒否
+#   (8) 近傍界 : r = 2000 m (kr = 6000) の |E| r が遠方界の |rE| と一致 (2 方向、
+#       1e-4、実測 1e-6。傾斜関数の電流を落とすと 6% ずれる)。地板上の境界条件
+#       (接線 E・法線 H = 0、ポート励振と平面波) と -n 1 / -n 4 のビット一致も判定
+#   (9) capacitance = 0 / 面導体 / 断面分割 / basis = 2 は拒否
 OpenPEEC 1 0
 title = half-wave dipole, piecewise-linear current basis (4 segments per arm)
 basis = 1

@@ -1020,7 +1020,7 @@ int input_data(FILE *fp, peec_t *p)
 		}
 	}
 	// basis = 1 は細線 (分割しない wire / bar) の電荷で駆動する傾斜関数なので、
-	// 容量性 PEEC が必須。面導体・体積セル・誘電体・圧縮・近傍界は扱わない
+	// 容量性 PEEC が必須。面導体・体積セル・誘電体・圧縮は扱わない
 	if (p->basis) {
 		const char *why = NULL;
 		if (!p->capacitance) why = "capacitance = 1";
@@ -1028,7 +1028,6 @@ int input_data(FILE *fp, peec_t *p)
 		else if ((p->nplate + p->npanel) > 0) why = "thin wires only (no plate/quad/disk)";
 		else if (p->ndiel > 0) why = "no dielectric";
 		else if (p->compress) why = "compression = 0";
-		else if (p->nnf > 0) why = "no nearfield";
 		for (int i = 0; (why == NULL) && (i < p->nwire); i++) {
 			if ((p->wire[i].ndivw > 1) || (p->wire[i].ndivt > 1)) why = "no cross-section subdivision";
 		}
