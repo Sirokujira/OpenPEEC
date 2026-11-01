@@ -119,6 +119,7 @@ int main(int argc, char *argv[])
 	output_zin(&peec, fp_log);
 	output_spara(&peec, fp_log);
 	if (output_csv(&peec, FN_CSV) || output_touchstone(&peec) ||
+	    output_touchstone2(&peec, FN_TS2) ||
 	    output_mixed(&peec, FN_MM, fp_log) ||
 	    output_dist(&peec, FN_DIST) || output_far(&peec, FN_FAR, fp_log) ||
 	    output_farpw(&peec, FN_FARPW, fp_log) ||
@@ -149,6 +150,10 @@ int main(int argc, char *argv[])
 	if (peec.spice) {
 		strcat(str, ", ");
 		strcat(str, FN_CIR);
+	}
+	if (peec.tsver == 2) {
+		strcat(str, ", ");
+		strcat(str, FN_TS2);
 	}
 	if (peec.nnf > 0) {
 		strcat(str, ", ");

@@ -320,7 +320,7 @@ same portability rules, no external numerical libraries.
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値と比較、259 判定。許容は判定ごとに 1e-12 〜 3%)
+# 検証 (解析解・文献値と比較、265 判定。許容は判定ごとに 1e-12 〜 3%)
 # 実行ファイルは相対パスでもよい (スクリプトが絶対パスに直す)
 sh data/sample/peec_check.sh bin/peec /tmp/peec-check
 
@@ -403,6 +403,7 @@ peec [-n <threads>] input.peec
 | `dist.csv` | 電流・電荷分布 (`distribution = 1` のときのみ)。`port` 列が励振ポート番号 (多ポートではポートごとに 1 組)、平面波による誘起電流 `Ipw` は 0 |
 | `far.csv` | 遠方界パターン rE と D / G [dBi] (`farfield` 指定時のみ) |
 | `peec.cir` | 準静的な PEEC 等価回路の SPICE ネットリスト (`spice = 1` 指定時のみ) |
+| `peec.ts` | S パラメータの Touchstone 2.0 形式 (`touchstone = 2` 指定時のみ。ポートごとの基準抵抗を `[Reference]` に全部記録、行列は行優先) |
 | `farpw.csv` | 平面波の散乱遠方界 r·E_s と双方向レーダー断面積 RCS [m²] / [dBsm] (`farfield` と `planewave` の併用時のみ) |
 | `near.csv` | 近傍界 E / H の各成分と |E| / |H| (`nearfield` 指定時のみ) |
 | `nearpw.csv` | 平面波入射時の全界 (入射 + 反射 + 散乱)。列は `near.csv` と同じ (`nearfield` と `planewave` の併用時のみ) |
@@ -439,6 +440,9 @@ S = F (Z − Z0) (Z + Z0)⁻¹ F⁻¹,   F = diag(1 / (2√z0ᵢ))
 全ポートで等しいときは教科書どおりの `(Z − Z0)(Z + Z0)⁻¹` に一致します。
 Touchstone 1.1 は基準抵抗を 1 個しか記録できないため、ポートごとに異なる
 `z0` を与えた場合は port#1 の値を書き、その旨をコメント行に残します。
+`touchstone = 2` を書くと、これに加えて Touchstone 2.0 形式の `peec.ts` を出し、
+全ポートの基準抵抗を `[Reference]` に記録します (`[Network Data]` は行優先、
+2 ポートは `[Two-Port Data Order] 12_21` で S11 S12 S21 S22 の順)。
 
 **混合モード S パラメータ** : `mixedmode = p1 n1 [p2 n2 ...]` で単端ポートの
 対 (正側, 負側) を差動対にすると、電力波を
@@ -494,6 +498,7 @@ d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 
 | `retardation` | `retardation = 1` | 1 で遅延 (フルウェーブ PEEC) を有効化 (省略時 0) |
 | `acceleration` | `acceleration = 1` | 1 で掃引 LU 再利用の GMRES (省略時 0 = 毎周波数 LU)。結果は密 LU と実質同一 |
 | `spice` | `spice = 1 [kmin]` | 1 で準静的な PEEC 等価回路を `peec.cir` (SPICE) に書き出す。|k| ≤ kmin の相互結合は省く (省略時 0 = すべて)。`compression`・`basis = 1`・誘電損/分散・損失のある線路とは併用不可 |
+| `touchstone` | `touchstone = 1 \| 2` | 2 で `peec.sNp` (1.1) に加えて Touchstone 2.0 の `peec.ts` も書く (ポートごとの基準抵抗を記録)。省略時 1 |
 | `basis` | `basis = 1` | 1 で区分線形の電流基底 (細線のみ、`capacitance = 1` 必須。面導体・体積セル・誘電体・`compression` とは併用不可。近傍界にも傾斜関数を含める)。省略時 0 = 区間ごとに一定の電流 |
 | `compression` | `compression = 1 [tol]` | 1 で Lp (と `capacitance = 1` なら P) の H 行列圧縮 + 行列フリー GMRES (省略時 0 = 密行列)。tol は ACA の相対許容誤差 (省略時 1e-6) で Zin にほぼそのまま伝わる。`acceleration = 1` とは併用不可 |
 | `distribution` | `distribution = 1` | 1 で電流・電荷分布を `dist.csv` に出力 (省略時 0)。多ポートでは「ポート j に 1A、他は開放」の分布をポートごとに出す |
@@ -620,6 +625,7 @@ d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 
 | `finite_gp.peec` 有限の地板 (plate) | 一辺 W = 16h の板の上の短い単線の 2 端子容量が鏡像法の平均電位法 C = 4πε0l²/(I_self − I(2h)) = 430.919 fF に収束 (実測 −0.15%)。W = 8h (−0.81%) より誤差が 2 倍以上小さく、どちらも下から近づく | 0.5% / 収束 |
 | `basis_dipole.peec` 区分線形の電流基底 (`basis = 1`) | 独立実装 (`tools/basis_study.py`) の Zin と片腕 4 / 8 分割で一致 (実測 8.6e-5 / 1.8e-5)。片腕 32 分割の従来の基底を参照に Rin 誤差が 4 分割で 1/3 以下・8 分割で従来より小さい。放射効率 ≈ 1、モノポール = ダイポール/2 (2e-10)、2 ポートの S21 = S12、送受の相反 4 方向 (4e-10 以下)、1 kHz で basis = 0 と一致、近傍界 (r = 2000 m) が遠方界と一致 (1e-6)・地板上の境界条件・スレッド数不変、未対応の組み合わせは拒否 | 2e-4 / 1/3 / 0.5% / 1e-6 / 1e-9 / 1e-6 / 1e-9 / 1e-4 |
 | `spice_export.peec` SPICE ネットリスト出力 (`spice = 1`) | `peec.cir` を awk で集中定数 (resistor / inductor / mutual / capacitor / tline) に変換して読み戻した回路の Zin・S が元の PEEC と一致 (集中定数 + 線路 + 負の k の結合 : 1.1e-10、地板 + 4 ポートの mm_twinline : 2.4e-9、面導体 + 誘電体の diel_pp (約 14 万本の K、C_e の枝 594 本) : 3.9e-10)。素子名の一意性・K の参照・\|k\| < 1・セル数と結合数、kmin の打ち切り数、未対応の入力の拒否 | 1e-7 / 1e-8 / 一致 |
+| `ts2_star.peec` Touchstone 2.0 出力 (`touchstone = 2`) | 基準抵抗 50 / 75 / 100 Ω の 3 ポート星形 R‖C 回路。`peec.ts` の S と `[Reference]` から Z = √Zr (I − S)⁻¹ (I + S) √Zr を awk の複素 Gauss-Jordan で組み直して閉形式 Z_ii = R_i + Z0、Z_ij = Z0 と一致 (実測 2.7e-10、2 ポート版 12_21 も同じ)。基準抵抗を 1 個にすると一致しないこと (判定の感度)、書式行、キー省略時は peec.ts を作らず peec.s3p が同一、touchstone = 3 の拒否 | 1e-7 / 一致 |
 | `quad_skin_layers.peec` パネルの厚み方向分割 | 対称サンドイッチの中心板を quad (nt 層) に : nt = 6/12/24 の補外が 1D スラブ解 1.897806 (実測 −1.78%)、O(層厚²) 収束 (差の比 0.27)、plate 版の補外値と 0.09% で一致。DC 抵抗 0.1% | 3.5% / 0.35 / 0.5% / 0.1% |
 | `disk_annulus.peec` + `分割数t = 3` | 同一層の並列なので DC 抵抗が 1 層と一致 (法線・層の複製の経路)。分割数 0 は拒否 | 1e-6 / 2/2 |
 | `pw_counter.peec` 逆向きの 2 波の同時入射 | 自由空間の定在波 E_z = −2cos(kx)、H_y = −(2j/η0)sin(kx) を x = 0、λ/8、λ/4 で (散乱体は e·t = 0 で結合しない : 実測 4e-10) | 2e-6 |

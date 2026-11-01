@@ -31,6 +31,7 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 #define FN_MM "mixed.csv"
 #define FN_FARPW "farpw.csv"
 #define FN_CIR "peec.cir"
+#define FN_TS2 "peec.ts"
 #define PW_MAX 8                  // planewave の行 (同時入射の波) の上限
 #define PW_WMAX (8 * PW_MAX)      // 地板 (3 面まで) の反射波を含む波の数の上限
 
@@ -319,6 +320,7 @@ typedef struct {
 	int    grading;               // grading = 1 : 面格子の縁寄せ (plate/quad 余弦、disk 正弦)
 	int    basis;                 // basis = 1 : 区分線形の電流基底 (細線のみ、basis.c)
 	int    spice;                 // spice = 1 : 準静的な等価回路を SPICE ネットリストに出す (spice.c)
+	int    tsver;                 // touchstone = 2 : peec.sNp に加えて Touchstone 2.0 (peec.ts) も書く
 	double spkmin;                // spice の結合係数の打ち切り (|k| <= spkmin は省く、既定 0)
 	int    compress;              // compression = 1 : 部分インダクタンスを H 行列で圧縮
 	double ctol;                  // ACA の相対許容誤差 (既定 1e-6)
@@ -515,6 +517,7 @@ void output_zin(const peec_t *p, FILE *fp_log);
 int  output_csv(const peec_t *p, const char *fn);
 void output_spara(const peec_t *p, FILE *fp_log);
 int  output_touchstone(const peec_t *p);
+int  output_touchstone2(const peec_t *p, const char *fn);
 int  output_mixed(const peec_t *p, const char *fn, FILE *fp_log);
 int  output_dist(const peec_t *p, const char *fn);
 int  output_pw(const peec_t *p, const char *fn, FILE *fp_log);

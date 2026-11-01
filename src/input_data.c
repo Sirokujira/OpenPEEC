@@ -868,6 +868,14 @@ int input_data(FILE *fp, peec_t *p)
 		else if (!strcmp(strkey, "grading")) {
 			p->grading = atoi(token[2]);
 		}
+		else if (!strcmp(strkey, "touchstone")) {
+			// touchstone = 1 (peec.sNp のみ、既定) | 2 (Touchstone 2.0 の peec.ts も書く)
+			p->tsver = atoi(token[2]);
+			if ((p->tsver != 1) && (p->tsver != 2)) {
+				printf(errfmt2, "touchstone");
+				return 1;
+			}
+		}
 		else if (!strcmp(strkey, "spice")) {
 			// spice = 1 [kmin] : 準静的な等価回路を peec.cir に書く (|k| <= kmin の結合は省く)
 			p->spice = atoi(token[2]);

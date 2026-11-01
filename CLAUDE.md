@@ -16,8 +16,9 @@ EMC イミュニティ)、過渡応答 (`transient` → `tran.csv`、掃引の�
 誘電損 tanδ / 多極 Debye・Lorentz 分散 / 導電性の Drude 項・導電率 σ (`dielectric` の省略可能引数)。
 区分線形の電流基底 (`basis = 1`、細線のみ) も選べる。準静的な等価回路を
 SPICE ネットリスト (`spice = 1` → `peec.cir`) に書き出せる。
+S パラメータは Touchstone 1.1 (`peec.sNp`) に加えて 2.0 (`touchstone = 2` → `peec.ts`) でも書ける。
 `capacitance` / `skineffect` / `retardation` / `groundplane` / `farfield` /
-`nearfield` / `planewave` / `transient` / `basis` / `spice` は既定で無効 (キー省略時は従来動作と
+`nearfield` / `planewave` / `transient` / `basis` / `spice` / `touchstone = 2` は既定で無効 (キー省略時は従来動作と
 完全一致)。
 
 CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本体は
@@ -40,7 +41,7 @@ cmake --build build -j"$(nproc)"
 #        対数掃引 /
 #        平面波入射 / 過渡応答 / 縁寄せ格子 / Debye・Lorentz 分散 /
 #        混合モード S / 散乱遠方界・RCS / 伝送線路 / 区分線形の電流基底 /
-#        SPICE 出力の読み戻し)
+#        SPICE 出力の読み戻し / Touchstone 2.0 からの Z の組み直し)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 ```
 
@@ -68,7 +69,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 | `src/hmatrix.c` | Lp / P の H 行列圧縮 (クラスタツリー + ACA、compression = 1) |
 | `src/precond.c` | 葉ブロック消去 + 回路 Schur 補元の前処理 (compression = 1) |
 | `src/solve.c` | 周波数掃引 |
-| `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、混合モード `mixed.csv`、`dist.csv` |
+| `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp` / 2.0 `peec.ts`、混合モード `mixed.csv`、`dist.csv` |
 | `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率。平面波の散乱界・RCS・光学定理 → `farpw.csv`) |
 | `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv` / 平面波の全界 `nearpw.csv`、E / H の遅延ポテンシャル) |
 | `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
@@ -116,6 +117,9 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 (電力波の定義、`solve.c` の `z_to_s()`) を求め、`peec.log` の表と
 Touchstone `peec.sNp` に出力する。基準抵抗はポートごとに指定できるが、
 Touchstone 1.1 は 1 個しか記録できないので port#1 の値を書いて注記する。
+`touchstone = 2` で Touchstone 2.0 の `peec.ts` も書き、全ポートの基準抵抗を
+`[Reference]` に記録する (`output_touchstone2()`、データは行優先、2 ポートは
+`[Two-Port Data Order] 12_21`)。
 2 ポートだけ Touchstone の列順が S11 S21 S12 S22 と転置になる (仕様)。
 
 `mixedmode = p1 n1 [p2 n2 ...]` を書くと単端 S を直交行列 M で組み替えた

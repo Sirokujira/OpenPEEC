@@ -2396,6 +2396,109 @@ else
 	status=1
 fi
 
+echo "--- Touchstone 2.0 (touchstone = 2)"
+# (bo) peec.ts の S と [Reference] から Z = sqrt(Zr) (I - S)^-1 (I + S) sqrt(Zr) を
+#      awk の複素 Gauss-Jordan で組み直し、星形の抵抗回路の閉形式 Z と比べる
+#      (ts2_star.peec の先頭コメント)。書式 ([Version] / [Number of Ports] /
+#      [Number of Frequencies] / [Reference] / [Network Data] ... [End]) と点数も判定する。
+# ts2z <label> <peec.ts> : -v rs = 各端子の直列抵抗、r0 / c0 = 中心の R || C
+ts2z() {
+	awk -v lb="$1" -v rs="10 20 30" -v r0=40 -v c0=10e-12 '
+	function cdiv(ar, ai, br, bi,   d) { d = (br * br) + (bi * bi); QR = ((ar * br) + (ai * bi)) / d; QI = ((ai * br) - (ar * bi)) / d }
+	/^\[Number of Ports\]/ { np = $4 + 0; next }
+	/^\[Number of Frequencies\]/ { nf = $4 + 0; next }
+	/^\[Reference\]/ { for (i = 2; i <= NF; i++) zr[i - 1] = $i + 0; nref = NF - 1; next }
+	/^\[Two-Port Data Order\]/ { order = $4; next }
+	/^\[Network Data\]/ { data = 1; next }
+	/^\[End\]/ { ended = 1; data = 0; next }
+	data && !/^!/ { for (i = 1; i <= NF; i++) v[++nv] = $i + 0 }
+	END {
+		split(rs, R, " "); PI = atan2(0, -1);
+		per = 1 + (2 * np * np); nrow = nv / per;
+		for (k = 0; k < nrow; k++) {
+			base = k * per; f = v[base + 1]; w = 2 * PI * f;
+			# Z0 = 1/(1/r0 + j w c0)
+			cdiv(1, 0, 1 / r0, w * c0); z0r = QR; z0i = QI;
+			# A = I - S、B = I + S (行優先 S_ij)
+			for (i = 1; i <= np; i++) for (j = 1; j <= np; j++) {
+				sr = v[base + 2 + (2 * (((i - 1) * np) + (j - 1)))]; si = v[base + 3 + (2 * (((i - 1) * np) + (j - 1)))];
+				ar[i, j] = ((i == j) ? 1 : 0) - sr; ai[i, j] = -si;
+				br[i, j] = ((i == j) ? 1 : 0) + sr; bi[i, j] = si;
+			}
+			# Gauss-Jordan (部分ピボット) : A X = B
+			for (c = 1; c <= np; c++) {
+				pv = c; best = (ar[c, c] ^ 2) + (ai[c, c] ^ 2);
+				for (r = c + 1; r <= np; r++) if (((ar[r, c] ^ 2) + (ai[r, c] ^ 2)) > best) { best = (ar[r, c] ^ 2) + (ai[r, c] ^ 2); pv = r }
+				if (pv != c) for (j = 1; j <= np; j++) {
+					t = ar[c, j]; ar[c, j] = ar[pv, j]; ar[pv, j] = t; t = ai[c, j]; ai[c, j] = ai[pv, j]; ai[pv, j] = t;
+					t = br[c, j]; br[c, j] = br[pv, j]; br[pv, j] = t; t = bi[c, j]; bi[c, j] = bi[pv, j]; bi[pv, j] = t
+				}
+				pr = ar[c, c]; pi = ai[c, c];
+				for (j = 1; j <= np; j++) {
+					cdiv(ar[c, j], ai[c, j], pr, pi); ar[c, j] = QR; ai[c, j] = QI;
+					cdiv(br[c, j], bi[c, j], pr, pi); br[c, j] = QR; bi[c, j] = QI
+				}
+				for (r = 1; r <= np; r++) if (r != c) {
+					fr = ar[r, c]; fi = ai[r, c];
+					for (j = 1; j <= np; j++) {
+						ar[r, j] -= (fr * ar[c, j]) - (fi * ai[c, j]); ai[r, j] -= (fr * ai[c, j]) + (fi * ar[c, j]);
+						br[r, j] -= (fr * br[c, j]) - (fi * bi[c, j]); bi[r, j] -= (fr * bi[c, j]) + (fi * br[c, j])
+					}
+				}
+			}
+			for (i = 1; i <= np; i++) for (j = 1; j <= np; j++) {
+				sc = sqrt(zr[i] * zr[j]); zr_ = sc * br[i, j]; zi_ = sc * bi[i, j];
+				er = z0r + ((i == j) ? R[i] : 0); ei = z0i;
+				e = sqrt(((zr_ - er) ^ 2) + ((zi_ - ei) ^ 2)) / sqrt((er * er) + (ei * ei));
+				if (!(e <= mx)) mx = e; n++
+			}
+		}
+		ok = ended && (nref == np) && (nrow == nf) && (n == nf * np * np) && (mx <= 1e-7) && ((np != 2) || (order == "12_21"));
+		printf "%-24s ports=%d freqs=%d elems=%d max rel=%.3e -> %s (<= 1e-7)\n", lb, np, nrow, n, mx, ok ? "OK" : "NG";
+		exit ok ? 0 : 1
+	}
+	' "$2"
+}
+# (1)(2) 3 ポート、基準抵抗 50 / 75 / 100 ohm
+cp "$SRC/ts2_star.peec" "$WORK/"
+run ts2_star.peec
+cp "$WORK/peec.ts" "$WORK/ts2_3.ts"
+cp "$WORK/peec.s3p" "$WORK/ts2_3.s3p"
+ts2z "ts2 Z (3-port)" "$WORK/ts2_3.ts" || status=1
+awk 'BEGIN { ok = 0 } /^\[Version\] 2\.0$/ { ok++ } /^\[Reference\] 50 75 100$/ { ok++ } /^# Hz S RI R 50$/ { ok++ } END {
+	printf "%-24s -> %s (%d/3 header lines)\n", "ts2 header", (ok == 3) ? "OK" : "NG", ok; exit (ok == 3) ? 0 : 1
+}' "$WORK/ts2_3.ts" || status=1
+# 判定の感度 : 基準抵抗を port#1 の 1 個 (Touchstone 1.1 の制約) にすると一致しない
+sed 's/^\[Reference\] .*/[Reference] 50 50 50/' "$WORK/ts2_3.ts" > "$WORK/ts2_bad.ts"
+if ts2z "ts2 Z (single z0)" "$WORK/ts2_bad.ts" > "$WORK/ts2_bad.out" 2>&1; then
+	printf "%-24s -> NG (single-reference S still matched the closed form)\n" "ts2 sensitivity" >&2
+	status=1
+else
+	printf "%-24s -> OK (single-reference S rejected, max %s)\n" "ts2 sensitivity" "$(awk '{print $(NF-4)}' "$WORK/ts2_bad.out")"
+fi
+# (3) 2 ポート版 : [Two-Port Data Order] 12_21 と行優先 S11 S12 S21 S22
+sed '/^port = 3/d' "$SRC/ts2_star.peec" > "$WORK/ts2_two.peec"
+run ts2_two.peec
+ts2z "ts2 Z (2-port)" "$WORK/peec.ts" || status=1
+# (4) 後方互換 : キーが無ければ peec.ts を作らず、peec.s3p はキーの有無で同一。
+#     touchstone = 3 は拒否
+sed '/^touchstone = /d' "$SRC/ts2_star.peec" > "$WORK/ts2_off.peec"
+rm -f "$WORK/peec.ts"
+run ts2_off.peec
+if [ ! -f "$WORK/peec.ts" ] && cmp -s "$WORK/peec.s3p" "$WORK/ts2_3.s3p"; then
+	printf "%-24s -> OK (no peec.ts, peec.s3p identical)\n" "ts2 default off"
+else
+	printf "%-24s -> NG (peec.ts written or peec.s3p changed without the key)\n" "ts2 default off" >&2
+	status=1
+fi
+sed 's/^touchstone = 2$/touchstone = 3/' "$SRC/ts2_star.peec" > "$WORK/ts2_bad.peec"
+if (cd "$WORK" && "$PEEC" -n 1 ts2_bad.peec > ts2_bad.out 2>&1); then
+	printf "%-24s -> NG (touchstone = 3 accepted)\n" "ts2 parser guard" >&2
+	status=1
+else
+	printf "%-24s -> OK (touchstone = 3 rejected)\n" "ts2 parser guard"
+fi
+
 echo "--- HDF5 converter (tools/peec2h5.py)"
 # ソルバー本体は依存ゼロなので、変換スクリプトは numpy + h5py がある環境
 # でだけ検証する (無ければスキップ : CI の 3 OS には入れない)。
