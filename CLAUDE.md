@@ -14,8 +14,9 @@ OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を�
 EMC イミュニティ)、過渡応答 (`transient` → `tran.csv`、掃引の逆 FFT)、
 対数掃引 (`frequency ... log`)、縁寄せ格子 (`grading`)、
 誘電損 tanδ / 多極 Debye・Lorentz 分散 / 導電性の Drude 項・導電率 σ (`dielectric` の省略可能引数)。
+区分線形の電流基底 (`basis = 1`、細線のみ) も選べる。
 `capacitance` / `skineffect` / `retardation` / `groundplane` / `farfield` /
-`nearfield` / `planewave` / `transient` は既定で無効 (キー省略時は従来動作と
+`nearfield` / `planewave` / `transient` / `basis` は既定で無効 (キー省略時は従来動作と
 完全一致)。
 
 CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本体は
@@ -37,7 +38,7 @@ cmake --build build -j"$(nproc)"
 #        面導体 / 体積セル / パネル / 地板 / 遠方界 / 近傍界 / 誘電体 /
 #        対数掃引 /
 #        平面波入射 / 過渡応答 / 縁寄せ格子 / Debye・Lorentz 分散 /
-#        混合モード S / 散乱遠方界・RCS / 伝送線路)
+#        混合モード S / 散乱遠方界・RCS / 伝送線路 / 区分線形の電流基底)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 ```
 
@@ -55,6 +56,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 | `src/volume.c` | 体積セル (矩形バー) の Hoer–Love 閉形式 (plate の厚み分割) |
 | `src/polygon.c` | 多角形セル (quad/disk パネル) の幾何二重積分 (多角形閉形式) |
 | `src/potential.c` | 電位係数 P と節点容量行列 C = P⁻¹ (圧縮時は P の要素評価のみ) |
+| `src/basis.c` | 区分線形の電流基底 (basis = 1) : 傾斜関数の結合 K / X、平面波の右辺・遠方界の項 |
 | `src/skin.c` | 表皮効果 (丸線は Bessel、角線は合成式) |
 | `src/mna.c` | MNA 番号付けとスタンプ |
 | `src/lu.c` | 複素 LU 分解 (部分ピボット) |
@@ -68,7 +70,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 | `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv` / 平面波の全界 `nearpw.csv`、E / H の遅延ポテンシャル) |
 | `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
 | `tools/peec2h5.py` | CSV → HDF5 変換 (本体の依存を増やさないための外付け) |
-| `tools/basis_study.py` | 電流基底の次数の検討 (純 Python の試作。本体は従来の基底のまま) |
+| `tools/basis_study.py` | 電流基底の次数の検討 (純 Python の独立実装。basis = 1 の検証の参照値) |
 
 ## 詳細な規則
 
@@ -78,7 +80,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 - `.claude/rules/portability.md` — MSVC で実際に踏んだ落とし穴
   (VLA 禁止 / OpenMP インデックス事前宣言 / `<complex.h>` 不可 など)。
   編集のたびに `.claude/hooks/check-portability.sh` が自動検査する。
-- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 22 個の
+- `.claude/rules/physics-invariants.md` — **壊すと結果が静かに狂う 23 個の
   不変条件**と、その番人になっている検証判定の対応。幾何積分・セル構成・
   MNA・圧縮経路に触る前に必読。
 - `.claude/rules/validation.md` — 入力キーの後方互換規則と、検証ケースの

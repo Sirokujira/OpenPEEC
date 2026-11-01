@@ -32,7 +32,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、235 判定)
+# 検証 (解析解・文献値との比較、247 判定)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -43,7 +43,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 235 判定すべて OK (h5py が
+**変更したら必ず `peec_check.sh` を通すこと。** 247 判定すべて OK (h5py が
 無い環境の `peec2h5 converter` だけは SKIP) でなければ完了ではない。
 「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
@@ -62,6 +62,7 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/pe
 | `src/volume.c` | 体積セル (矩形バー) の Hoer–Love 閉形式 (plate の厚み分割) |
 | `src/polygon.c` | 多角形セル (quad/disk パネル) の幾何二重積分 (多角形閉形式) |
 | `src/potential.c` | 電位係数 P と節点容量行列 C = P⁻¹ |
+| `src/basis.c` | 区分線形の電流基底 (basis = 1) の結合 K / X、平面波の右辺と遠方界の傾斜関数の項 |
 | `src/skin.c` | 表皮効果 (丸線は Bessel、角線は合成式) |
 | `src/mna.c` | MNA 番号付けとスタンプ |
 | `src/lu.c` | 複素 LU 分解 (部分ピボット) |
@@ -75,7 +76,7 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/pe
 | `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv` / 平面波の全界 `nearpw.csv`、E / H の遅延ポテンシャル) |
 | `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
 | `tools/peec2h5.py` | CSV → HDF5 変換 (本体の依存を増やさないための外付け) |
-| `tools/basis_study.py` | 電流基底の次数の検討 (純 Python の試作。本体は従来の基底) |
+| `tools/basis_study.py` | 電流基底の次数の検討 (純 Python の独立実装。basis = 1 の検証の参照値) |
 
 状態はグローバル変数ではなく `peec_t` コンテキスト構造体 1 個を main で
 確保して関数に渡す。
@@ -298,6 +299,16 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
     (`array antiphase null` / `array near Ez (x=0)` / `array Pin = Re(wHZw)/2` /
     `array ff eff (antiphase)` / `array ff eff (in-phase)` /
     `excitation superposition` / `excitation default`)
+22. **区分線形の電流基底 (basis = 1) は電荷で駆動する傾斜関数** — J = Σ I_k p_k +
+    Σ c_n χ_n、c_n = jω q_n、χ_n は節点 n の電荷セルの半区間上の (L_h − s) ô_h/L_n
+    (ô_h は節点から外向き、節点側の端は seg_t の `nend`)。χ_n で試験すると
+    <χ_n, −∇φ> = φ(節点) − φ̄_n なので節点電位は点電位で、電荷行に
+    jω(Kᵀ I + X c)、KVL 行に + ω² K q を足す (電荷を陽な未知数にする並びが必須)。
+    平面波の右辺 (電荷行に + <χ_n, E_inc>) と遠方界 (c_n χ_n の放射) も同じ関数で
+    足さないと送受の相反が崩れる。ω → 0 で従来に戻り、basis = 0 はビット一致。
+    (`basis1 = study (4/arm)` / `basis1 coarse accuracy` / `basis1 ff efficiency` /
+    `basis1 monopole = dip/2` / `basis1 2-port symmetry` / `basis1 low-f = basis0` /
+    basis 系の `recip`)
 
 ## メモリ
 
@@ -405,13 +416,14 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
   結合する (plate の層は Hoer–Love) ので少ない層数での誤差が大きい。パネルの
   DC 抵抗は格子の双対幅で決まり、矩形格子では厳密、歪んだ格子・極格子
   では O(格子幅²) の系統誤差を含む (弦近似)。
-- 電流は区間ごと一定、電荷はセルごと一定の低次基底。共振近傍の精度は分割数依存
-  (互い違い格子で Rin は 2 次以上の収束)。電流だけを区分線形にした高次基底
-  (節点電荷で駆動する傾斜関数の Galerkin) は試作で 1 次に落ちると分かったので
-  採用していない (電荷も高次にしないと互い違い格子の対称性が崩れる。電荷を高次に
-  すると節点電位 = セル平均の回路解釈が成り立たない)。`tools/basis_study.py` で
-  再現できる。Xin はデルタギャップのギャップ容量で対数的に増えるので収束判定に
-  使わない。
+- 既定 (basis = 0) は電流が区間ごと一定、電荷がセルごと一定の低次基底。共振近傍の
+  精度は分割数依存 (互い違い格子で Rin は 2 次以上の収束)。`basis = 1` は細線の
+  電流を連続な区分線形にする高次基底 (節点電荷で駆動する傾斜関数の Galerkin、
+  basis.c) で、粗い格子で正確 (Rin 誤差が片腕 4 分割で 1/3、8 分割で 1/2) だが、
+  電荷が区分一定のままなので漸近的には 1 次程度で従来より遅い (電荷も高次に
+  すると節点電位 = セル平均の回路解釈が成り立たない)。面導体・体積セル・誘電体・
+  圧縮・近傍界とは併用不可。独立実装の `tools/basis_study.py` で検討を再現できる。
+  Xin はデルタギャップのギャップ容量で対数的に増えるので収束判定に使わない。
 - 地板 (`groundplane`) は軸に垂直な無限 PEC 面で、互いに直交する 3 枚まで
   (平行な 2 面・斜めの面は不可)。積分回数は 2^面数 倍になるが未知数は
   増えない。導体は各面の + 側に置く (はみ出しはエラー)。x / y 面の遠方界は

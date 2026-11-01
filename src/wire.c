@@ -534,7 +534,9 @@ int wire_build(peec_t *p, FILE *fp_log)
 					mid[c] = 0.5 * (s->x1[c] + s->x2[c]);
 				}
 				add_chg(p, s->n1, s->x1, mid, 0, NULL, s);
+				p->chg[p->nchg - 1].nend = 0;
 				add_chg(p, s->n2, mid, s->x2, 0, NULL, s);
+				p->chg[p->nchg - 1].nend = 1;
 
 				// bar の断面分割 : 区間を nw x nt の体積セル (矩形バー) の並列に置き換える。
 				// どれも区間の両端ノードを共有する (面導体の層と同じ VFI 近似) ので、

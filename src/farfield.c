@@ -119,9 +119,11 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 	double *uu = (double *)malloc((size_t)ndir * sizeof(double));
 	d_complex_t *cbuf = (d_complex_t *)malloc((size_t)p->nseg * sizeof(d_complex_t));
 	double *wreg = (double *)malloc((size_t)ndir * sizeof(double));
-	if ((et == NULL) || (ep == NULL) || (uu == NULL) || (cbuf == NULL) || (wreg == NULL)) {
+	// basis = 1 : 傾斜関数の振幅に使うセル電荷 (励振の重みで重ね合わせる)
+	d_complex_t *qbuf = (d_complex_t *)malloc((size_t)(p->ncell > 0 ? p->ncell : 1) * sizeof(d_complex_t));
+	if ((et == NULL) || (ep == NULL) || (uu == NULL) || (cbuf == NULL) || (wreg == NULL) || (qbuf == NULL)) {
 		printf("%s\n", "*** memory allocation error (farfield)");
-		free(et); free(ep); free(uu); free(cbuf); free(wreg);
+		free(et); free(ep); free(uu); free(cbuf); free(wreg); free(qbuf);
 		fclose(fp);
 		return 1;
 	}
@@ -137,6 +139,8 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 		const double kw = 2 * PI * f / C0;
 		const double coef = 2 * PI * f * MU0 / (4 * PI);   // omega mu0 / 4 pi
 		const d_complex_t *cur = exc_mix(p, &p->segi[DIDX(p, ifreq, 0, 0)], p->nseg, cbuf);
+		const d_complex_t *qcur = (p->basis && (p->cellq != NULL))
+			? exc_mix(p, &p->cellq[QIDX(p, ifreq, 0, 0)], p->ncell, qbuf) : NULL;
 
 		// 方向ごとの遠方界と放射強度 U
 		for (int it = 0; it <= nth; it++) {
@@ -153,6 +157,7 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 
 				d_complex_t nv[3];
 				ff_nvec(p, cur, kw, rh, nv);
+				basis_ff_add(p, qcur, 2 * PI * f, kw, rh, nv);
 
 				// 横成分 : Etheta = -j coef (N・theta^)、Ephi = -j coef (N・phi^)
 				d_complex_t nt = d_complex(0, 0), np = d_complex(0, 0);
@@ -220,6 +225,7 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 	free(uu);
 	free(cbuf);
 	free(wreg);
+	free(qbuf);
 	fclose(fp);
 
 	return 0;
@@ -296,6 +302,8 @@ int output_farpw(const peec_t *p, const char *fn, FILE *fp_log)
 		const double kw = 2 * PI * f / C0;
 		const double coef = 2 * PI * f * MU0 / (4 * PI);   // omega mu0 / 4 pi
 		const d_complex_t *cur = &p->segipw[(size_t)ifreq * p->nseg];
+		const d_complex_t *qcur = (p->basis && (p->cellqpw != NULL))
+			? &p->cellqpw[(size_t)ifreq * p->ncell] : NULL;
 
 		for (int it = 0; it <= nth; it++) {
 			const double th = thmax * it / nth;
@@ -311,6 +319,7 @@ int output_farpw(const peec_t *p, const char *fn, FILE *fp_log)
 
 				d_complex_t nv[3];
 				ff_nvec(p, cur, kw, rh, nv);
+				basis_ff_add(p, qcur, 2 * PI * f, kw, rh, nv);
 				d_complex_t nt = d_complex(0, 0), np = d_complex(0, 0);
 				for (int c = 0; c < 3; c++) {
 					nt = d_add(nt, d_rmul(thh[c], nv[c]));

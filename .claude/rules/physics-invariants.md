@@ -626,6 +626,41 @@ Z0 = √((R+jωL)/(G+jωC)) と T = e^{−γ·長さ} (γ = √((R+jωL)(G+jωC)
 `excitation superposition` (位相の規約) / `excitation default` (後方互換) /
 `excitation parser guard`
 
+## (23) 区分線形の電流基底 (basis = 1) : 傾斜関数は電荷で駆動し、節点電位は点電位
+
+`basis = 1` (basis.c、細線のみ) は電流 J = Σ I_k p_k + Σ c_n χ_n、c_n = jω q_n。
+χ_n は節点 n の電荷セルの半区間 h 上の (L_h − s) ô_h / L_n (s は節点からの
+距離、ô_h は**節点から外向き**、L_n = carea)。守るべき約束は 4 つ。
+
+- **傾斜関数の向きと節点側の端** : 電荷サブセルの節点側は `nend`
+  (wire.c の add_chg 直後に 0 = x1 / 1 = x2 を入れる)。外向きを取り違えると
+  中点で電流が不連続になり、KCL と連続の式の整合が壊れる。
+- **節点電位は点電位** : χ_n で試験すると <χ_n, −∇φ> = φ(節点) − φ̄_n なので、
+  電荷行は φ_n = Σ P q + jω(Σ K_ln I_l + Σ X_nm c_m)。MNA の符号は
+  KVL 行に + ω² K_kn q_n、電荷行に + jω K_ln I_l と − ω² X_nm q_m
+  (mna.c)。電荷が陽な未知数の並び (圧縮経路と同じ offQ) でしか組めないので、
+  mna_numbering は basis = 1 でも電荷行を作る。cell_charges は `qexp`
+  (offQ < nunknown) で読む。
+- **右辺と遠方界も同じ関数** : 平面波は電荷行に + <χ_n, E_inc>
+  (`basis_rhs_planewave`、KVL 行の − <p_k, E_inc> と同じ規約)、遠方界の放射
+  ベクトルに c_n χ_n の寄与 (`basis_ff_add`、電荷は exc_mix で重ね合わせる)。
+  片方だけだと送受の相反が崩れる。鏡像は幾何鏡像 + (−1)^(反射回数) (不変条件 8)。
+- **ω → 0 で従来の PEEC** (K, X は ω² でしか効かない)。basis = 0 の出力は
+  ビット単位で従来と同じ。
+
+傾斜関数の重み付き積分は「節点から長さ t のパルス」の重ね合わせで、既存の
+neumann_pair_k を t について Gauss 6 点で積分する。粗い格子で従来より正確
+(半波長ダイポールの Rin 誤差 4 分割 1/3、8 分割 1/2) だが、電荷が区分一定の
+ままなので漸近的な収束は従来の互い違い格子 (2 次) より遅い (1 次程度、
+tools/basis_study.py)。面導体・体積セル・誘電体・圧縮・近傍界とは併用不可
+(パーサが拒否)。
+
+**番人**: `basis1 = study (4/arm)` / `basis1 = study (8/arm)` (独立実装の
+tools/basis_study.py と一致) / `basis1 coarse accuracy` / `basis1 ff efficiency` /
+`basis1 monopole = dip/2` (鏡像) / `basis1 2-port symmetry` (Galerkin) /
+basis_bent・basis_mono_pw の `recip` (遠方界と平面波の右辺の整合) /
+`basis1 low-f = basis0` / `basis parser guard`
+
 ## 並列化
 
 `lp_fill` / `pot_fill` / 近傍界の観測点ループは OpenMP 並列。並列ループ内で

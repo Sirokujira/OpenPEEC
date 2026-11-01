@@ -86,7 +86,7 @@ int main(int argc, char *argv[])
 	if (!peec.compress) {
 		lp_fill(&peec, 0, fp_log);
 	}
-	if (pot_fill(&peec, 0, fp_log)) {
+	if (pot_fill(&peec, 0, fp_log) || basis_fill(&peec, 0, fp_log)) {
 		peec_free(&peec);
 		fclose(fp_log);
 		exit(1);

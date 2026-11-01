@@ -1135,6 +1135,95 @@ for spec in "60 330 2" "80 300 1" "40 0 1"; do
 	recip "$WORK/bent_corner2.peec" "$WORK/far_corner2.csv" 1.5e8 $spec
 done
 
+echo "--- higher-order current basis (basis = 1)"
+# (bm) 区分線形の電流基底 (basis.c) : 独立実装 (tools/basis_study.py) との一致、
+#      粗い格子での精度、放射効率、鏡像、対称性、送受の相反、低周波の極限
+addbasis() { awk '{print} /^title = /{print "basis = 1"}' "$1"; }
+zrel() { awk -F, -v r="$1" -v x="$2" 'NR == 2 {printf "%.9e", sqrt((($3 - r) ^ 2) + (($4 - x) ^ 2)) / sqrt((r * r) + (x * x))}' "$csv"; }
+cp "$SRC/basis_dipole.peec" "$WORK/"
+run basis_dipole.peec
+r1n4=$(getR)
+chk "basis1 ff efficiency" "$(getEff)" 1.0 0.005
+awk -v e="$(zrel 70.05859 -4.727462)" 'BEGIN {ok = (e <= 2e-4);
+	printf "%-24s |dZ|/|Z|=%.3e -> %s (<= 2e-4)\n", "basis1 = study (4/arm)", e, ok ? "OK" : "NG"; exit ok ? 0 : 1}' || status=1
+sed 's/ 5.8e7 4$/ 5.8e7 8/' "$SRC/basis_dipole.peec" > "$WORK/basis_dipole8.peec"
+run basis_dipole8.peec
+r1n8=$(getR)
+awk -v e="$(zrel 71.43439 -1.758106)" 'BEGIN {ok = (e <= 2e-4);
+	printf "%-24s |dZ|/|Z|=%.3e -> %s (<= 2e-4)\n", "basis1 = study (8/arm)", e, ok ? "OK" : "NG"; exit ok ? 0 : 1}' || status=1
+# 粗い格子での精度 : 参照は従来の基底の片腕 32 分割
+for nd in 4 8 32; do
+	sed -e '/^basis/d' -e "s/ 5.8e7 4\$/ 5.8e7 $nd/" "$SRC/basis_dipole.peec" > "$WORK/basis0_dipole$nd.peec"
+	run "basis0_dipole$nd.peec"
+	eval "r0n$nd=\$(getR)"
+done
+awk -v a="$r1n4" -v b="$r0n4" -v c="$r1n8" -v d="$r0n8" -v r="$r0n32" 'BEGIN {
+	e14 = a - r; e04 = b - r; e18 = c - r; e08 = d - r;
+	ok = ((e14 < 0 ? -e14 : e14) * 3 <= (e04 < 0 ? -e04 : e04)) && ((e18 < 0 ? -e18 : e18) < (e08 < 0 ? -e08 : e08));
+	printf "%-24s Rin err 4/arm %+.3f vs %+.3f, 8/arm %+.3f vs %+.3f ohm -> %s (4/arm <= 1/3, 8/arm smaller)\n", "basis1 coarse accuracy", e14, e04, e18, e08, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# 鏡像 : モノポール = ダイポール/2 (全周波数)
+addbasis "$SRC/dipole_halfwave.peec" > "$WORK/basis_dh.peec"
+run basis_dh.peec
+cp "$csv" "$WORK/zin_basis_dh.csv"
+addbasis "$SRC/monopole_gp.peec" > "$WORK/basis_mono.peec"
+run basis_mono.peec
+paste -d, "$WORK/zin_basis_dh.csv" "$csv" | awk -F, 'NR > 1 {
+	e = sqrt((($10 - ($3 / 2)) ^ 2) + (($11 - ($4 / 2)) ^ 2)) / sqrt((($3 / 2) ^ 2) + (($4 / 2) ^ 2)); if (!(e <= mx)) mx = e; n++
+} END {
+	ok = (n == 13) && (mx <= 1e-6);
+	printf "%-24s rows=%d max rel=%.3e -> %s (<= 1e-6)\n", "basis1 monopole = dip/2", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# Galerkin の対称性 : 2 素子アレイの S21 = S12
+sed '/^nearfield/d' "$SRC/array_dipoles.peec" > "$WORK/basis_arr0.peec"
+addbasis "$WORK/basis_arr0.peec" > "$WORK/basis_arr.peec"
+run basis_arr.peec
+awk 'NF == 9 && $1 !~ /^[!#]/ {d = sqrt((($4 - $6) ^ 2) + (($5 - $7) ^ 2)) / sqrt(($4 ^ 2) + ($5 ^ 2)); n++}
+END {ok = (n == 1) && (d <= 1e-9);
+	printf "%-24s |S21-S12|/|S21|=%.3e -> %s (<= 1e-9)\n", "basis1 2-port symmetry", d, ok ? "OK" : "NG"; exit ok ? 0 : 1}' "$WORK/peec.s2p" || status=1
+# 送受の相反 (遠方界の傾斜関数の項と平面波の右辺の電荷行)
+addbasis "$SRC/bent_pw.peec" > "$WORK/basis_bent.peec"
+run basis_bent.peec
+cp "$WORK/far.csv" "$WORK/far_basis_bent.csv"
+for spec in "30 45 1" "90 30 2" "120 255 2"; do
+	# shellcheck disable=SC2086
+	recip "$WORK/basis_bent.peec" "$WORK/far_basis_bent.csv" 1.5e8 $spec
+done
+addbasis "$WORK/mono_pw.peec" > "$WORK/basis_mono_pw.peec"
+run basis_mono_pw.peec
+cp "$WORK/far.csv" "$WORK/far_basis_mono.csv"
+recip "$WORK/basis_mono_pw.peec" "$WORK/far_basis_mono.csv" 1.4376e8 30 90 1
+# 低周波 (1 kHz) では basis = 0 と一致 (K, X の結合は omega^2 で消える)
+awk '{sub(/^frequency = .*/, "frequency = 1e3 1e3 0"); print} /^title = /{print "capacitance = 1"}' \
+	"$SRC/wire_gp.peec" > "$WORK/basis_lf0.peec"
+run basis_lf0.peec
+cp "$csv" "$WORK/zin_basis_lf0.csv"
+addbasis "$WORK/basis_lf0.peec" > "$WORK/basis_lf1.peec"
+run basis_lf1.peec
+paste -d, "$WORK/zin_basis_lf0.csv" "$csv" | awk -F, 'NR == 2 {
+	e = sqrt((($10 - $3) ^ 2) + (($11 - $4) ^ 2)) / sqrt(($3 ^ 2) + ($4 ^ 2));
+	ok = (e <= 1e-9);
+	printf "%-24s rel=%.3e -> %s (<= 1e-9)\n", "basis1 low-f = basis0", e, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# 書き間違い・未対応の組み合わせは拒否 : capacitance = 0、面導体、近傍界、basis = 2
+nbad=0
+awk '{print} /^title = /{print "basis = 1"}' "$SRC/wire_gp.peec" > "$WORK/basis_bad1.peec"
+addbasis "$SRC/compress_cap.peec" | sed '/^compression/d' > "$WORK/basis_bad2.peec"
+addbasis "$SRC/array_dipoles.peec" > "$WORK/basis_bad3.peec"
+sed 's/^basis = 1$/basis = 2/' "$SRC/basis_dipole.peec" > "$WORK/basis_bad4.peec"
+for k in 1 2 3 4; do
+	if (cd "$WORK" && "$PEEC" -n 1 "basis_bad$k.peec" > basis_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+done
+if [ "$nbad" -eq 4 ]; then
+	printf "%-24s -> OK (4/4 unsupported inputs rejected)\n" "basis parser guard"
+else
+	printf "%-24s -> NG (%d/4 unsupported inputs rejected)\n" "basis parser guard" "$nbad" >&2
+	status=1
+fi
+
 # (aq) 周波数分散 (単極 Debye) : 空気ケースとのアドミタンス差が
 #      dY(f) = j w eps0 (epsr*(f) - 1) A/d に一致すること (等電位面間の
 #      過剰ラダーは周波数ごとに厳密)。3 点 (f_relax/100, f_relax,

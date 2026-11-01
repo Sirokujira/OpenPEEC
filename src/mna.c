@@ -106,7 +106,8 @@ int mna_numbering(peec_t *p, FILE *fp_log)
 	P は H 行列で持てるので密な逆行列は現れない。
 	*/
 	p->offQ = p->nunknown;
-	if (p->compress && p->capacitance && (p->nchg > 0)) {
+	// basis = 1 も同じ並び (電荷行に傾斜関数の結合 K / X を足す、basis.c)
+	if ((p->compress || p->basis) && p->capacitance && (p->nchg > 0)) {
 		if (pot_cells(p)) {
 			printf("%s\n", "*** memory allocation error (potential cells)");
 			return 1;
@@ -415,6 +416,27 @@ static void assemble(const peec_t *p, double f, sink_t *s, int skiplp)
 					stamp(s, ri, p->offQ + j, pot_entry(p, i, j, kw));
 				}
 			}
+			/*
+			basis = 1 (区分線形の電流、basis.c) : 傾斜関数の振幅 c = j omega q を
+			通じた vector potential の結合
+			  KVL 行 k : - j omega Σ K_kn c_n           = + omega^2 K_kn q_n
+			  電荷行 n : + j omega (Σ K_ln I_l + Σ X_nm c_m) = j omega K_ln I_l - omega^2 X_nm q_m
+			*/
+			if (p->basis && (p->bk != NULL)) {
+				const int nc = p->ncell;
+				const double w2 = omega * omega;
+				for (int i = 0; i < nc; i++) {
+					const int ri = p->offQ + i;
+					for (int l = 0; l < p->nseg; l++) {
+						const d_complex_t kv = p->bk[((size_t)l * nc) + i];
+						stamp(s, ri, p->offS + l, d_mul(d_complex(0, omega), kv));
+						stamp(s, p->offS + l, ri, d_rmul(w2, kv));
+					}
+					for (int j = 0; j < nc; j++) {
+						stamp(s, ri, p->offQ + j, d_rmul(-w2, p->bx[((size_t)i * nc) + j]));
+					}
+				}
+			}
 		}
 		else {
 			// 密経路 : 節点ブロックに j omega C (C = P^-1)
@@ -631,6 +653,8 @@ void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b)
 		}
 		b[p->offS + k] = d_rmul(-1, emf);
 	}
+	// basis = 1 : 電荷行 (傾斜関数の試験) の右辺 + <chi_n, E_inc>
+	basis_rhs_planewave(p, kw, w, nw, b);
 }
 
 // 独立電源励振 (isource : 電流は電源内部を n1 -> n2 に流れる = SPICE 規約)

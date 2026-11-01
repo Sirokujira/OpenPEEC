@@ -211,6 +211,7 @@ typedef struct {
 	double gexc;                  // eps0 epsr tand area / len        [F] (損失側)
 	double gfac;                  // eps0 area / len [F] (分散モデル用の幾何係数)
 	int    didx;                  // 誘電体ブリックの索引 (p->diel)。diel = 1 のときだけ有効
+	int    nend;                  // 線導体の電荷サブセル : 節点側の端 (0 = x1、1 = x2)
 } seg_t;
 
 typedef struct {
@@ -255,8 +256,13 @@ typedef struct {
 	int    *csidx;                // [nchg] サブセル番号
 	double *cpt;                  // [3*ncell] セルの代表点 (クラスタツリー用)
 	d_complex_t *cmat;            // [ncell*ncell] 節点容量行列 C = P^-1
+	// basis = 1 (区分線形の電流基底、basis.c) の結合 : 区間パルスと節点セルの
+	// 傾斜関数の間の K [nseg*ncell]、傾斜関数どうしの X [ncell*ncell] (mu0/4pi 込み)
+	d_complex_t *bk;
+	d_complex_t *bx;
 	                              // (compression = 1 では作らない : 電荷が未知数)
 	int    clogged;               // 総容量をログ出力したか
+	int    blogged;               // basis = 1 の結合をログ出力したか
 
 	// 形状ノード表 (座標マージ用)
 	int    ngnode;
@@ -310,6 +316,7 @@ typedef struct {
 	int    tran;                  // transient = 1 : 過渡応答 (掃引の逆フーリエ変換)
 	double tranatt;               // 帯域端でのガウス励振の減衰 [dB] (既定 40)
 	int    grading;               // grading = 1 : 面格子の縁寄せ (plate/quad 余弦、disk 正弦)
+	int    basis;                 // basis = 1 : 区分線形の電流基底 (細線のみ、basis.c)
 	int    compress;              // compression = 1 : 部分インダクタンスを H 行列で圧縮
 	double ctol;                  // ACA の相対許容誤差 (既定 1e-6)
 	struct hmat_t *hlp;           // 圧縮された Lp (compress = 1 のときのみ)
@@ -513,6 +520,14 @@ int  output_pw(const peec_t *p, const char *fn, FILE *fp_log);
 // base はポート 0 の解 (周波数 ifreq の区画の先頭)、ポート j は base + j*n
 const d_complex_t *exc_mix(const peec_t *p, const d_complex_t *base, int n, d_complex_t *buf);
 double exc_pin(const peec_t *p, int ifreq);
+
+// basis.c (basis = 1 : 区分線形の電流基底)
+int  basis_fill(peec_t *p, double f, FILE *fp_log);
+// 平面波の右辺 : 電荷行に <chi_n, E_inc> を足す
+void basis_rhs_planewave(const peec_t *p, double kw, const pw_wave_t *w, int nw, d_complex_t *b);
+// 遠方界の放射ベクトルに傾斜関数の寄与 (振幅 j omega q_n) を足す
+void basis_ff_add(const peec_t *p, const d_complex_t *q, double omega, double kw,
+	const double rh[3], d_complex_t nv[3]);
 
 // farfield.c
 int  output_far(const peec_t *p, const char *fn, FILE *fp_log);

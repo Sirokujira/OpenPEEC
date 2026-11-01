@@ -864,6 +864,14 @@ int input_data(FILE *fp, peec_t *p)
 		else if (!strcmp(strkey, "grading")) {
 			p->grading = atoi(token[2]);
 		}
+		else if (!strcmp(strkey, "basis")) {
+			// basis = 0 (区間ごとに一定の電流、既定) | 1 (区分線形の電流、細線のみ)
+			p->basis = atoi(token[2]);
+			if ((p->basis != 0) && (p->basis != 1)) {
+				printf(errfmt2, "basis");
+				return 1;
+			}
+		}
 		else if (!strcmp(strkey, "compression")) {
 			// compression = 1 [tol] : 部分インダクタンスを H 行列で圧縮
 			p->compress = atoi(token[2]);
@@ -981,6 +989,24 @@ int input_data(FILE *fp, peec_t *p)
 		printf("%s\n", "*** compression = 1 requires conductor geometry (wire/bar/plate/quad/disk)");
 		return 1;
 	}
+	// basis = 1 は細線 (分割しない wire / bar) の電荷で駆動する傾斜関数なので、
+	// 容量性 PEEC が必須。面導体・体積セル・誘電体・圧縮・近傍界は扱わない
+	if (p->basis) {
+		const char *why = NULL;
+		if (!p->capacitance) why = "capacitance = 1";
+		else if (p->nwire <= 0) why = "wire or bar conductors";
+		else if ((p->nplate + p->npanel) > 0) why = "thin wires only (no plate/quad/disk)";
+		else if (p->ndiel > 0) why = "no dielectric";
+		else if (p->compress) why = "compression = 0";
+		else if (p->nnf > 0) why = "no nearfield";
+		for (int i = 0; (why == NULL) && (i < p->nwire); i++) {
+			if ((p->wire[i].ndivw > 1) || (p->wire[i].ndivt > 1)) why = "no cross-section subdivision";
+		}
+		if (why != NULL) {
+			printf("*** basis = 1 requires %s\n", why);
+			return 1;
+		}
+	}
 
 	return 0;
 }
@@ -1035,6 +1061,8 @@ void peec_free(peec_t *p)
 	free(p->csidx);
 	free(p->cpt);
 	free(p->cmat);
+	free(p->bk);
+	free(p->bx);
 
 	// MNA と結果 (mna.c / solve.c)
 	free(p->nodemap);
