@@ -1,0 +1,31 @@
+# 検証 (ba) : 導電性の誘電体 — Drude 項 (直流極限が有限でない模型)
+#   diel_debye.peec と同じ平行平板 (40 x 40 mm、gap d = 0.4 mm) を、Drude 項を
+#   持つ媒質で満たす (ドープした半導体基板・プラズマの模型) :
+#     epsr*(f) = eps_inf - fp^2/(f^2 - j f g)        (exp(+jωt) 規約)
+#     eps_inf = 3、プラズマ周波数 fp = 4 MHz、衝突周波数 g = 1 MHz
+#   直流導電率は sigma_dc = eps0 ωp^2/Γ = 2π eps0 fp^2/g = 8.9012e-4 S/m。
+#   Drude 項は f -> 0 で発散するので直流極限の和 (eps_inf + Σde = epsr) には
+#   入れない (ここでは Debye / Lorentz 極が無いので epsr = eps_inf = 3)。
+#
+#   平行平板は等電位面なので、空気ケースとのアドミタンス差は格子に依らず
+#     dY(f) = j w eps0 (epsr*(f) - 1) A/d
+#   (diel_pp.peec の論法)。epsr* = a + jb とすると
+#     a = eps_inf - fp^2 f^2/(f^4 + f^2 g^2),  b = -fp^2 f g/(f^4 + f^2 g^2)
+#     f = 1 kHz  : G = 3.5605 mS (= sigma_dc A/d)、B = -3.115 µS (a < 1 : 誘導性)
+#     f = 1 MHz  : G = 1.7802 mS (f = g で直流の半分)、B = -1.335 mS
+#     f = 10 MHz : G = 35.25 µS、B = +4.098 mS (a = 2.82 : 容量性に戻る)
+#   掃引は 1 kHz .. 10 MHz の対数 4 分割 (5 点) x (G, B) = 10 値を解析式と
+#   比べる (期待値は Drude の解析式そのもの)。判定は最大相対誤差 2e-3
+#   (Debye / Lorentz と同じ)。最大は 10 MHz の G で 1.5e-3 : G << B の点では
+#   板の直列インピーダンスの補正が相対的に G 側へ大きく回る。
+OpenPEEC 1 0
+title = parallel plates with a Drude (conductive) dielectric (einf=3 fp=4MHz g=1MHz)
+capacitance = 1
+plate = 0 0 0      0.04 0 0  0 0.04 0  1e-5 5.8e7 8 8
+plate = 0 0 0.0004 0.04 0 0  0 0.04 0  1e-5 5.8e7 8 8
+dielectric = 0 0 0  0.04 0 0  0 0.04 0  0.0004 3 8 8 2 0 3 drude 4e6 1e6
+node = 1 0.02 0.02 0
+node = 2 0.02 0.02 0.0004
+port = 2 1 50
+frequency = 1e3 1e7 4 log
+end

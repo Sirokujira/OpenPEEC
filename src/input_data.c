@@ -130,6 +130,7 @@ int input_data(FILE *fp, peec_t *p)
 	const char sep[] = " \t";
 	const char errfmt2[] = "*** invalid %s data\n";
 	int    cres = 0, ccap = 0, cind = 0, cmut = 0, csrc = 0, cport = 0, cwire = 0, cnode = 0;
+	int    ctl = 0, cexcit = 0;
 	int    cplate = 0, cpanel = 0, cdiel = 0, cnf = 0, chelix = 0;
 
 	// initialize (既定値 : キー省略時は従来動作)
@@ -240,6 +241,75 @@ int input_data(FILE *fp, peec_t *p)
 				return 1;
 			}
 		}
+		else if (!strcmp(strkey, "excitation")) {
+			// excitation = ポート番号 (1 始まり) 振幅[A] [位相deg]
+			if (ntoken < 4) err = 1;
+			else {
+				APPEND(p->exc, p->nexc, cexcit, exc_t);
+				exc_t *e = &p->exc[p->nexc];
+				e->port = nodeid(token[2], &err) - 1;
+				e->amp = atof(token[3]);
+				e->phase = (ntoken > 4) ? atof(token[4]) : 0;
+				if (e->port < 0) err = 1;
+				if (!err) p->nexc++;
+			}
+			if (err) {
+				printf(errfmt2, "excitation");
+				return 1;
+			}
+		}
+		else if (!strcmp(strkey, "tline")) {
+			// tline = n1 n2 n3 n4 Z0 遅延[s] [損失dB]
+			// tline = n1 n2 n3 n4 rlgc 長さ[m] R[Ω/m] L[H/m] G[S/m] C[F/m] [Rs[Ω/(m√Hz)] [tanδ]]
+			if (ntoken < 8) err = 1;
+			else {
+				APPEND(p->tl, p->ntl, ctl, tline_t);
+				tline_t *e = &p->tl[p->ntl];
+				memset(e, 0, sizeof(tline_t));
+				e->n1 = nodeid(token[2], &err);
+				e->n2 = nodeid(token[3], &err);
+				e->n3 = nodeid(token[4], &err);
+				e->n4 = nodeid(token[5], &err);
+				if (!strcmp(token[6], "rlgc")) {
+					if (ntoken < 12) err = 1;
+					else {
+						e->rlgc = 1;
+						e->len = atof(token[7]);
+						e->r = atof(token[8]);
+						e->l = atof(token[9]);
+						e->g = atof(token[10]);
+						e->c = atof(token[11]);
+						e->rs = (ntoken >= 13) ? atof(token[12]) : 0;
+						e->tand = (ntoken >= 14) ? atof(token[13]) : 0;
+						if ((e->len <= 0) || (e->l <= 0) || (e->c <= 0) || (e->r < 0) ||
+						    (e->g < 0) || (e->rs < 0) || (e->tand < 0)) err = 1;
+						// 参考値 (ログ用) : 損失を除いた Z0 と遅延
+						if (!err) {
+							e->z0 = sqrt(e->l / e->c);
+							e->td = e->len * sqrt(e->l * e->c);
+						}
+						e->att = 1;
+					}
+				}
+				else {
+					e->z0 = atof(token[6]);
+					e->td = atof(token[7]);
+					const double db = (ntoken >= 9) ? atof(token[8]) : 0;
+					if ((e->z0 <= 0) || (e->td <= 0) || (db < 0)) err = 1;
+					e->att = pow(10, -db / 20);
+				}
+				if ((e->n1 == e->n2) || (e->n3 == e->n4)) err = 1;
+				updatemax(p, e->n1);
+				updatemax(p, e->n2);
+				updatemax(p, e->n3);
+				updatemax(p, e->n4);
+				if (!err) p->ntl++;
+			}
+			if (err) {
+				printf(errfmt2, "tline");
+				return 1;
+			}
+		}
 		else if (!strcmp(strkey, "mutual")) {
 			if (ntoken < 5) err = 1;
 			else {
@@ -298,8 +368,8 @@ int input_data(FILE *fp, peec_t *p)
 			}
 		}
 		else if (!strcmp(strkey, "wire") || !strcmp(strkey, "bar")) {
-			// wire = x1 y1 z1 x2 y2 z2 半径     導電率 分割数
-			// bar  = x1 y1 z1 x2 y2 z2 幅 厚さ  導電率 分割数
+			// wire = x1 y1 z1 x2 y2 z2 半径     導電率 分割数 [断面分割数]
+			// bar  = x1 y1 z1 x2 y2 z2 幅 厚さ  導電率 分割数 [分割数w [分割数t]]
 			const int isbar = !strcmp(strkey, "bar");
 			if (ntoken < (isbar ? 12 : 11)) err = 1;
 			else {
@@ -316,14 +386,18 @@ int input_data(FILE *fp, peec_t *p)
 					e->thick = atof(token[9]);
 					e->sigma = atof(token[10]);
 					e->ndiv = atoi(token[11]);
-					if ((e->width <= 0) || (e->thick <= 0)) err = 1;
+					e->ndivw = (ntoken >= 13) ? atoi(token[12]) : 1;
+					e->ndivt = (ntoken >= 14) ? atoi(token[13]) : 1;
+					if ((e->width <= 0) || (e->thick <= 0) || (e->ndivw < 1) || (e->ndivt < 1)) err = 1;
 				}
 				else {
 					e->shape = SHAPE_ROUND;
 					e->radius = atof(token[8]);
 					e->sigma = atof(token[9]);
 					e->ndiv = atoi(token[10]);
-					if (e->radius <= 0) err = 1;
+					// 断面分割 (n x n 格子のうち円内のセル。1 = 分割しない)
+					e->ndivw = (ntoken >= 12) ? atoi(token[11]) : 1;
+					if ((e->radius <= 0) || (e->ndivw < 1)) err = 1;
 				}
 				const double dx = e->x2[0] - e->x1[0];
 				const double dy = e->x2[1] - e->x1[1];
@@ -465,20 +539,30 @@ int input_data(FILE *fp, peec_t *p)
 								printf("%s\n", "*** dielectric : too many poles");
 								return 1;
 							}
-							const int lor = !strcmp(token[it], "lorentz");
-							if (lor) it++;
-							const int nw = lor ? 3 : 2;
+							// 種類 : lorentz f0 de g / drude fp g / sigma s / (既定) Debye f de
+							int kind = POLE_DEBYE;
+							if (!strcmp(token[it], "lorentz")) kind = POLE_LORENTZ;
+							else if (!strcmp(token[it], "drude")) kind = POLE_DRUDE;
+							else if (!strcmp(token[it], "sigma")) kind = POLE_SIGMA;
+							if (kind != POLE_DEBYE) it++;
+							const int nw = (kind == POLE_LORENTZ) ? 3 : (kind == POLE_SIGMA) ? 1 : 2;
 							if ((it + nw) > ntoken) {
 								err = 1;
 								break;
 							}
 							const int k = e->npole;
-							e->pf[k] = atof(token[it]);
-							e->pde[k] = atof(token[it + 1]);
-							if (lor) {
-								e->plor[k] = 1;
-								e->pg[k] = atof(token[it + 2]);
-								if (e->pg[k] <= 0) err = 1;
+							e->pkind[k] = kind;
+							if (kind == POLE_SIGMA) {
+								e->pde[k] = atof(token[it]);
+							}
+							else if (kind == POLE_DRUDE) {
+								e->pf[k] = atof(token[it]);
+								e->pg[k] = atof(token[it + 1]);
+							}
+							else {
+								e->pf[k] = atof(token[it]);
+								e->pde[k] = atof(token[it + 1]);
+								if (kind == POLE_LORENTZ) e->pg[k] = atof(token[it + 2]);
 							}
 							e->npole++;
 							it += nw;
@@ -488,9 +572,18 @@ int input_data(FILE *fp, peec_t *p)
 					// eps_inf は 1 以上 epsr 以下 (強度 de_k > 0 の和だけ下がる)。
 					// 定数 tand と分散の併用は損失の二重計上なので拒否する
 					if ((e->epsinf < 1) || (e->epsinf > e->epsr) || (e->tand != 0)) err = 1;
+					// 各項の正値性。Drude / 導電率は直流で発散するので直流極限の和に入れない
 					double sde = 0;
 					for (int k = 0; k < e->npole; k++) {
-						if ((e->pf[k] <= 0) || (e->pde[k] <= 0)) err = 1;
+						const int kind = e->pkind[k];
+						if (kind == POLE_SIGMA) {
+							if (e->pde[k] <= 0) err = 1;
+							continue;
+						}
+						if (e->pf[k] <= 0) err = 1;
+						if (((kind == POLE_LORENTZ) || (kind == POLE_DRUDE)) && (e->pg[k] <= 0)) err = 1;
+						if (kind == POLE_DRUDE) continue;
+						if (e->pde[k] <= 0) err = 1;
 						sde += e->pde[k];
 					}
 					// 直流極限の整合 : eps_inf + sum de_k = epsr
@@ -509,8 +602,13 @@ int input_data(FILE *fp, peec_t *p)
 					printf("%s\n", "*** dielectric : the two edge vectors must be perpendicular");
 					return 1;
 				}
-				// epsr = 1 は真空と同じ : セルを作らない (完全に無効果、空気と bit 一致)
-				if (!err && (e->epsr > 1)) p->ndiel++;
+				// epsr = 1 は真空と同じ : セルを作らない (完全に無効果、空気と bit 一致)。
+				// ただし導電性 (Drude / 導電率) があれば epsr = 1 でも電流が流れる
+				int cond = 0;
+				for (int k = 0; k < e->npole; k++) {
+					if ((e->pkind[k] == POLE_DRUDE) || (e->pkind[k] == POLE_SIGMA)) cond = 1;
+				}
+				if (!err && ((e->epsr > 1) || cond)) p->ndiel++;
 			}
 			if (err) {
 				printf(errfmt2, "dielectric");
@@ -518,7 +616,7 @@ int input_data(FILE *fp, peec_t *p)
 			}
 		}
 		else if (!strcmp(strkey, "quad")) {
-			// quad = x1 y1 z1  x2 y2 z2  x3 y3 z3  x4 y4 z4  厚さ 導電率 分割a 分割b
+			// quad = x1 y1 z1  x2 y2 z2  x3 y3 z3  x4 y4 z4  厚さ 導電率 分割a 分割b [分割t]
 			// 凸な一般四辺形 (頂点は一周順)。双一次写像の構造格子で分割する。
 			// 分割 a は辺 1-2 (と 4-3)、分割 b は辺 1-4 (と 2-3) の方向。
 			if (ntoken < 18) err = 1;
@@ -534,8 +632,9 @@ int input_data(FILE *fp, peec_t *p)
 				e->sigma = atof(token[15]);
 				e->ndiva = atoi(token[16]);
 				e->ndivb = atoi(token[17]);
+				e->ndivt = (ntoken >= 19) ? atoi(token[18]) : 1;
 				if ((e->thick <= 0) || (e->sigma < 0)
-				 || (e->ndiva < 1) || (e->ndivb < 1)) err = 1;
+				 || (e->ndiva < 1) || (e->ndivb < 1) || (e->ndivt < 1)) err = 1;
 				// 平面性と凸性 (双一次格子と双対セルの前提)
 				if (!err) {
 					double nrm[3] = {0, 0, 0};
@@ -585,7 +684,7 @@ int input_data(FILE *fp, peec_t *p)
 			}
 		}
 		else if (!strcmp(strkey, "disk")) {
-			// disk = cx cy cz  nx ny nz  半径 厚さ 導電率 nring nsec
+			// disk = cx cy cz  nx ny nz  半径 厚さ 導電率 nring nsec [分割t]
 			// 円板。中心 + nring リング x nsec セクタの極格子で分割する。
 			if (ntoken < 13) err = 1;
 			else {
@@ -602,6 +701,8 @@ int input_data(FILE *fp, peec_t *p)
 				e->sigma = atof(token[10]);
 				e->ndiva = atoi(token[11]);       // nring
 				e->ndivb = atoi(token[12]);       // nsec
+				e->ndivt = (ntoken >= 14) ? atoi(token[13]) : 1;
+				if (e->ndivt < 1) err = 1;
 				const double nl = sqrt((e->nrm[0] * e->nrm[0])
 					+ (e->nrm[1] * e->nrm[1]) + (e->nrm[2] * e->nrm[2]));
 				// 中心の双対環は 2 x nsec 頂点なので nsec <= POLY_MAX/2
@@ -697,17 +798,30 @@ int input_data(FILE *fp, peec_t *p)
 		}
 		else if (!strcmp(strkey, "planewave")) {
 			// planewave = theta phi 偏波 振幅 [位相deg]
-			// (theta, phi) は到来方向 (伝搬方向はその逆)、偏波 1 = theta / 2 = phi
-			if (ntoken < 6) err = 1;
+			// (theta, phi) は到来方向 (伝搬方向はその逆)、偏波 1 = theta / 2 = phi。
+			// 複数行は同時に入射する波 (重ね合わせ、PW_MAX 行まで)。1 行目が
+			// leff (pw.csv) と RCS (farpw.csv) の振幅の規格化に使われる
+			if ((ntoken < 6) || (p->npw >= PW_MAX)) err = 1;
 			else {
-				p->pwth = atof(token[2]);
-				p->pwph = atof(token[3]);
-				p->pwpol = atoi(token[4]);
-				p->pwamp = atof(token[5]);
-				p->pwphase = (ntoken >= 7) ? atof(token[6]) : 0;
-				if ((p->pwpol != 1) && (p->pwpol != 2)) err = 1;
-				if (p->pwamp <= 0) err = 1;
-				if (!err) p->pw = 1;
+				const int k = p->npw;
+				p->pwi_th[k] = atof(token[2]);
+				p->pwi_ph[k] = atof(token[3]);
+				p->pwi_pol[k] = atoi(token[4]);
+				p->pwi_amp[k] = atof(token[5]);
+				p->pwi_phase[k] = (ntoken >= 7) ? atof(token[6]) : 0;
+				if ((p->pwi_pol[k] != 1) && (p->pwi_pol[k] != 2)) err = 1;
+				if (p->pwi_amp[k] <= 0) err = 1;
+				if (!err) {
+					if (k == 0) {
+						p->pwth = p->pwi_th[0];
+						p->pwph = p->pwi_ph[0];
+						p->pwpol = p->pwi_pol[0];
+						p->pwamp = p->pwi_amp[0];
+						p->pwphase = p->pwi_phase[0];
+					}
+					p->npw++;
+					p->pw = 1;
+				}
 			}
 			if (err) {
 				printf(errfmt2, "planewave");
@@ -750,6 +864,14 @@ int input_data(FILE *fp, peec_t *p)
 		else if (!strcmp(strkey, "grading")) {
 			p->grading = atoi(token[2]);
 		}
+		else if (!strcmp(strkey, "basis")) {
+			// basis = 0 (区間ごとに一定の電流、既定) | 1 (区分線形の電流、細線のみ)
+			p->basis = atoi(token[2]);
+			if ((p->basis != 0) && (p->basis != 1)) {
+				printf(errfmt2, "basis");
+				return 1;
+			}
+		}
 		else if (!strcmp(strkey, "compression")) {
 			// compression = 1 [tol] : 部分インダクタンスを H 行列で圧縮
 			p->compress = atoi(token[2]);
@@ -760,8 +882,31 @@ int input_data(FILE *fp, peec_t *p)
 			}
 		}
 		else if (!strcmp(strkey, "groundplane")) {
+			// groundplane = z0            (z = z0 の面 : 従来の書き方)
+			// groundplane = x|y|z c       (軸に垂直な面。互いに直交する 3 枚まで)
+			int ax = 2;
+			double c;
+			if (!strcmp(token[2], "x") || !strcmp(token[2], "y") || !strcmp(token[2], "z")) {
+				ax = token[2][0] - 'x';
+				if (ntoken < 4) err = 1;
+				c = (ntoken >= 4) ? atof(token[3]) : 0;
+			}
+			else {
+				c = atof(token[2]);
+			}
+			// 平行な 2 面 (同じ軸) は鏡像が無限級数になるので扱わない
+			for (int k = 0; k < p->ngp; k++) {
+				if (p->gpax[k] == ax) err = 1;
+			}
+			if (p->ngp >= 3) err = 1;
+			if (err) {
+				printf(errfmt2, "groundplane");
+				return 1;
+			}
+			p->gpax[p->ngp] = ax;
+			p->gpc[p->ngp] = c;
+			p->ngp++;
 			p->gp = 1;
-			p->gpz = atof(token[2]);
 		}
 		else if (!strcmp(strkey, "gmin")) {
 			p->gmin = atof(token[2]);
@@ -815,8 +960,19 @@ int input_data(FILE *fp, peec_t *p)
 			return 1;
 		}
 	}
-	if ((p->nres + p->ncap + p->nind + p->nwire + p->nplate + p->npanel) <= 0) {
-		printf("%s\n", "*** no element data (resistor/capacitor/inductor/wire/bar/plate/polygon/disk)");
+	// excitation : 範囲外・重複のポートは拒否 (重ね合わせの重みが曖昧になる)
+	for (int k = 0; k < p->nexc; k++) {
+		int bad = (p->exc[k].port >= p->nport);
+		for (int l = 0; !bad && (l < k); l++) {
+			if (p->exc[l].port == p->exc[k].port) bad = 1;
+		}
+		if (bad) {
+			printf("*** excitation : invalid or duplicated port number %d\n", p->exc[k].port + 1);
+			return 1;
+		}
+	}
+	if ((p->nres + p->ncap + p->nind + p->ntl + p->nwire + p->nplate + p->npanel) <= 0) {
+		printf("%s\n", "*** no element data (resistor/capacitor/inductor/tline/wire/bar/plate/polygon/disk)");
 		return 1;
 	}
 	// 誘電体は電位係数 (束縛電荷) が無いと意味を持たない
@@ -832,6 +988,24 @@ int input_data(FILE *fp, peec_t *p)
 	if (p->compress && ((p->nwire + p->nplate + p->npanel) <= 0)) {
 		printf("%s\n", "*** compression = 1 requires conductor geometry (wire/bar/plate/quad/disk)");
 		return 1;
+	}
+	// basis = 1 は細線 (分割しない wire / bar) の電荷で駆動する傾斜関数なので、
+	// 容量性 PEEC が必須。面導体・体積セル・誘電体・圧縮・近傍界は扱わない
+	if (p->basis) {
+		const char *why = NULL;
+		if (!p->capacitance) why = "capacitance = 1";
+		else if (p->nwire <= 0) why = "wire or bar conductors";
+		else if ((p->nplate + p->npanel) > 0) why = "thin wires only (no plate/quad/disk)";
+		else if (p->ndiel > 0) why = "no dielectric";
+		else if (p->compress) why = "compression = 0";
+		else if (p->nnf > 0) why = "no nearfield";
+		for (int i = 0; (why == NULL) && (i < p->nwire); i++) {
+			if ((p->wire[i].ndivw > 1) || (p->wire[i].ndivt > 1)) why = "no cross-section subdivision";
+		}
+		if (why != NULL) {
+			printf("*** basis = 1 requires %s\n", why);
+			return 1;
+		}
 	}
 
 	return 0;
@@ -861,6 +1035,8 @@ void peec_free(peec_t *p)
 	free(p->ind);
 	free(p->mut);
 	free(p->src);
+	free(p->tl);
+	free(p->exc);
 	free(p->port);
 	free(p->wire);
 	free(p->helix);
@@ -885,6 +1061,8 @@ void peec_free(peec_t *p)
 	free(p->csidx);
 	free(p->cpt);
 	free(p->cmat);
+	free(p->bk);
+	free(p->bx);
 
 	// MNA と結果 (mna.c / solve.c)
 	free(p->nodemap);

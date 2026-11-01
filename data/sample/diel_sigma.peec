@@ -1,0 +1,22 @@
+# 検証 (ba) : 導電性の誘電体 — 一定の導電率 sigma (損失性基板)
+#   diel_debye.peec と同じ平行平板 (40 x 40 mm、gap d = 0.4 mm) を、比誘電率 4・
+#   導電率 sigma = 1e-3 S/m の媒質で満たす :
+#     epsr*(f) = 4 - j sigma/(ω eps0)
+#   空気ケースとのアドミタンス差は
+#     dY(f) = sigma A/d + j ω eps0 (4 - 1) A/d
+#   で、コンダクタンスは周波数に依らず G = sigma A/d = 4 mS (一定の tanδ では
+#   G ∝ f なので別物 : tand の判定とは独立な経路)。B は 1 kHz で 0.668 µS、
+#   10 MHz で 6.676 mS。5 点 x (G, B) を解析式と比べ、判定は最大相対誤差 2e-3。
+#   検証スクリプトは epsr = 1 の版 (分極なし・伝導だけ) も作る : 導電性が
+#   あれば epsr = 1 でもセルを作ること (G = 4 mS) の番人。
+OpenPEEC 1 0
+title = parallel plates with a conductive dielectric (epsr=4 sigma=1e-3 S/m)
+capacitance = 1
+plate = 0 0 0      0.04 0 0  0 0.04 0  1e-5 5.8e7 8 8
+plate = 0 0 0.0004 0.04 0 0  0 0.04 0  1e-5 5.8e7 8 8
+dielectric = 0 0 0  0.04 0 0  0 0.04 0  0.0004 4 8 8 2 0 4 sigma 1e-3
+node = 1 0.02 0.02 0
+node = 2 0.02 0.02 0.0004
+port = 2 1 50
+frequency = 1e3 1e7 4 log
+end

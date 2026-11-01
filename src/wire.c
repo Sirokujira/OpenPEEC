@@ -267,7 +267,55 @@ static void panel_seg(peec_t *p, const panel_t *pa, int n1, int n2,
 	s->aL = 0.2235 * (s->wid + pa->thick);
 	s->aP = 0.25 * (s->wid + pa->thick);
 	s->res = (pa->sigma > 0) ? s->len / (pa->sigma * s->area) : 0;
-	p->nseg++;
+
+	// 厚み方向の分割 (ndivt >= 2) : セルを法線方向に nt 層重ね、どの層も同じ
+	// 両端ノードを共有する (plate の層と同じ VFI 近似)。各層は厚さ t/nt の
+	// 体積セル (vol = 1 : 表皮効果の合成式は使わず、厚み方向の再配分は Lp が
+	// 解く)。結合は多角形の幾何二重積分 (polygon.c は面外の点も閉形式で扱う)。
+	const int nt = (pa->ndivt > 1) ? pa->ndivt : 1;
+	if (nt == 1) {
+		p->nseg++;
+		return;
+	}
+	double nv[3];
+	if (pa->kind == PANEL_QUAD) {
+		double e1[3], e2[3];
+		for (int c = 0; c < 3; c++) {
+			e1[c] = pa->v[3 + c] - pa->v[c];
+			e2[c] = pa->v[9 + c] - pa->v[c];
+		}
+		nv[0] = (e1[1] * e2[2]) - (e1[2] * e2[1]);
+		nv[1] = (e1[2] * e2[0]) - (e1[0] * e2[2]);
+		nv[2] = (e1[0] * e2[1]) - (e1[1] * e2[0]);
+	}
+	else {
+		for (int c = 0; c < 3; c++) nv[c] = pa->nrm[c];
+	}
+	const double nl = norm3(nv);
+	for (int c = 0; c < 3; c++) nv[c] /= nl;
+	const seg_t base = *s;
+	const double tl = pa->thick / nt;
+	for (int it = 0; it < nt; it++) {
+		seg_t *v = &p->seg[p->nseg];
+		*v = base;
+		const double off = (-0.5 * pa->thick) + ((it + 0.5) * tl);
+		for (int c = 0; c < 3; c++) {
+			v->x1[c] += off * nv[c];
+			v->x2[c] += off * nv[c];
+			v->papex[c] += off * nv[c];
+			for (int k = 0; k < v->npv; k++) {
+				v->pv[(3 * k) + c] += off * nv[c];
+			}
+		}
+		v->vol = 1;
+		v->thick = tl;
+		v->area = v->wid * tl;
+		v->perim = 2 * (v->wid + tl);
+		v->aL = 0.2235 * (v->wid + tl);
+		v->aP = 0.25 * (v->wid + tl);
+		v->res = (pa->sigma > 0) ? v->len / (pa->sigma * v->area) : 0;
+		p->nseg++;
+	}
 }
 
 // 電荷セル (格子点 (i,j) の双対多角形) を追加する。
@@ -353,9 +401,14 @@ int wire_build(peec_t *p, FILE *fp_log)
 	int nseg = 0;
 	int nchg = 0;
 	for (int i = 0; i < p->nwire; i++) {
-		npoint += p->wire[i].ndiv + 1;
-		nseg += p->wire[i].ndiv;
-		nchg += 2 * p->wire[i].ndiv;
+		const wire_t *w = &p->wire[i];
+		// 丸線の断面分割は n x n 格子の部分集合なので n^2 を上限にする
+		const int nsub = (w->shape == SHAPE_BAR)
+			? (((w->ndivw > 1) ? w->ndivw : 1) * ((w->ndivt > 1) ? w->ndivt : 1))
+			: ((w->ndivw > 1) ? (w->ndivw * w->ndivw) : 1);
+		npoint += w->ndiv + 1;
+		nseg += w->ndiv * nsub;
+		nchg += 2 * w->ndiv;
 	}
 	for (int i = 0; i < p->nplate; i++) {
 		const int na = p->plate[i].ndiva;
@@ -368,14 +421,15 @@ int wire_build(peec_t *p, FILE *fp_log)
 	for (int i = 0; i < p->npanel; i++) {
 		const int na = p->panel[i].ndiva;
 		const int nb = p->panel[i].ndivb;
+		const int nt = (p->panel[i].ndivt > 1) ? p->panel[i].ndivt : 1;
 		if (p->panel[i].kind == PANEL_QUAD) {
 			npoint += (na + 1) * (nb + 1);
-			nseg += (na * (nb + 1)) + ((na + 1) * nb);
+			nseg += nt * ((na * (nb + 1)) + ((na + 1) * nb));
 			nchg += (na + 1) * (nb + 1);
 		}
 		else {
 			npoint += 1 + (na * nb);          // 中心 + nring x nsec
-			nseg += 2 * na * nb;              // 半径方向 + 周方向
+			nseg += nt * 2 * na * nb;         // 半径方向 + 周方向
 			nchg += 1 + (na * nb);
 		}
 	}
@@ -439,7 +493,8 @@ int wire_build(peec_t *p, FILE *fp_log)
 			}
 			const int id = node_at(p, x, &autoid);
 			if (k > 0) {
-				seg_t *s = &p->seg[p->nseg];
+				seg_t full;
+				seg_t *s = &full;
 				memset(s, 0, sizeof(seg_t));
 				s->n1 = idprev;
 				s->n2 = id;
@@ -479,9 +534,96 @@ int wire_build(peec_t *p, FILE *fp_log)
 					mid[c] = 0.5 * (s->x1[c] + s->x2[c]);
 				}
 				add_chg(p, s->n1, s->x1, mid, 0, NULL, s);
+				p->chg[p->nchg - 1].nend = 0;
 				add_chg(p, s->n2, mid, s->x2, 0, NULL, s);
+				p->chg[p->nchg - 1].nend = 1;
 
-				p->nseg++;
+				// bar の断面分割 : 区間を nw x nt の体積セル (矩形バー) の並列に置き換える。
+				// どれも区間の両端ノードを共有する (面導体の層と同じ VFI 近似) ので、
+				// 断面内の電流の再配分 (表皮効果・近接効果) は Lp (Hoer-Love) が解く。
+				// 電荷セルは分割前の区間のまま (表面電荷の断面分布は扱わない)。
+				const int nw = ((w->shape == SHAPE_BAR) && (w->ndivw > 1)) ? w->ndivw : 1;
+				const int nt = ((w->shape == SHAPE_BAR) && (w->ndivt > 1)) ? w->ndivt : 1;
+				// 丸線の断面分割 (ndivw = n >= 2) : n x n の正方格子のうち中心が円内の
+				// セル (矩形バー) を残し、残ったセルの総面積が pi a^2 になるよう格子
+				// 間隔を伸縮する (等面積の階段近似)。どのセルも区間の両端ノードを共有
+				// する (bar と同じ VFI) ので DC 抵抗は len/(sigma pi a^2) に厳密に一致し、
+				// 断面内の電流の再配分 (表皮効果・近接効果) は Lp (Hoer-Love) が解く。
+				const int nr = ((w->shape == SHAPE_ROUND) && (w->ndivw > 1)) ? w->ndivw : 1;
+				if (((nw * nt) == 1) && (nr == 1)) {
+					p->seg[p->nseg++] = full;
+				}
+				else {
+					// 局所枠 : 軸 t、幅 wv = z x t (水平)、軸が z と平行なら x、厚み nv = t x wv
+					double t[3], wv[3], nv[3];
+					for (int c = 0; c < 3; c++) {
+						t[c] = (s->x2[c] - s->x1[c]) / s->len;
+					}
+					wv[0] = -t[1];
+					wv[1] = t[0];
+					wv[2] = 0;
+					double lw = sqrt((wv[0] * wv[0]) + (wv[1] * wv[1]));
+					if (lw < 1e-9) {
+						wv[0] = 1;
+						wv[1] = 0;
+						lw = 1;
+					}
+					wv[0] /= lw;
+					wv[1] /= lw;
+					nv[0] = (t[1] * wv[2]) - (t[2] * wv[1]);
+					nv[1] = (t[2] * wv[0]) - (t[0] * wv[2]);
+					nv[2] = (t[0] * wv[1]) - (t[1] * wv[0]);
+					// 格子 (丸線は n x n、角線は nw x nt) と 1 セルの寸法
+					const int gw = (nr > 1) ? nr : nw;
+					const int gt = (nr > 1) ? nr : nt;
+					int nin = 0;
+					if (nr > 1) {
+						// 中心 (u, v) (公称間隔 2a/n 単位、半整数または整数) が円内か。
+						// u^2 + v^2 と n^2/4 は厳密に表せて等号は起こらない
+						for (int iw = 0; iw < nr; iw++) {
+							for (int it = 0; it < nr; it++) {
+								const double u = (iw + 0.5) - (0.5 * nr);
+								const double vv = (it + 0.5) - (0.5 * nr);
+								if (((u * u) + (vv * vv)) <= (0.25 * nr * nr)) nin++;
+							}
+						}
+					}
+					const double hw = (nr > 1) ? (w->radius * sqrt(PI / nin)) : (w->width / nw);
+					const double ht = (nr > 1) ? hw : (w->thick / nt);
+					for (int iw = 0; iw < gw; iw++) {
+						for (int it = 0; it < gt; it++) {
+							double ow, ot;
+							if (nr > 1) {
+								const double u = (iw + 0.5) - (0.5 * nr);
+								const double vv = (it + 0.5) - (0.5 * nr);
+								if (((u * u) + (vv * vv)) > (0.25 * nr * nr)) continue;
+								ow = u * hw;
+								ot = vv * ht;
+							}
+							else {
+								ow = (-0.5 * w->width) + ((iw + 0.5) * hw);
+								ot = (-0.5 * w->thick) + ((it + 0.5) * ht);
+							}
+							seg_t *v = &p->seg[p->nseg];
+							*v = full;
+							for (int c = 0; c < 3; c++) {
+								v->x1[c] = s->x1[c] + (ow * wv[c]) + (ot * nv[c]);
+								v->x2[c] = s->x2[c] + (ow * wv[c]) + (ot * nv[c]);
+								v->wv[c] = wv[c];
+							}
+							v->vol = 1;
+							v->wid = hw;
+							v->width = hw;
+							v->thick = ht;
+							v->area = hw * ht;
+							v->perim = 2 * (hw + ht);
+							v->aL = 0.2235 * (hw + ht);
+							v->aP = 0.25 * (hw + ht);
+							v->res = (w->sigma > 0) ? v->len / (w->sigma * v->area) : 0;
+							p->nseg++;
+						}
+					}
+				}
 			}
 			idprev = id;
 		}
@@ -868,40 +1010,51 @@ int wire_build(peec_t *p, FILE *fp_log)
 
 	p->maxid = autoid;
 
-	// 地板 (groundplane) : すべてのセルが地板より上 (z >= gpz) にあること。
-	// 鏡像法は上半空間でのみ有効なので、下にはみ出す導体はエラーにする。
+	// 地板 (groundplane) : すべてのセルが各地板の + 側 (x_a >= c) にあること。
+	// 鏡像法は導体側の空間 (面 1 枚で半空間、2 枚で 1/4、3 枚で 1/8) でのみ
+	// 有効なので、はみ出す導体はエラーにする。
 	if (p->gp) {
-		for (int i = 0; i < p->nseg + p->nchg; i++) {
-			const seg_t *s = (i < p->nseg) ? &p->seg[i] : &p->chg[i - p->nseg];
-			double mz;
-			if (s->npv > 0) {
-				mz = s->pv[2];
-				for (int k = 1; k < s->npv; k++) {
-					if (s->pv[(3 * k) + 2] < mz) mz = s->pv[(3 * k) + 2];
-				}
-			}
-			else {
-				mz = (s->x1[2] < s->x2[2]) ? s->x1[2] : s->x2[2];
-				if (s->wid > 0) {
-					// リボンの横方向 (体積セルは厚み方向も) の広がり
-					double lo = fabs(0.5 * s->wid * s->wv[2]);
-					if (s->vol) {
-						double t[3];
-						for (int c = 0; c < 3; c++) {
-							t[c] = (s->x2[c] - s->x1[c]) / s->len;
-						}
-						lo += fabs(0.5 * s->thick * ((t[0] * s->wv[1]) - (t[1] * s->wv[0])));
+		for (int k = 0; k < p->ngp; k++) {
+			const int a = p->gpax[k];
+			const double gc = p->gpc[k];
+			for (int i = 0; i < p->nseg + p->nchg; i++) {
+				const seg_t *s = (i < p->nseg) ? &p->seg[i] : &p->chg[i - p->nseg];
+				double mz;
+				if (s->npv > 0) {
+					mz = s->pv[a];
+					for (int q = 1; q < s->npv; q++) {
+						if (s->pv[(3 * q) + a] < mz) mz = s->pv[(3 * q) + a];
 					}
-					mz -= lo;
+				}
+				else {
+					mz = (s->x1[a] < s->x2[a]) ? s->x1[a] : s->x2[a];
+					if (s->wid > 0) {
+						// リボンの横方向 (体積セルは厚み方向 nv = t x wv も) の広がり
+						double lo = fabs(0.5 * s->wid * s->wv[a]);
+						if (s->vol) {
+							double t[3], nv[3];
+							for (int c = 0; c < 3; c++) {
+								t[c] = (s->x2[c] - s->x1[c]) / s->len;
+							}
+							nv[0] = (t[1] * s->wv[2]) - (t[2] * s->wv[1]);
+							nv[1] = (t[2] * s->wv[0]) - (t[0] * s->wv[2]);
+							nv[2] = (t[0] * s->wv[1]) - (t[1] * s->wv[0]);
+							lo += fabs(0.5 * s->thick * nv[a]);
+						}
+						mz -= lo;
+					}
+				}
+				if (mz < gc - p->nodetol) {
+					printf("*** conductor below ground plane (%c = %.3e < %.3e)\n", 'x' + a, mz, gc);
+					fprintf(fp_log, "*** conductor below ground plane (%c = %.3e < %.3e)\n", 'x' + a, mz, gc);
+					return 1;
 				}
 			}
-			if (mz < p->gpz - p->nodetol) {
-				printf("*** conductor below ground plane (z = %.3e < %.3e)\n", mz, p->gpz);
-				fprintf(fp_log, "*** conductor below ground plane (z = %.3e < %.3e)\n", mz, p->gpz);
-				return 1;
-			}
+			fprintf(fp_log, "ground plane : %c = %g (image method)\n", 'x' + a, gc);
 		}
-		fprintf(fp_log, "ground plane : z = %g (image method)\n", p->gpz);
+		if (p->ngp > 1) {
+			fprintf(fp_log, "ground planes : %d orthogonal planes, %d images\n", p->ngp, (1 << p->ngp) - 1);
+		}
 	}
 
 	// 近接ノード警告 (マージされなかったが nodetol の 10 倍未満 : 意図しない分離の可能性)
@@ -927,9 +1080,16 @@ int wire_build(peec_t *p, FILE *fp_log)
 		fprintf(fp_log, "dielectric #%d : epsr = %g, eps_inf = %g, %d poles\n",
 			idl + 1, dl->epsr, dl->epsinf, dl->npole);
 		for (int k = 0; k < dl->npole; k++) {
-			if (dl->plor[k]) {
+			if (dl->pkind[k] == POLE_LORENTZ) {
 				fprintf(fp_log, "  pole %d : Lorentz f0 = %g Hz, de = %g, g = %g Hz (Q = %g)\n",
 					k + 1, dl->pf[k], dl->pde[k], dl->pg[k], dl->pf[k] / dl->pg[k]);
+			}
+			else if (dl->pkind[k] == POLE_DRUDE) {
+				fprintf(fp_log, "  pole %d : Drude   fp = %g Hz, g = %g Hz (sigma_dc = %g S/m)\n",
+					k + 1, dl->pf[k], dl->pg[k], 2 * PI * EPS0 * dl->pf[k] * dl->pf[k] / dl->pg[k]);
+			}
+			else if (dl->pkind[k] == POLE_SIGMA) {
+				fprintf(fp_log, "  pole %d : sigma   = %g S/m\n", k + 1, dl->pde[k]);
 			}
 			else {
 				fprintf(fp_log, "  pole %d : Debye   fr = %g Hz, de = %g\n",

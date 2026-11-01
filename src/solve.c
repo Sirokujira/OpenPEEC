@@ -195,6 +195,8 @@ int solve(peec_t *p, FILE *fp_log)
 {
 	const int n = p->nunknown;
 	const int comp = p->compress;
+	// 電荷が陽な未知数か (圧縮経路と basis = 1)
+	const int qexp = (p->offQ < p->nunknown);
 	int ret = 1;
 
 	// 密行列は compression = 1 では確保しない (それが目的)
@@ -225,7 +227,8 @@ int solve(peec_t *p, FILE *fp_log)
 		if ((p->dist || (p->nnf > 0) || (p->ffnth > 0)) && (p->nseg > 0)) {
 			p->segipw = (d_complex_t *)malloc((size_t)p->nfreq * p->nseg * sizeof(d_complex_t));
 		}
-		if ((p->nnf > 0) && p->capacitance && (p->ncell > 0)) {
+		// basis = 1 の遠方界 (散乱界) は傾斜関数の振幅 j omega q も使う
+		if (((p->nnf > 0) || (p->basis && (p->ffnth > 0))) && p->capacitance && (p->ncell > 0)) {
 			p->cellqpw = (d_complex_t *)malloc((size_t)p->nfreq * p->ncell * sizeof(d_complex_t));
 		}
 	}
@@ -237,7 +240,7 @@ int solve(peec_t *p, FILE *fp_log)
 		p->segi = (d_complex_t *)malloc(
 			(size_t)p->nfreq * p->nport * p->nseg * sizeof(d_complex_t));
 	}
-	if ((p->dist || (p->nnf > 0)) && p->capacitance && (p->ncell > 0)) {
+	if ((p->dist || (p->nnf > 0) || (p->basis && (p->ffnth > 0))) && p->capacitance && (p->ncell > 0)) {
 		p->cellq = (d_complex_t *)malloc(
 			(size_t)p->nfreq * p->nport * p->ncell * sizeof(d_complex_t));
 	}
@@ -274,6 +277,7 @@ int solve(peec_t *p, FILE *fp_log)
 			if (!comp) {
 				lp_fill(p, f, fp_log);
 				if (pot_fill(p, f, fp_log)) goto done;
+				if (basis_fill(p, f, fp_log)) goto done;
 			}
 		}
 
@@ -372,7 +376,7 @@ int solve(peec_t *p, FILE *fp_log)
 			}
 			// セル電荷 (cell_charges : 圧縮経路は未知数、密経路は q = C v)
 			if (p->cellq != NULL) {
-				cell_charges(p, comp, b, &p->cellq[QIDX(p, ifreq, j, 0)]);
+				cell_charges(p, qexp, b, &p->cellq[QIDX(p, ifreq, j, 0)]);
 			}
 		}
 
@@ -403,7 +407,7 @@ int solve(peec_t *p, FILE *fp_log)
 			}
 			// 誘起電荷 (近傍界の -grad phi 項に使う)
 			if (p->cellqpw != NULL) {
-				cell_charges(p, comp, b, &p->cellqpw[(size_t)ifreq * p->ncell]);
+				cell_charges(p, qexp, b, &p->cellqpw[(size_t)ifreq * p->ncell]);
 			}
 		}
 

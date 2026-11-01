@@ -4,7 +4,8 @@ nearfield.c
 近傍界の後処理 (nearfield = x1 y1 z1 x2 y2 z2 n1 n2 n3)
 
 port #1 を 1 A で励振したときの区間電流 I_m (p->segi) とセル電荷 q_i
-(p->cellq) から、観測点の電界 E と磁界 H を遅延ポテンシャルで求める。
+(p->cellq)、excitation の行があればポート解を重み w_j で重ね合わせた電流・
+電荷 (exc_mix) から、観測点の電界 E と磁界 H を遅延ポテンシャルで求める。
 遠方界 (farfield.c) が r -> inf の漸近形だけを見るのに対し、こちらは
 1/R, 1/R^2, 1/R^3 の全項を残すので、EMC の近傍界スキャンやプローブ位置での
 結合量の見積りに使える。
@@ -31,9 +32,10 @@ k = 0 (retardation = 0) では静的な Coulomb / Biot-Savart にそのまま落
 capacitance = 0 では電荷が無いので E は -j omega A の項だけになる。
 
 地板 (groundplane) があるときは鏡像を加える。規約は partial.c / farfield.c と
-同一 : 幾何鏡像セル (z -> 2 gpz - z、t^ の z 成分反転) に電流 -I / 電荷 -q。
-これで地板上の接線電界が恒等的に 0 になる。地板より下は導体内部なので
-観測点を置いても物理的な意味は無い (ログに注意を出す)。
+同一 : 幾何鏡像セル (面の軸 a について x_a -> 2 c - x_a、t^ の a 成分反転) に
+電流 -I / 電荷 -q。直交する複数の面では面の部分集合ごとの鏡像に符号
+(-1)^(反射回数) を掛ける (gp_sign)。これで各地板上の接線電界が恒等的に 0 に
+なる。面の裏は導体内部なので観測点を置いても物理的な意味は無い (ログに注意を出す)。
 
 平面波入射 (planewave) があるときは、同じ観測点で平面波による誘起電流・電荷
 (p->segipw / p->cellqpw) の散乱界に入射界 (地板があれば反射波も) を足した
@@ -115,10 +117,10 @@ static int nfq_build(const seg_t *cell, int n, nfq_t *q)
   gs   = sum_q w_q exp(-jkR)/R
   gv[] = sum_q w_q (1 + jkR) exp(-jkR) (r - r')/R^3     (= -grad gs)
 
-mirror != 0 なら求積点を z -> zmir - z の幾何鏡像に置いて評価する。
+img != 0 なら求積点を鏡像 img (面の部分集合、gp_pt) の幾何鏡像に置いて評価する。
 */
 static void nf_kernel(const nfq_t *q, int k, const double *pt, double kw,
-	int mirror, double zmir, d_complex_t *gs, d_complex_t gv[3])
+	const peec_t *p, int img, d_complex_t *gs, d_complex_t gv[3])
 {
 	*gs = d_complex(0, 0);
 	for (int c = 0; c < 3; c++) {
@@ -126,11 +128,13 @@ static void nf_kernel(const nfq_t *q, int k, const double *pt, double kw,
 	}
 
 	for (int i = q->off[k]; i < q->off[k + 1]; i++) {
-		const double sz = q->px[(3 * i) + 2];
+		// 鏡像 img (0 = 実セル) の求積点
+		double sx[3] = {q->px[3 * i], q->px[(3 * i) + 1], q->px[(3 * i) + 2]};
+		if (img > 0) gp_pt(p, img, sx);
 		double d[3];
-		d[0] = pt[0] - q->px[3 * i];
-		d[1] = pt[1] - q->px[(3 * i) + 1];
-		d[2] = pt[2] - (mirror ? (zmir - sz) : sz);
+		d[0] = pt[0] - sx[0];
+		d[1] = pt[1] - sx[1];
+		d[2] = pt[2] - sx[2];
 		const double r2 = (d[0] * d[0]) + (d[1] * d[1]) + (d[2] * d[2]);
 		if (r2 <= 0) continue;                // 求積点に重なった観測点は落とす
 		const double r = sqrt(r2);
@@ -154,16 +158,16 @@ static void nf_point(const peec_t *p, const nfq_t *qi, const nfq_t *qc,
 	const double ca = 2 * PI * f * MU0 / (4 * PI);
 	const double cq = 1 / (4 * PI * EPS0);
 	const double ch = 1 / (4 * PI);
-	const double zmir = 2 * p->gpz;
-	const int npass = p->gp ? 2 : 1;
+	const int nimg = gp_nimg(p);
 
 	for (int c = 0; c < 3; c++) {
 		ev[c] = d_complex(0, 0);
 		hv[c] = d_complex(0, 0);
 	}
 
-	for (int pass = 0; pass < npass; pass++) {
-		const int mir = (pass == 1);
+	for (int pass = 0; pass <= nimg; pass++) {
+		const int mir = pass;
+		const double sgn = (pass > 0) ? gp_sign(pass) : 1.0;
 
 		// 電流セル : E の -j omega A 項と H
 		for (int k = 0; k < p->nseg; k++) {
@@ -174,14 +178,14 @@ static void nf_point(const peec_t *p, const nfq_t *qi, const nfq_t *qc,
 				tv[c] = (s->x2[c] - s->x1[c]) / s->len;
 			}
 			if (mir) {
-				// 鏡像 : 幾何方向の z 反転 + 電流 -I (水平反転・垂直保存)
-				tv[2] = -tv[2];
-				cur = d_rmul(-1, cur);
+				// 鏡像 : 幾何方向の反射 + 電流 (-1)^|m| 倍 (z 面 1 枚なら水平反転・垂直保存)
+				gp_vec(p, mir, tv);
+				if (sgn < 0) cur = d_rmul(-1, cur);
 			}
 			// 幅の規格化 (不変条件 4) : 面セルは (1/wid) x 面積分 = 線積分
 			const d_complex_t ic = d_rmul((s->wid > 0) ? (1 / s->wid) : 1, cur);
 			d_complex_t gs, gv[3];
-			nf_kernel(qi, k, pt, kw, mir, zmir, &gs, gv);
+			nf_kernel(qi, k, pt, kw, p, mir, &gs, gv);
 
 			const d_complex_t w = d_mul(ic, gs);
 			for (int c = 0; c < 3; c++) {
@@ -203,14 +207,14 @@ static void nf_point(const peec_t *p, const nfq_t *qi, const nfq_t *qc,
 		for (int i = 0; i < p->ncell; i++) {
 			if (p->carea[i] <= 0) continue;
 			const d_complex_t qcell = chg[i];
-			const double scl = (mir ? -cq : cq) / p->carea[i];
+			const double scl = ((sgn < 0) ? -cq : cq) / p->carea[i];
 			for (int e = p->csoff[i]; e < p->csoff[i + 1]; e++) {
 				const int h = p->csidx[e];
 				const seg_t *s = &p->chg[h];
 				// サブセル電荷 = q_cell x len_h / carea (セル内一様密度)
 				const double wn = (s->wid > 0) ? (1 / s->wid) : 1;
 				d_complex_t gs, gv[3];
-				nf_kernel(qc, h, pt, kw, mir, zmir, &gs, gv);
+				nf_kernel(qc, h, pt, kw, p, mir, &gs, gv);
 				const d_complex_t qs = d_rmul(scl * wn, qcell);
 				for (int c = 0; c < 3; c++) {
 					ev[c] = d_add(ev[c], d_mul(qs, gv[c]));
@@ -290,9 +294,12 @@ int output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log)
 	double *pts = (double *)malloc(npt * 3 * sizeof(double));
 	d_complex_t *ev = (d_complex_t *)malloc(npt * 3 * sizeof(d_complex_t));
 	d_complex_t *hv = (d_complex_t *)malloc(npt * 3 * sizeof(d_complex_t));
-	if ((pts == NULL) || (ev == NULL) || (hv == NULL)) {
+	// excitation の重ね合わせ用 (電流 nseg、電荷 ncell)
+	d_complex_t *cbuf = (d_complex_t *)malloc((size_t)p->nseg * sizeof(d_complex_t));
+	d_complex_t *qbuf = (d_complex_t *)malloc((size_t)((p->ncell > 0) ? p->ncell : 1) * sizeof(d_complex_t));
+	if ((pts == NULL) || (ev == NULL) || (hv == NULL) || (cbuf == NULL) || (qbuf == NULL)) {
 		printf("%s\n", "*** memory allocation error (nearfield)");
-		free(pts); free(ev); free(hv);
+		free(pts); free(ev); free(hv); free(cbuf); free(qbuf);
 		return 1;
 	}
 
@@ -309,7 +316,9 @@ int output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log)
 					? (g->p1[c] + ((g->p2[c] - g->p1[c]) * idx[c] / g->n[c]))
 					: g->p1[c];
 			}
-			if (p->gp && (pts[(3 * ip) + 2] < p->gpz)) below = 1;
+			for (int k = 0; k < p->ngp; k++) {
+				if (pts[(3 * ip) + p->gpax[k]] < p->gpc[k]) below = 1;
+			}
 			ip++;
 		}
 		}
@@ -324,14 +333,14 @@ int output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log)
 	    (hascharge && nfq_build(p->chg, p->nchg, &qc))) {
 		printf("%s\n", "*** memory allocation error (nearfield)");
 		nfq_free(&qi); nfq_free(&qc);
-		free(pts); free(ev); free(hv);
+		free(pts); free(ev); free(hv); free(cbuf); free(qbuf);
 		return 1;
 	}
 	if (!hascharge) {
 		fprintf(fp_log, "*** warning : nearfield without capacitance = 1 (no charge; E keeps only the -j omega A term)\n");
 	}
 	if (below) {
-		fprintf(fp_log, "*** warning : nearfield point below the ground plane (z < %.5e) is inside the conductor\n", p->gpz);
+		fprintf(fp_log, "*** warning : nearfield point behind a ground plane is inside the conductor\n");
 	}
 
 	// 平面波 (planewave) の全界 : 誘起電流があるときだけ
@@ -344,7 +353,7 @@ int output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log)
 		if (fp != NULL) fclose(fp);
 		if (fpw != NULL) fclose(fpw);
 		nfq_free(&qi); nfq_free(&qc);
-		free(pts); free(ev); free(hv);
+		free(pts); free(ev); free(hv); free(cbuf); free(qbuf);
 		return 1;
 	}
 	nf_header(fp);
@@ -355,8 +364,9 @@ int output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log)
 		const double f = freq_at(p, ifreq);
 		// retardation = 0 の解は静的な部分要素から出ているので場も静的に評価する
 		const double kw = p->retardation ? (2 * PI * f / C0) : 0;
-		const d_complex_t *cur = &p->segi[DIDX(p, ifreq, 0, 0)];
-		const d_complex_t *chg = hascharge ? &p->cellq[QIDX(p, ifreq, 0, 0)] : NULL;
+		const d_complex_t *cur = exc_mix(p, &p->segi[DIDX(p, ifreq, 0, 0)], p->nseg, cbuf);
+		const d_complex_t *chg = hascharge
+			? exc_mix(p, &p->cellq[QIDX(p, ifreq, 0, 0)], p->ncell, qbuf) : NULL;
 		int i;
 #ifdef _OPENMP
 #pragma omp parallel for
@@ -370,7 +380,7 @@ int output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log)
 		if (fpw != NULL) {
 			// 散乱界 (誘起電流・電荷) + 入射界 (実際の波数 k = omega/c)
 			const double kinc = 2 * PI * f / C0;
-			pw_wave_t w[2];
+			pw_wave_t w[PW_WMAX];
 			const int nw = pw_waves(p, kinc, w);
 			const d_complex_t *curpw = &p->segipw[(size_t)ifreq * p->nseg];
 			const d_complex_t *chgpw = (hascharge && (p->cellqpw != NULL))
@@ -396,6 +406,8 @@ int output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log)
 	free(pts);
 	free(ev);
 	free(hv);
+	free(cbuf);
+	free(qbuf);
 	fclose(fp);
 	if (fpw != NULL) fclose(fpw);
 

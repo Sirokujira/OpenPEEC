@@ -30,6 +30,8 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 #define FN_NEARPW "nearpw.csv"
 #define FN_MM "mixed.csv"
 #define FN_FARPW "farpw.csv"
+#define PW_MAX 8                  // planewave の行 (同時入射の波) の上限
+#define PW_WMAX (8 * PW_MAX)      // 地板 (3 面まで) の反射波を含む波の数の上限
 
 // 数学・物理定数 (自前マクロ : <math.h> の M_PI には依存しない)
 #define PI   (4.0 * atan(1.0))
@@ -52,6 +54,24 @@ typedef struct {char name[NAMELEN]; int n1, n2; double val;} ind_t;           //
 typedef struct {char name1[NAMELEN], name2[NAMELEN]; int l1, l2; double k;} mut_t;  // M = k*sqrt(L1*L2)
 typedef struct {int n1, n2, isvsrc, ibr; double amp, phase;} src_t;           // phase [deg]
 typedef struct {int n1, n2; double z0;} port_t;
+// 励振 (excitation = ポート番号 振幅[A] [位相deg]) : 遠方界・近傍界はポート解
+// (ポート j に 1 A、他は開放) を重み w_j = 振幅 e^{j 位相} で重ね合わせた電流・電荷で
+// 評価する。port は 0 始まり。行が無ければ従来どおり port #1 に 1 A
+typedef struct {int port; double amp, phase;} exc_t;
+// 伝送線路 : 端子対 1 = (n1, n2)、端子対 2 = (n3, n4)。
+//   tline = n1 n2 n3 n4 Z0 遅延 [損失dB]
+//     無損失または無ひずみ線路 (Heaviside、R/L = G/C) : Z0 は実数、att = 10^(-dB/20) は
+//     片道の振幅減衰で周波数に依らない
+//   tline = n1 n2 n3 n4 rlgc 長さ R L G C [Rs [tanδ]]
+//     単位長さあたりの RLGC (rlgc = 1)。R(f) = R + Rs sqrt(f) (表皮効果)、
+//     G(f) = G + w C tanδ (誘電損)。Z0 = sqrt((R+jwL)/(G+jwC)) と
+//     γ = sqrt((R+jwL)(G+jwC)) は周波数ごとに複素数で決まる
+typedef struct {
+	int    n1, n2, n3, n4;
+	double z0, td, att;
+	int    rlgc;
+	double len, r, l, g, c, rs, tand;
+} tline_t;
 // 導体断面
 //   SHAPE_ROUND = 丸線 (半径 a)
 //   SHAPE_BAR   = 角線 (幅 w x 厚さ t)  — 細線 (等価半径) として扱う
@@ -70,6 +90,10 @@ typedef struct {
 	int    shape;
 	double radius, width, thick, sigma;
 	int    ndiv;
+	// bar の断面分割 (分割数w x 分割数t、0 / 1 = 分割なし)。分割すると長さ方向の
+	// 各区間を断面の体積セル (Hoer-Love) の並列に置き換える。幅方向は z x 軸
+	// (水平、軸が z と平行なら x)、厚み方向は 軸 x 幅
+	int    ndivw, ndivt;
 } wire_t;
 
 // 構造格子でメッシュ化する平面パネル (quad / disk)。
@@ -87,6 +111,8 @@ typedef struct {
 	int    ndiva, ndivb;          // quad の分割数 / disk は (nring, nsec)
 	double thick, sigma;
 	int    grading;               // 1 = 縁寄せ格子 (wire_build が p->grading を写す)
+	int    ndivt;                 // 厚み方向の分割数 (0 / 1 = 1 層。>= 2 で各セルを
+	                              // 法線方向に重ねた体積セルの並列にする : plate の層と同じ)
 } panel_t;
 
 // らせん / 円形ループ (helix = cx cy cz ax ay az sx sy sz ピッチ 巻数 半径 導電率 分割数 [n1 n2])
@@ -128,21 +154,29 @@ typedef struct {
 // 3 方向の枝 (体積セル) に過剰容量 C_e = eps0 (epsr-1) A/len を直列に置き、
 // 節点の束縛電荷が電位係数 P に参加する。導体と接する面のノードは
 // nodetol マージで導体ノードと共有される。
+#define POLE_DEBYE   0
+#define POLE_LORENTZ 1
+#define POLE_DRUDE   2
+#define POLE_SIGMA   3
 typedef struct {
 	double org[3], ea[3], eb[3];
 	double thick, epsr, tand;
 	// 多極分散 : epsr*(f) = eps_inf + sum_k chi_k(f)
 	//   Debye 極   : chi_k = de[k]/(1 + j f/pf[k])
 	//   Lorentz 極 : chi_k = de[k] pf[k]^2/(pf[k]^2 - f^2 + j f pg[k])
+	//   Drude 項   : chi_k = -pf[k]^2/(f^2 - j f pg[k])   (pf = プラズマ周波数、
+	//                pg = 衝突周波数 [Hz]。直流導電率 2 pi eps0 pf^2/pg)
+	//   導電率     : chi_k = -j pde[k]/(w eps0)           (pde = sigma [S/m])
 	// npole = 0 で分散なし。Debye 1 極は従来の単極と完全に同じ式になる。
-	// どちらの極も f -> 0 で de[k] に戻るので、直流極限は
-	// eps_inf + sum de[k] = epsr (パーサが一致を要求する)。
+	// Debye / Lorentz 極は f -> 0 で de[k] に戻るので、直流極限は
+	// eps_inf + sum de[k] = epsr (パーサが一致を要求する)。Drude 項と導電率は
+	// 直流で発散する (導電性) ので、この和に入れない。
 	double epsinf;
 	int    npole;
-	double pf[DIEL_MAXPOLE];      // Debye : 緩和周波数 / Lorentz : 共振周波数 [Hz] (> 0)
-	double pde[DIEL_MAXPOLE];     // 強度 de_k (> 0)
-	double pg[DIEL_MAXPOLE];      // Lorentz の減衰幅 g_k [Hz] (> 0)。Debye 極では 0
-	int    plor[DIEL_MAXPOLE];    // 1 = Lorentz 極、0 = Debye 極
+	double pf[DIEL_MAXPOLE];      // Debye : 緩和周波数 / Lorentz : 共振周波数 / Drude : プラズマ周波数 [Hz] (> 0)
+	double pde[DIEL_MAXPOLE];     // Debye / Lorentz : 強度 de_k (> 0)、導電率 : sigma [S/m] (> 0)
+	double pg[DIEL_MAXPOLE];      // Lorentz の減衰幅 / Drude の衝突周波数 g_k [Hz] (> 0)
+	int    pkind[DIEL_MAXPOLE];   // POLE_DEBYE / POLE_LORENTZ / POLE_DRUDE / POLE_SIGMA
 	int    ndiva, ndivb, ndivt;
 } diel_t;
 
@@ -177,6 +211,7 @@ typedef struct {
 	double gexc;                  // eps0 epsr tand area / len        [F] (損失側)
 	double gfac;                  // eps0 area / len [F] (分散モデル用の幾何係数)
 	int    didx;                  // 誘電体ブリックの索引 (p->diel)。diel = 1 のときだけ有効
+	int    nend;                  // 線導体の電荷サブセル : 節点側の端 (0 = x1、1 = x2)
 } seg_t;
 
 typedef struct {
@@ -193,6 +228,10 @@ typedef struct {
 	ind_t  *ind;
 	mut_t  *mut;
 	src_t  *src;
+	int    nexc;                  // excitation の行数 (0 = port #1 に 1 A)
+	exc_t  *exc;                  // [nexc] 励振の重み
+	int    ntl;                   // tline の本数
+	tline_t *tl;                  // [ntl] 伝送線路
 	port_t *port;
 	wire_t *wire;
 	int    *ncid;                 // node = : ノード id
@@ -217,8 +256,13 @@ typedef struct {
 	int    *csidx;                // [nchg] サブセル番号
 	double *cpt;                  // [3*ncell] セルの代表点 (クラスタツリー用)
 	d_complex_t *cmat;            // [ncell*ncell] 節点容量行列 C = P^-1
+	// basis = 1 (区分線形の電流基底、basis.c) の結合 : 区間パルスと節点セルの
+	// 傾斜関数の間の K [nseg*ncell]、傾斜関数どうしの X [ncell*ncell] (mu0/4pi 込み)
+	d_complex_t *bk;
+	d_complex_t *bx;
 	                              // (compression = 1 では作らない : 電荷が未知数)
 	int    clogged;               // 総容量をログ出力したか
+	int    blogged;               // basis = 1 の結合をログ出力したか
 
 	// 形状ノード表 (座標マージ用)
 	int    ngnode;
@@ -231,6 +275,7 @@ typedef struct {
 	int    refnode;               // 基準ノード id
 	int    *nodemap;              // [maxid+1] : id -> 行列 index / -1 = 基準 / -2 = 未使用
 	int    offL, offV, offS;      // 枝電流の先頭 index (L 素子 / 電圧源 / ワイヤ区間)
+	int    offT;                  // 伝送線路の端子電流の先頭 index (線路 i は offT+2i, offT+2i+1)
 	int    offQ;                  // セル電荷の先頭 index (compression = 1 の容量性
 	                              // PEEC のみ。それ以外は nunknown と同値 = 未使用)
 	int    nunknown;
@@ -245,8 +290,14 @@ typedef struct {
 	int    retardation;           // retardation = 1 : 遅延 (フルウェーブ PEEC)
 	int    accel;                 // acceleration = 1 : 掃引で LU を再利用する GMRES
 	int    dist;                  // distribution = 1 : 電流・電荷分布を出力
-	int    gp;                    // groundplane = z : 無限 PEC 地板 (鏡像法)
-	double gpz;                   // 地板の z 座標 (gp = 1 のとき有効)
+	int    gp;                    // groundplane : 無限 PEC 地板 (鏡像法) が 1 枚以上ある
+	// 地板の面 (互いに直交する x / y / z = 一定の面を 3 枚まで)。面 k は
+	// 軸 gpax[k] (0 = x, 1 = y, 2 = z) が gpc[k] の面で、導体は + 側に置く。
+	// 鏡像は面の部分集合 m (ビット k = 面 k で反射、1 .. 2^ngp - 1) ごとに 1 つで、
+	// 電流・電荷の符号は (-1)^(反射の回数)
+	int    ngp;
+	int    gpax[3];
+	double gpc[3];
 	int    ffnth, ffnph;          // farfield = 分割数theta 分割数phi (0 = 無効)
 	int    nnf;                   // nearfield = ... の行数 (0 = 無効)
 	nf_t   *nf;                   // [nnf] 観測格子
@@ -255,12 +306,17 @@ typedef struct {
 	int    nmm;
 	int    mmport[2 * MM_MAXPAIR];
 	int    pw;                    // planewave : 平面波入射 (外部界励振)
-	double pwth, pwph;            // 平面波の到来方向 (theta, phi) [deg]
-	int    pwpol;                 // 偏波 : 1 = theta 偏波、2 = phi 偏波
-	double pwamp, pwphase;        // 振幅 [V/m] と位相 [deg]
+	double pwth, pwph;            // 平面波の到来方向 (theta, phi) [deg] (1 波目)
+	int    pwpol;                 // 偏波 : 1 = theta 偏波、2 = phi 偏波 (1 波目)
+	double pwamp, pwphase;        // 振幅 [V/m] と位相 [deg] (1 波目 : leff / RCS の規格化)
+	// planewave の行ごとの入射波 (複数行で同時入射 = 重ね合わせ)。[0] は上の 1 波目と同じ
+	int    npw;
+	double pwi_th[PW_MAX], pwi_ph[PW_MAX], pwi_amp[PW_MAX], pwi_phase[PW_MAX];
+	int    pwi_pol[PW_MAX];
 	int    tran;                  // transient = 1 : 過渡応答 (掃引の逆フーリエ変換)
 	double tranatt;               // 帯域端でのガウス励振の減衰 [dB] (既定 40)
 	int    grading;               // grading = 1 : 面格子の縁寄せ (plate/quad 余弦、disk 正弦)
+	int    basis;                 // basis = 1 : 区分線形の電流基底 (細線のみ、basis.c)
 	int    compress;              // compression = 1 : 部分インダクタンスを H 行列で圧縮
 	double ctol;                  // ACA の相対許容誤差 (既定 1e-6)
 	struct hmat_t *hlp;           // 圧縮された Lp (compress = 1 のときのみ)
@@ -351,7 +407,12 @@ double hmat_memory_mb(const struct hmat_t *h);
 double hmat_dense_mb(int n);
 
 // partial.c
-void seg_mirror(const seg_t *s, double gpz, seg_t *out);
+int    gp_nimg(const peec_t *p);                       // 鏡像の個数 2^ngp - 1
+double gp_sign(int m);                                  // 鏡像 m の電流・電荷の符号
+void   gp_pt(const peec_t *p, int m, double *x);        // 点 x を鏡像 m へ (その場で)
+void   gp_vec(const peec_t *p, int m, double *v);       // 方向 v を鏡像 m へ (その場で)
+int    gp_hasax(const peec_t *p, int ax);               // 軸 ax の面があるか
+void   seg_image(const peec_t *p, const seg_t *s, int m, seg_t *out);
 // 部分インダクタンス行列の 1 要素 (i, j は区間番号)。圧縮の ACA から呼ぶ。
 d_complex_t lp_entry(const peec_t *p, int i, int j, double kw);
 double neumann_self(double l, double a);
@@ -411,7 +472,7 @@ typedef struct {
 	double ev[3];                 // 偏波 (単位ベクトル)
 	d_complex_t e0;               // 複素振幅 [V/m] (原点での値)
 } pw_wave_t;
-int  pw_waves(const peec_t *p, double kw, pw_wave_t w[2]);
+int  pw_waves(const peec_t *p, double kw, pw_wave_t *w);   // w は PW_WMAX 個
 void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b);
 
 // lu.c
@@ -454,6 +515,19 @@ int  output_touchstone(const peec_t *p);
 int  output_mixed(const peec_t *p, const char *fn, FILE *fp_log);
 int  output_dist(const peec_t *p, const char *fn);
 int  output_pw(const peec_t *p, const char *fn, FILE *fp_log);
+
+// output.c : 励振の重み (excitation) による重ね合わせ
+// base はポート 0 の解 (周波数 ifreq の区画の先頭)、ポート j は base + j*n
+const d_complex_t *exc_mix(const peec_t *p, const d_complex_t *base, int n, d_complex_t *buf);
+double exc_pin(const peec_t *p, int ifreq);
+
+// basis.c (basis = 1 : 区分線形の電流基底)
+int  basis_fill(peec_t *p, double f, FILE *fp_log);
+// 平面波の右辺 : 電荷行に <chi_n, E_inc> を足す
+void basis_rhs_planewave(const peec_t *p, double kw, const pw_wave_t *w, int nw, d_complex_t *b);
+// 遠方界の放射ベクトルに傾斜関数の寄与 (振幅 j omega q_n) を足す
+void basis_ff_add(const peec_t *p, const d_complex_t *q, double omega, double kw,
+	const double rh[3], d_complex_t nv[3]);
 
 // farfield.c
 int  output_far(const peec_t *p, const char *fn, FILE *fp_log);

@@ -1,0 +1,38 @@
+# 検証 (bm) : 区分線形の電流基底 (basis = 1) — 半波長ダイポール、片腕 4 分割
+#   dipole_ff.peec と同じダイポール (全長 1 m、a = 1 mm、ギャップ 1 mm、
+#   f = 143.76 MHz) を片腕 4 分割の粗い格子で、basis = 1 (区間パルスに節点
+#   電荷で駆動する傾斜関数を足した連続な区分線形電流、Galerkin、basis.c) で解く。
+#
+#   peec_check.sh の判定 :
+#   (1) 独立実装との一致 : tools/basis_study.py (純 Python、同一直線の閉形式と
+#       別の遅延補正の求積) の値
+#         片腕 4 分割 : Zin = 70.05859 - 4.727462j ohm
+#         片腕 8 分割 : Zin = 71.43439 - 1.758106j ohm
+#       と |dZ|/|Z| <= 2e-4 (実測 8.7e-5 / 1.8e-5。差は遅延補正の求積だけ)
+#   (2) 粗い格子での精度 : 片腕 32 分割の従来の基底 (basis = 0) を参照
+#       (Rin = 72.368) として、Rin の誤差が 4 分割で従来の 1/3 以下
+#       (実測 -2.31 vs +7.87 ohm)、8 分割で従来より小さい (-0.93 vs +1.85 ohm)。
+#       漸近的には従来の互い違い格子 (2 次) の方が速い (tools/basis_study.py)
+#   (3) 遠方界の放射効率 ≈ 1 (傾斜関数の寄与を含む放射ベクトル。許容 0.5%、
+#       実測 1.0014 : デルタギャップの電流が遠方界に入らない分で、basis = 0 の
+#       1.0004 と同じ種類の差)
+#   (4) モノポール (地板) = ダイポール/2 が全周波数で成り立つ (鏡像の傾斜関数、
+#       1e-6、実測 2e-10)
+#   (5) 2 ポート (array_dipoles) の S21 = S12 (Galerkin の対称性、1e-9)
+#   (6) 送受の相反 (bent_pw の 3 方向 + 地板上のモノポール、1e-6) :
+#       遠方界の傾斜関数の項と平面波の右辺の電荷行 <chi_n, E_inc> の整合
+#   (7) 低周波 (1 kHz) で basis = 0 と一致 (結合 K, X は omega^2 で消える)
+#   (8) capacitance = 0 / 面導体 / 近傍界 / basis = 2 は拒否
+OpenPEEC 1 0
+title = half-wave dipole, piecewise-linear current basis (4 segments per arm)
+basis = 1
+capacitance = 1
+retardation = 1
+farfield = 36 24
+node = 1 0 0 -0.0005
+node = 2 0 0 0.0005
+wire = 0 0 -0.5 0 0 -0.0005 1e-3 5.8e7 4
+wire = 0 0 0.0005 0 0 0.5 1e-3 5.8e7 4
+port = 1 2 50
+frequency = 1.4376e8 1.4376e8 0
+end

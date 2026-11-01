@@ -87,8 +87,31 @@ Hoer-Love の原始関数 `hl_F(x,y,z)` (volume.c) では、引数が 0 のと�
 `zint_seg()` は体積セルに表皮効果の合成式を適用しない (二重計上になる)。
 内部インダクタンスも体積自己項に含まれている。
 
+角線 (`bar`) の断面分割 (`分割数w 分割数t`) も同じ体積セルを使う。区間を
+nw × nt の矩形バーの並列に置き換え、どれも区間の両端ノードを共有する
+(断面ごとに 1 ノード = VFI)。局所枠は幅 wv = ẑ × 軸 (水平、軸が z と平行なら
+x̂)、厚み nv = 軸 × wv で、平行に並んだ 2 本の角線は同じ wv を持つので
+Hoer–Love の対 (bar_use_hl) に乗る。電荷セルは分割前の区間のまま (表面電荷の
+断面分布は扱わない)。加法性は長さ/断面 ~ 2000 の細長いセルで閉形式の和に
+桁落ちが出て 1e-6 程度になる (L の分割数不変性の判定はこのため 2e-5)。
+
+丸線 (`wire`) の断面分割 (`断面分割数` n) も同じ体積セル。n × n の正方格子の
+うち中心 (u, v) が u² + v² ≤ n²/4 (公称間隔 2a/n 単位、半整数・整数なので
+等号は起こらない) のセルを残し、格子間隔を h = a √(π/N) (N = 残ったセル数) に
+伸縮して総面積を πa² に合わせる (DC 抵抗が厳密)。局所枠は bar と同じなので、
+平行な 2 本の丸線・地板の鏡像のセルも Hoer–Love の対に乗る。表皮効果は
+`zint_seg()` が体積セルに適用しないので Bessel と二重計上にならない。
+Hoer–Love の交代和は条件数 ~ (区間長/セル幅)³ で、同じ配置を別の絶対座標で
+組むと丸めの差 1e-16 が L に 1e-7 (区間長/セル幅 = 500) で出る
+(`round sub image = pair` の許容が 1e-6 なのはこのため)。
+
 **番人**: `thick plate L (Grover)` / `thick plate R (ndivt=1/2)` /
-`slab skin ratio (extr.)` / `slab skin convergence`
+`slab skin ratio (extr.)` / `slab skin convergence` / `bar sub Rin (DC)` /
+`bar sub L (Grover)` / `bar sub L (10x4 = 5x2)` / `bar slab ratio (extr.)` /
+`round sub skin c_iso` / `round sub prox c_prox` (低周波漸近の近接係数) /
+`round sub skin x=2` (Bessel) / `round sub L internal` / `round sub image = pair` /
+`bar slab convergence` / `bar slab = plate slab` (2 次元格子の plate と断面ごと
+1 ノードの角線という別経路の離散化が 0.07% で一致)
 
 ## (7) 多角形セルの規格化と桁落ちフリーの対数項
 
@@ -115,14 +138,23 @@ Hoer-Love の原始関数 `hl_F(x,y,z)` (volume.c) では、引数が 0 のと�
   (δ < thick) が丸ごと落ち、1 GHz・厚さ 0.1 mm の銅シートで plate 比 −24%
   になる。面内の再配分は格子が解くので、ここで見ているのは厚み方向のみ。
 
+パネルの厚み方向分割 (`quad` / `disk` の `分割数t`) は、各セルを法線方向に nt 層
+ずらして複製し (多角形の頂点・papex・x1/x2 を同じだけ平行移動)、どの層も同じ両端
+ノードを共有する (VFI)。層は `vol = 1` なので表皮効果の合成式は使わない (厚み方向の
+再配分は Lp が解く : 二重計上の禁止は (6) と同じ)。結合は `poly_static()` の
+多角形閉形式で、面外の点 (|z| > 0) も厳密に扱う。ただし層そのものは厚みを持たない
+面積分なので、plate の Hoer–Love 層より少ない層数での誤差が大きい (3 層で
+1D スラブ比 1.28、plate は 1.50)。24 層で O(層厚²) の漸近域に入る。
+
 **番人**: `quad sheet Rin (DC)` / `quad sheet L vs plate` /
 `quad sheet R vs plate (HF)` / `quad sheet R (skin at DC)` /
-`disk C (extrapolated)` / `annulus Rin (DC)`
+`disk C (extrapolated)` / `annulus Rin (DC)` / `annulus Rin (nt=3 = 1)` /
+`quad slab ratio (extr.)` / `quad slab convergence` / `quad slab = plate slab`
 
 ## (8) 鏡像の符号規約 (groundplane)
 
-鏡像セルは**幾何鏡像** (z → 2 gpz − z、wv の z 反転、pv/papex も鏡像) を
-`seg_mirror()` (partial.c) で作り、
+鏡像セルは**幾何鏡像** (面 k の軸 a = gpax[k] について x_a → 2 gpc[k] − x_a、
+wv の a 成分反転、pv/papex も鏡像) を `seg_image()` (partial.c) で作り、
 
 - Lp : 相互項 `(t₁·t₂′) I(s₁, M s₂)` を**減算**する (t₂′ は鏡像の幾何方向)。
   これが「鏡像電流 = 水平成分反転・垂直成分保存」と同値になる。
@@ -130,14 +162,30 @@ Hoer-Love の原始関数 `hl_F(x,y,z)` (volume.c) では、引数が 0 のと�
   水平線の L 減少 / 垂直線の L 増加がそれぞれ逆転する。
 - P : 鏡像電荷は −q なので相互項をそのまま減算する。
 - 自己項 (対角) も自分の鏡像との相互項を引くこと。忘れると高さ依存が消える。
-- 遠方界 (farfield.c) の鏡像は「鏡像位置 + t′ + 電流 −I」で同じ規約。
+- 遠方界 (farfield.c)・近傍界 (nearfield.c) の鏡像は「鏡像位置 + t′ + 電流 −I」で
+  同じ規約。平面波の反射波 (mna.c の `pw_waves()`) も到来方向と偏波を幾何鏡像し、
+  偏波に −1 を掛け、位相を面上で入射波と一致させる (2 k r̂_a c)。
+
+**直交する複数の面 (3 枚まで)** : 面の部分集合 m (ビット k = 面 k) ごとに
+鏡像が 1 つ (2^ngp − 1 個)。幾何鏡像は反射の合成、符号は (−1)^|m|
+(`gp_sign()`) なので **2 回反射した鏡像は加算**になる (z 面と x 面の角では
+(x, z) 両方を反射した鏡像の電流が元と同じ符号)。反射は直交面どうしなら可換
+なので順序に依らず、反射波の位相は面ごとの 2 k r̂_a c_a の和。平行な 2 面は
+無限級数になるのでパーサが拒否する。遠方界は導体側の領域だけを積分する :
+z 面があれば θ ≤ 90°、x / y 面は裏 (r̂_a < 0) を 0、面上を台形則の重み 1/2
+(`ff_region()`)。z 面 1 枚のときは演算が以前の z 専用の実装と同一 (出力は
+ビット一致を確認済み)。
 
 M は等長変換かつ対合なので I(s₁, M s₂) = I(M s₁, s₂) が成り立ち、
 行列の対称性は保たれる (片側だけ鏡像を取ってよい根拠)。
 
 **番人**: `wire-gp L (images)` / `wire-gp C (to plane)` /
 `monopole = dipole/2` (λ/4 モノポール = 半波長ダイポール/2 が離散化レベルで
-一致することが、L・P・遅延・給電のすべての符号を同時に判定する)
+一致することが、L・P・遅延・給電のすべての符号を同時に判定する)。
+複数面は `corner3 L (7 images)` / `corner3 C (2 cells)` / `corner2 L/C`
+(Grover の平行フィラメント公式の鏡像和) / `x-plane dipole Rin/Xin/far/near`
+(x 面の鏡像 = 逆相アレイ) / `monopole x-plane = z` / `mono x-plane ff eff`
+(面上の重み 1/2) / コーナーの `recip` (送信の鏡像 = 受信の反射波)
 
 ## (9) 誘電体は εr − 1 だけを枝に載せる (二重計上禁止)
 
@@ -166,6 +214,20 @@ C_e = ε0(εr−1)A/len だけ**を直列インピーダンス 1/(jωC_e) とし
 - Debye   : χ_k = Δε_k/(1+jf/f_k)
 - Lorentz : χ_k = Δε_k f_k²/(f_k²−f²+jf g_k) = Δε_k/(1−q²+jqr)
   (q = f/f_k、r = g_k/f_k。正規化形で組むので f_k² の桁あふれは無い)
+
+導電性の項も同じ並びに書ける :
+
+- Drude 項   : χ_k = −f_p²/(f²−jf g_k) (exp(+jωt) 規約の ε∞ − ωp²/(ω²−jωΓ))。
+  直流導電率 σ_dc = 2πε0 f_p²/g_k。
+- 導電率     : χ_k = −jσ/(ωε0) (Drude の g → ∞ 極限)。
+
+この 2 つは f → 0 で −b が 1/f で発散するが、Y = ω ε0 gfac (−b + ...) の ω が
+打ち消して Y → σA/len に収まる (分極電流の枝が伝導電流の枝になる)。
+直流で発散するので**直流極限の和 ε∞ + ΣΔε_k = εr には入れない**
+(和を取るのは Debye / Lorentz 極だけ)。損失側は b ≤ 0 で Debye / Lorentz と
+同じ向き。導電性があれば εr = 1 でもセルを作る (作らないと導電性の基板が
+黙って真空になる)。Drude の分母は f² で割った −(f_p/f)²/(1 − jg/f) の形で
+組む (f_p² の桁あふれを避ける Lorentz の正規化と同じ考え方)。
 
 定数 tanδ と分散の併用は損失の二重計上なので入力検証で拒否する
 (分散の損失は極そのものが生む)。ε∞ は 1 ≤ ε∞ ≤ εs (Δε_k > 0 の和だけ下がる)。
@@ -204,7 +266,11 @@ Lorentz 極は共振の少し上で εr′ < 1 (さらに負) になり得て、
 bit 一致 = 和の経路の番人) / `lorentz dY (5 freqs)` (共振をまたぐ 5 点で
 εr′ < 0 の 2 点を含む。分母の符号・q と r の取り違えはここで桁違いにずれる。
 実測 3.5e-5) / `lorentz+debye dY` (種類の違う極の混在と逐次読み。
-実測 4.3e-4) / `lorentz parser guard` (g ≤ 0・語の不足・強度の和の不一致の拒否)
+実測 4.3e-4) / `lorentz parser guard` (g ≤ 0・語の不足・強度の和の不一致の拒否) /
+`drude dY (5 freqs)` (直流で G = σ_dc A/d、f = g で半分、εr′ < 1 の誘導性を含む :
+実測 1.5e-3) / `sigma dY (5 freqs)` (G が周波数に依らない : 実測 2.1e-4) /
+`sigma brick (epsr=1) G` (導電性なら εr = 1 でもセルを作る) /
+`drude/sigma parser guard`
 
 ## (10) 遠方界の規格化とポインティング整合
 
@@ -475,7 +541,12 @@ OpenMP でもスレッド数によらずビット一致する。
   ループで σ_e がちょうど σ_s の分だけ 1.4% 小さく出た)。ログに注意を出す。
 
 地板があるときは入射が 2 波 (直接 + 反射) になって前方方向が 1 つに
-決まらないので、σ_e は出さない (RCS と σ_s は上半球で出す)。
+決まらないので、σ_e は出さない (RCS と σ_s は上半球で出す)。`planewave` を
+複数行書いた同時入射も同じ理由で σ_e を出さない (RCS と σ_s は 1 行目の振幅で
+規格化)。複数の入射波は `pw_waves()` が「各入射波 + (地板があれば) その反射波」を
+並べて返し、右辺・近傍界の入射界・散乱界はすべてその和になる (線形性)。
+番人 `pw superposition (Voc)` / `(farpw)` / `(gp)` は 2 波の実行と 1 波ずつの
+実行の和の一致、`pw counter standing wave` は逆向きの 2 波の自由空間の定在波。
 
 **番人**: `loop RCS sigma(y^)` / `loop sigma_scat` / `loop sigma_ext (optical)`
 (短絡した微小ループ : ファラデー + オーム + 磁気双極子の放射。L は Grover 式、
@@ -483,6 +554,112 @@ R は DC 抵抗 : 実測 −0.04%) / `loop RCS axial null` (閉ループの放�
 `dipole scat energy` (負荷付きダイポールで σ_e = σ_s + σ_L、σ_L は回路側の
 端子電圧から : 実測 4e-4) / `farpw compensation` (F_負荷 = F_開放,pw − I_L F_port :
 実測 3e-10)
+
+## (21) 伝送線路は進行波の関係で組む (tline)
+
+伝送線路 (mna.c の `tline` スタンプ) は 2 つの端子対の間の TEM 線路で、
+端子電流 i1 (n1 → 線路 → n2)、i2 (n3 → 線路 → n4) を未知数に足し
+
+  v1 − Z0 i1 − T (v2 + Z0 i2) = 0
+  v2 − Z0 i2 − T (v1 + Z0 i1) = 0,   T = a e^{−jω td}
+
+の 2 行を組む (入射波 a = (v + Z0 i)/2、反射波 b = (v − Z0 i)/2 に対して
+b1 = T a2、b2 = T a1 : Branin の方法の周波数領域版)。守るべき約束は 4 つ。
+
+- **Z / Y 行列の形にしない**。Z11 = −jZ0 cot θ、Z12 = −jZ0 csc θ (Y も同様) は
+  θ = ω td = nπ で発散し、半波長・全波長の点で行列が壊れる。進行波の形は
+  対角が常に −Z0 で、どの θ でも係数が有界。
+- **T の偏角 −ω td が遅延**。exp(+jωt) 規約では e^{−jω td} が遅れなので、
+  符号を取り違えると反射が前進し (TDR で y(t) = Γx(t + 2td))、S21 の位相が
+  逆に回る。λ/4 変換 (Zin = Z0²/ZL) のように tan の偶関数性で符号が消える
+  判定だけでは検出できない (実際にこの判定だけは符号反転でも通った)。
+- **端子対ごとに電流は行き帰りで等しい**。同相の経路を作らないので、
+  容量性 PEEC の総電荷の保存 (不変条件 3) を壊さずに浮いた端子対で構造に
+  繋げる (線路の先の半波長ダイポール)。
+- **損失は無ひずみ線路**。a = 10^(−dB/20) を周波数に依らず掛けるのは
+  R/L = G/C の Heaviside 線路に相当し、そのとき Z0 は実数のまま。√f の
+  表皮損失や分散は持たない (README の制限)。
+
+単位長さあたりの定数で書く `rlgc` の形 (R + Rs√f、L、G + ωC tanδ、C) は
+Z0 = √((R+jωL)/(G+jωC)) と T = e^{−γ·長さ} (γ = √((R+jωL)(G+jωC))) が
+複素数になるだけで、同じ進行波のスタンプに入る (一様な TEM 線路の電信方程式の
+解は複素 Z0 でも b1 = T a2、b2 = T a1 に分かれる)。平方根は**主値 (Re ≥ 0)**
+を取ること : 逆の枝を取ると Re γ < 0 で増幅する線路になる。損失なし
+(R = G = Rs = tanδ = 0) では Z0/遅延の形とビット近くで一致する。
+
+未知数ブロック (offT, 1 本 2 個) は offS より前 = 回路側なので、圧縮経路
+(compression = 1) では前処理の Schur 補元に入る。対角が −Z0 で構造的に
+ゼロではないので、閾値ピボットの非対角落ち (不変条件 17) にも頼らない。
+
+**番人**: `tline Zin (lossless)` / `tline Zin (2 dB loss)` (教科書の tan / tanh の
+式との代数的一致、実測 7e-17 / 1e-10) / `tline matched S (3 dB)` (位相の向き) /
+`tline TDR delay` (遅延の符号、前進させると 0.49 ずれる) / `tline-fed dipole`
+(容量性 + 遅延の PEEC との接続、実測 1.7e-10) / `tline compress = dense`
+(圧縮経路の回路側、ビット一致) / `tline parser guard` / `tline rlgc Zin`
+(表皮効果 + 誘電損の電信方程式、実測 3.5e-10) / `tline rlgc vs ladder`
+(集中定数の T 形梯子という独立なモデルへの O(段長²) 収束 : 64 段で 4.4e-4、
+32 段との比 4.01) / `tline rlgc = Z0/td` (無損失の極限) / `tline rlgc parser guard`
+
+## (22) 励振の重みはポート解の重ね合わせ (excitation)
+
+`excitation` があると遠方界・近傍界はポート解 (ポート j に 1 A、他は開放) を
+重み w_j = 振幅 e^{j 位相} で重ね合わせた電流・電荷で評価する。線形性から
+全ポートに電流 w_j を同時に注入した解そのもので近似は無い。守るべき約束は 3 つ。
+
+- **電流と電荷の両方を重ね合わせる** (output.c の `exc_mix()` を `segi` と
+  `cellq` の両方に通す)。電流だけ重ね合わせると近傍界の −∇φ が port #1 の
+  電荷のまま残り、E が静かに狂う (遠方界は電流だけなので気付けない)。
+- **入力電力は相互結合込みの Pin = ½Re(wᴴZw)** (`exc_pin()`、
+  Z_ij = `zmat[ZIDX(ifreq, i, j)]` = V_i/I_j)。対角だけ (ΣRe Z_jj|w_j|²/2) に
+  すると、逆相と同相で相互抵抗 R21 の寄与が逆符号に効く分だけ効率が狂う
+  (λ/2 間隔の半波長ダイポール対で ±15%)。
+- **行が無ければ base をそのまま返す**。port #1 に 1 A の従来出力とビット一致
+  (`excitation = 1 1` を書いても一致)。
+
+`dist.csv` は従来どおりポートごとの分布 (重ね合わせない)。平面波 (`farpw.csv` /
+`nearpw.csv`) は励振と無関係。
+
+**番人**: `array antiphase null` (鏡映対称 + 反対称励振で ±y の遠方界が 0 :
+実測 7e-16) / `array near Ez (x=0)` (x = 0 面の E_z = 0 : 電荷の重ね合わせの
+番人、実測 2e-15) / `array Pin = Re(wHZw)/2` (S から組んだ Z との一致) /
+`array ff eff (antiphase)` / `array ff eff (in-phase)` (相互結合の符号) /
+`excitation superposition` (位相の規約) / `excitation default` (後方互換) /
+`excitation parser guard`
+
+## (23) 区分線形の電流基底 (basis = 1) : 傾斜関数は電荷で駆動し、節点電位は点電位
+
+`basis = 1` (basis.c、細線のみ) は電流 J = Σ I_k p_k + Σ c_n χ_n、c_n = jω q_n。
+χ_n は節点 n の電荷セルの半区間 h 上の (L_h − s) ô_h / L_n (s は節点からの
+距離、ô_h は**節点から外向き**、L_n = carea)。守るべき約束は 4 つ。
+
+- **傾斜関数の向きと節点側の端** : 電荷サブセルの節点側は `nend`
+  (wire.c の add_chg 直後に 0 = x1 / 1 = x2 を入れる)。外向きを取り違えると
+  中点で電流が不連続になり、KCL と連続の式の整合が壊れる。
+- **節点電位は点電位** : χ_n で試験すると <χ_n, −∇φ> = φ(節点) − φ̄_n なので、
+  電荷行は φ_n = Σ P q + jω(Σ K_ln I_l + Σ X_nm c_m)。MNA の符号は
+  KVL 行に + ω² K_kn q_n、電荷行に + jω K_ln I_l と − ω² X_nm q_m
+  (mna.c)。電荷が陽な未知数の並び (圧縮経路と同じ offQ) でしか組めないので、
+  mna_numbering は basis = 1 でも電荷行を作る。cell_charges は `qexp`
+  (offQ < nunknown) で読む。
+- **右辺と遠方界も同じ関数** : 平面波は電荷行に + <χ_n, E_inc>
+  (`basis_rhs_planewave`、KVL 行の − <p_k, E_inc> と同じ規約)、遠方界の放射
+  ベクトルに c_n χ_n の寄与 (`basis_ff_add`、電荷は exc_mix で重ね合わせる)。
+  片方だけだと送受の相反が崩れる。鏡像は幾何鏡像 + (−1)^(反射回数) (不変条件 8)。
+- **ω → 0 で従来の PEEC** (K, X は ω² でしか効かない)。basis = 0 の出力は
+  ビット単位で従来と同じ。
+
+傾斜関数の重み付き積分は「節点から長さ t のパルス」の重ね合わせで、既存の
+neumann_pair_k を t について Gauss 6 点で積分する。粗い格子で従来より正確
+(半波長ダイポールの Rin 誤差 4 分割 1/3、8 分割 1/2) だが、電荷が区分一定の
+ままなので漸近的な収束は従来の互い違い格子 (2 次) より遅い (1 次程度、
+tools/basis_study.py)。面導体・体積セル・誘電体・圧縮・近傍界とは併用不可
+(パーサが拒否)。
+
+**番人**: `basis1 = study (4/arm)` / `basis1 = study (8/arm)` (独立実装の
+tools/basis_study.py と一致) / `basis1 coarse accuracy` / `basis1 ff efficiency` /
+`basis1 monopole = dip/2` (鏡像) / `basis1 2-port symmetry` (Galerkin) /
+basis_bent・basis_mono_pw の `recip` (遠方界と平面波の右辺の整合) /
+`basis1 low-f = basis0` / `basis parser guard`
 
 ## 並列化
 

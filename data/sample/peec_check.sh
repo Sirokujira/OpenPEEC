@@ -299,6 +299,29 @@ cp "$SRC/bar_skin.peec" "$WORK/"
 run bar_skin.peec
 chk "bar skin HF Rin" "$(getR)" 0.118589 0.01
 
+# (bc) 角線の断面分割 (5 x 2 の体積セル) : f = 0.1 Hz で電流は一様、DC 抵抗は
+#      厳密、L は Hoer-Love の加法性で分割前の矩形バーの体積積分 = Grover 式
+cp "$SRC/bar_sub.peec" "$WORK/"
+run bar_sub.peec
+chk "bar sub Rin (DC)" "$(getR)" 1.724138e-3 1e-6
+chk "bar sub L (Grover)" "$(getL)" 1.141093e-6 0.001
+lsub52=$(getL)
+sed 's/ 5.8e7 1 5 2$/ 5.8e7 1 10 4/' "$SRC/bar_sub.peec" > "$WORK/bar_sub104.peec"
+run bar_sub104.peec
+chk "bar sub L (10x4 = 5x2)" "$(getL)" "$lsub52" 2e-5
+# 書き間違いは拒否されること : 分割数 0 (幅・厚み)
+nbad=0
+for sub in "1 0 2" "1 5 0"; do
+	sed "s/ 5.8e7 1 5 2\$/ 5.8e7 $sub/" "$SRC/bar_sub.peec" > "$WORK/bar_bad.peec"
+	if (cd "$WORK" && "$PEEC" -n 1 bar_bad.peec > bar_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+done
+if [ "$nbad" -eq 2 ]; then
+	printf "%-24s -> OK (2/2 malformed inputs rejected)\n" "bar sub parser guard"
+else
+	printf "%-24s -> NG (%d/2 malformed inputs rejected)\n" "bar sub parser guard" "$nbad" >&2
+	status=1
+fi
+
 echo "--- surface (plate) conductors"
 # (o) 正方形平板の対無限遠容量 : 8 分割と 16 分割から Richardson 補外
 #     C_inf = 2 C_16 - C_8 を文献値 0.3667892 * 4 pi eps0 a = 4.08100e-11 F と比較
@@ -350,6 +373,60 @@ awk -v r3="$r3" -v r6="$r6" -v r12="$r12" 'BEGIN {
 	printf "%-24s |r12-r6|=%.4f |r6-r3|=%.4f -> %s (<= 0.35)\n", "slab skin convergence", d2, d1, ok ? "OK" : "NG";
 	exit ok ? 0 : 1
 }' || status=1
+pext=$(awk -v a="$r12" -v b="$r6" 'BEGIN{printf "%.9e", a + (a-b)/3}')
+
+# (bc) 同じ対称サンドイッチを断面分割した角線 (断面ごとに 1 ノード = VFI) で組む。
+#      1D スラブ解への収束と、plate 版 (2 次元格子 + 体積セル) の補外値との一致
+cp "$SRC/bar_skin_layers.peec" "$WORK/"
+for nt in 12 6 3; do
+	sed "s/ 5.8e7 4 1 12\$/ 5.8e7 4 1 $nt/" "$SRC/bar_skin_layers.peec" > "$WORK/bar_skin_nt$nt.peec"
+	run bar_skin_nt$nt.peec
+	rat=$(awk -F, 'NR==2{rdc=$3} NR==3{printf "%.9e", $3/rdc}' "$csv")
+	if [ "$nt" = 12 ]; then b12=$rat; elif [ "$nt" = 6 ]; then b6=$rat; else b3=$rat; fi
+done
+bext=$(awk -v a="$b12" -v b="$b6" 'BEGIN{printf "%.9e", a + (a-b)/3}')
+chk "bar slab ratio (extr.)" "$bext" 1.897806 0.035
+awk -v r3="$b3" -v r6="$b6" -v r12="$b12" 'BEGIN {
+	d1 = r6 - r3; if (d1 < 0) d1 = -d1;
+	d2 = r12 - r6; if (d2 < 0) d2 = -d2;
+	ok = (d2 <= 0.35 * d1);
+	printf "%-24s |r12-r6|=%.4f |r6-r3|=%.4f -> %s (<= 0.35)\n", "bar slab convergence", d2, d1, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+chk "bar slab = plate slab" "$bext" "$pext" 0.005
+
+# (be) 同じ対称サンドイッチの中心板を quad (厚み方向 nt 層) にする。多角形の層は
+#      厚みのない面積分で結合するので nt = 6/12/24 で補外する
+cp "$SRC/quad_skin_layers.peec" "$WORK/"
+for nt in 24 12 6; do
+	sed "s/ 5.8e7 4 4 24\$/ 5.8e7 4 4 $nt/" "$SRC/quad_skin_layers.peec" > "$WORK/quad_skin_nt$nt.peec"
+	run quad_skin_nt$nt.peec
+	rat=$(awk -F, 'NR==2{rdc=$3} NR==3{printf "%.9e", $3/rdc}' "$csv")
+	if [ "$nt" = 24 ]; then q24=$rat; chk "quad slab Rdc (nt=24)" "$(getR)" 1.724138e-4 0.001;
+	elif [ "$nt" = 12 ]; then q12=$rat; else q6=$rat; fi
+done
+qext=$(awk -v a="$q24" -v b="$q12" 'BEGIN{printf "%.9e", a + (a-b)/3}')
+chk "quad slab ratio (extr.)" "$qext" 1.897806 0.035
+awk -v r3="$q6" -v r6="$q12" -v r12="$q24" 'BEGIN {
+	d1 = r6 - r3; if (d1 < 0) d1 = -d1;
+	d2 = r12 - r6; if (d2 < 0) d2 = -d2;
+	ok = (d2 <= 0.35 * d1);
+	printf "%-24s |r24-r12|=%.4f |r12-r6|=%.4f -> %s (<= 0.35)\n", "quad slab convergence", d2, d1, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+chk "quad slab = plate slab" "$qext" "$pext" 0.005
+# 書き間違いは拒否されること : 厚み方向の分割数 0 (quad / disk)
+nbad=0
+sed 's/ 5.8e7 4 4 24$/ 5.8e7 4 4 0/' "$SRC/quad_skin_layers.peec" > "$WORK/panel_bad.peec"
+if (cd "$WORK" && "$PEEC" -n 1 panel_bad.peec > panel_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+sed 's/^\(disk = .*\)$/\1 0/' "$SRC/disk_annulus.peec" > "$WORK/panel_bad.peec"
+if (cd "$WORK" && "$PEEC" -n 1 panel_bad.peec > panel_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+if [ "$nbad" -eq 2 ]; then
+	printf "%-24s -> OK (2/2 malformed inputs rejected)\n" "panel ndivt parser guard"
+else
+	printf "%-24s -> NG (%d/2 malformed inputs rejected)\n" "panel ndivt parser guard" "$nbad" >&2
+	status=1
+fi
 
 echo "--- panel conductors (quad / disk)"
 # (x) 一般四辺形 : 正方形シートの DC 抵抗 (1 スクエアの解析値) と、
@@ -399,6 +476,12 @@ chk "disk C (extrapolated)" "$(awk -v a="$cd4" -v b="$cd8" 'BEGIN{printf "%.9e",
 cp "$SRC/disk_annulus.peec" "$WORK/"
 run disk_annulus.peec
 chk "annulus Rin (DC)" "$(getR)" 1.902031e-5 0.03
+# (be) disk の厚み方向分割 : 同じノードを共有する同一層の並列なので DC 抵抗は
+#      1 層と厳密に同じ (法線・層の複製・面外の多角形結合の経路を通す)
+rann=$(getR)
+sed 's/^\(disk = .*\)$/\1 3/' "$SRC/disk_annulus.peec" > "$WORK/disk_annulus_t3.peec"
+run disk_annulus_t3.peec
+chk "annulus Rin (nt=3 = 1)" "$(getR)" "$rann" 1e-6
 
 echo "--- ground plane (image method)"
 # (ab) 地板上の水平単線 : L = L_self - M(2h) (Grover)、R は鏡像の影響を受けない
@@ -474,6 +557,267 @@ run monopole_ff.peec
 chk "monopole D = 2 x dipole" "$(awk -v m="$(getD)" -v d="$dd" 'BEGIN{printf "%.6f", m/d}')" 2.0 0.01
 chk "monopole ff efficiency" "$(getEff)" 1.0 0.005
 
+# (bb) 励振の重み (excitation) : 2 素子ダイポールアレイ (逆相・同相)
+#      ffpin <ログ> : "farfield : ..." 行の Pin と eff
+ffval() { awk -v key="$1" 'index($0, "farfield : f =") {i = index($0, key " = "); s = substr($0, i + length(key) + 3); split(s, a, " "); print a[1]; exit}' "$log"; }
+cp "$SRC/array_dipoles.peec" "$WORK/"
+run array_dipoles.peec
+cp "$WORK/far.csv" "$WORK/far_arr.csv"
+cp "$WORK/near.csv" "$WORK/near_arr.csv"
+prad_arr=$(ffval Prad)
+pin_arr=$(ffval Pin)
+# 鏡映対称 + 反対称励振 : ±y 方向の遠方界と x = 0 面の E_z が厳密に 0
+awk -F, 'NR > 1 {
+	a = sqrt(($4 ^ 2) + ($5 ^ 2) + ($6 ^ 2) + ($7 ^ 2)); if (a > mx) mx = a;
+	if (($2 + 0 == 90) && (($3 + 0 == 90) || ($3 + 0 == 270))) {if (!(a <= nul)) nul = a; n++}
+} END {
+	r = nul / mx; ok = (n == 2) && (r <= 1e-9);
+	printf "%-24s |rE(+-y)|/max|rE|=%.3e -> %s (<= 1e-9)\n", "array antiphase null", r, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/far_arr.csv" || status=1
+awk -F, 'NR > 1 {
+	ez = sqrt(($9 ^ 2) + ($10 ^ 2)); if (!(ez <= mz)) mz = ez; if ($17 > me) me = $17; n++
+} END {
+	r = mz / me; ok = (n == 4) && (r <= 1e-9);
+	printf "%-24s points=%d max|Ez|/max|E|=%.3e -> %s (<= 1e-9)\n", "array near Ez (x=0)", n, r, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/near.csv" || status=1
+# Pin = Re(w^H Z w)/2 : Z は peec.s2p の S から Z = z0 (I+S)(I-S)^-1 (z0 = 50)
+# s2z の出力 : 実部 Z11 Z12 Z21 Z22、続いて虚部 Z11 Z12 Z21 Z22
+s2z() {
+	awk 'function cm(ar, ai, br, bi) {MR = (ar * br) - (ai * bi); MI = (ar * bi) + (ai * br)}
+	function cd(ar, ai, br, bi,   d) {d = (br * br) + (bi * bi); DR = ((ar * br) + (ai * bi)) / d; DI = ((ai * br) - (ar * bi)) / d}
+	NF == 9 && $1 !~ /^[!#]/ {
+		a11r = 1 - $2; a11i = -$3; a21r = -$4; a21i = -$5; a12r = -$6; a12i = -$7; a22r = 1 - $8; a22i = -$9;
+		cm(a11r, a11i, a22r, a22i); dr = MR; di = MI; cm(a12r, a12i, a21r, a21i); dr -= MR; di -= MI;
+		cd(a22r, a22i, dr, di); i11r = DR; i11i = DI; cd(-a12r, -a12i, dr, di); i12r = DR; i12i = DI;
+		cd(-a21r, -a21i, dr, di); i21r = DR; i21i = DI; cd(a11r, a11i, dr, di); i22r = DR; i22i = DI;
+		b11r = 1 + $2; b11i = $3; b21r = $4; b21i = $5; b12r = $6; b12i = $7; b22r = 1 + $8; b22i = $9;
+		cm(b11r, b11i, i11r, i11i); z11 = MR; y11 = MI; cm(b12r, b12i, i21r, i21i); z11 += MR; y11 += MI;
+		cm(b11r, b11i, i12r, i12i); z12 = MR; y12 = MI; cm(b12r, b12i, i22r, i22i); z12 += MR; y12 += MI;
+		cm(b21r, b21i, i11r, i11i); z21 = MR; y21 = MI; cm(b22r, b22i, i21r, i21i); z21 += MR; y21 += MI;
+		cm(b21r, b21i, i12r, i12i); z22 = MR; y22 = MI; cm(b22r, b22i, i22r, i22i); z22 += MR; y22 += MI;
+		printf "%.10g %.10g %.10g %.10g %.10g %.10g %.10g %.10g\n", 50 * z11, 50 * z12, 50 * z21, 50 * z22, 50 * y11, 50 * y12, 50 * y21, 50 * y22; exit
+	}' "$WORK/peec.s2p"
+}
+set -- $(s2z)
+# 鏡像の判定 (bg) 用 : x 面の地板に平行な 1 素子 = Z22 - Z21 (対称なので平均をとる)
+zimg_r=$(awk -v a="$1" -v b="$2" -v c="$3" -v d="$4" 'BEGIN {printf "%.10g", 0.5 * ((a + d) - (b + c))}')
+zimg_x=$(awk -v a="$5" -v b="$6" -v c="$7" -v d="$8" 'BEGIN {printf "%.10g", 0.5 * ((a + d) - (b + c))}')
+chk "array Pin = Re(wHZw)/2" "$(ffval Pin)" "$(awk -v a="$1" -v b="$2" -v c="$3" -v d="$4" 'BEGIN {printf "%.9e", 0.5 * (a + d - b - c)}')" 1e-5
+chk "array ff eff (antiphase)" "$(ffval eff)" 1 0.005
+sed 's/^excitation = 2 1 180$/excitation = 2 1 0/' "$SRC/array_dipoles.peec" > "$WORK/array_inphase.peec"
+run array_inphase.peec
+chk "array ff eff (in-phase)" "$(ffval eff)" 1 0.005
+# 重ね合わせ : (1∠0°, 1∠90°) = port 1 単独 + j × port 2 単独 (全方向、rE の 4 成分)
+sed -e '/^nearfield/d' -e 's/^excitation = 2 1 180$/excitation = 2 1 90/' "$SRC/array_dipoles.peec" > "$WORK/array_q.peec"
+run array_q.peec
+cp "$WORK/far.csv" "$WORK/far_q.csv"
+sed -e '/^nearfield/d' -e '/^excitation = 2/d' "$SRC/array_dipoles.peec" > "$WORK/array_p1.peec"
+run array_p1.peec
+cp "$WORK/far.csv" "$WORK/far_p1.csv"
+sed -e '/^nearfield/d' -e '/^excitation = 1/d' -e 's/^excitation = 2 1 180$/excitation = 2 1 0/' "$SRC/array_dipoles.peec" > "$WORK/array_p2.peec"
+run array_p2.peec
+awk -F, 'FILENAME == ARGV[1] && FNR > 1 {k = $2 SUBSEP $3; a1[k] = $4; b1[k] = $5; c1[k] = $6; d1[k] = $7; next}
+FILENAME == ARGV[2] && FNR > 1 {k = $2 SUBSEP $3; a2[k] = $4; b2[k] = $5; c2[k] = $6; d2[k] = $7; next}
+FILENAME == ARGV[3] && FNR > 1 {
+	k = $2 SUBSEP $3;
+	# F1 + j F2 : (re, im) = (r1 - i2, i1 + r2)
+	d = sqrt((($4 - (a1[k] - b2[k])) ^ 2) + (($5 - (b1[k] + a2[k])) ^ 2) + (($6 - (c1[k] - d2[k])) ^ 2) + (($7 - (d1[k] + c2[k])) ^ 2));
+	if (!(d <= mx)) mx = d; a = sqrt(($4 ^ 2) + ($5 ^ 2) + ($6 ^ 2) + ($7 ^ 2)); if (a > am) am = a; n++
+} END {
+	r = mx / am; ok = (n == 888) && (r <= 1e-8);
+	printf "%-24s dirs=%d max|F-(F1+jF2)|/max|F|=%.3e -> %s (<= 1e-8)\n", "excitation superposition", n, r, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/far_p1.csv" "$WORK/far.csv" "$WORK/far_q.csv" || status=1
+# 既定 (port #1 に 1 A) と同じ excitation を書いても far.csv はビット一致
+cp "$SRC/dipole_ff.peec" "$WORK/"
+run dipole_ff.peec
+cp "$WORK/far.csv" "$WORK/far_noexc.csv"
+sed 's/^end$/excitation = 1 1 0\nend/' "$SRC/dipole_ff.peec" > "$WORK/dipole_ff_exc.peec"
+run dipole_ff_exc.peec
+if cmp -s "$WORK/far_noexc.csv" "$WORK/far.csv"; then
+	printf "%-24s -> OK (excitation = 1 1 は省略時と far.csv が完全一致)\n" "excitation default"
+else
+	printf "%-24s -> NG (excitation = 1 1 changed far.csv)\n" "excitation default" >&2
+	status=1
+fi
+# 書き間違いは拒否されること : 範囲外のポート、重複、振幅の欠落
+nbad=0
+for ex in "excitation = 3 1" "excitation = 1 1 0\nexcitation = 1 2" "excitation = 2"; do
+	sed "s/^excitation = 2 1 180\$/$ex/" "$SRC/array_dipoles.peec" > "$WORK/array_bad.peec"
+	if (cd "$WORK" && "$PEEC" -n 1 array_bad.peec > array_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+done
+if [ "$nbad" -eq 3 ]; then
+	printf "%-24s -> OK (3/3 malformed inputs rejected)\n" "excitation parser guard"
+else
+	printf "%-24s -> NG (%d/3 malformed inputs rejected)\n" "excitation parser guard" "$nbad" >&2
+	status=1
+fi
+
+echo "--- multiple ground planes (orthogonal images)"
+# (bg) x = 0 の PEC 面に平行な半波長ダイポール : 鏡像 = 逆相 2 素子アレイ
+#      (array_dipoles の x > 0 側の素子の符号反転)。Zin = Z22 - Z21、
+#      遠方界は x > 0 で -rE(アレイ)・x < 0 で 0、Prad / Pin はアレイの半分、
+#      x = 0 面上の近傍界は -(E, H)(アレイ)
+cp "$SRC/dipole_xgp.peec" "$WORK/"
+run dipole_xgp.peec
+chk "x-plane dipole Rin" "$(getR)" "$zimg_r" 1e-6
+chk "x-plane dipole Xin" "$(awk -F, 'NR == 2 {print $4}' "$csv")" "$zimg_x" 1e-6
+chk "x-plane dipole Prad" "$(ffval Prad)" "$(awk -v a="$prad_arr" 'BEGIN {printf "%.9e", a / 2}')" 2e-5
+chk "x-plane dipole Pin" "$(ffval Pin)" "$(awk -v a="$pin_arr" 'BEGIN {printf "%.9e", a / 2}')" 2e-5
+awk -F, 'FILENAME == ARGV[1] && FNR > 1 {k = $2 SUBSEP $3; a[k] = $4; b[k] = $5; c[k] = $6; d[k] = $7; next}
+FNR > 1 {
+	# 面の手前 = r^_x >= 0 (面上の theta = 0 / 180 と phi = +-90 を含む。コードと同じ閾値)
+	k = $2 SUBSEP $3; pr = atan2(0, -1) / 180; rx = sin($2 * pr) * cos($3 * pr);
+	m = sqrt(($4 ^ 2) + ($5 ^ 2) + ($6 ^ 2) + ($7 ^ 2)); if (m > am) am = m;
+	if (rx >= -1e-12) {
+		e = sqrt((($4 + a[k]) ^ 2) + (($5 + b[k]) ^ 2) + (($6 + c[k]) ^ 2) + (($7 + d[k]) ^ 2)); if (!(e <= mx)) mx = e; n1++
+	} else {
+		if (!(m <= mz)) mz = m; n2++
+	}
+} END {
+	r = mx / am; ok = (n1 == 503) && (n2 == 385) && (r <= 1e-6) && (mz == 0);
+	printf "%-24s front=%d back=%d max|F+Farr|/max|F|=%.3e back max=%g -> %s (<= 1e-6, back = 0)\n", "x-plane dipole far", n1, n2, r, mz + 0, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/far_arr.csv" "$WORK/far.csv" || status=1
+paste -d, "$WORK/near_arr.csv" "$WORK/near.csv" | awk -F, 'NR > 1 {
+	de = 0; dh = 0;
+	for (c = 5; c <= 10; c++) de += ($c + $(c + 18)) ^ 2;
+	for (c = 11; c <= 16; c++) dh += ($c + $(c + 18)) ^ 2;
+	de = sqrt(de); dh = sqrt(dh); if (!(de <= me)) me = de; if (!(dh <= mh)) mh = dh;
+	if ($17 > ae) ae = $17; if ($18 > ah) ah = $18;
+	t = sqrt(($25 ^ 2) + ($26 ^ 2) + ($27 ^ 2) + ($28 ^ 2)); if (!(t <= mt)) mt = t; n++
+} END {
+	re = me / ae; rh = mh / ah; rt = mt / ae;
+	ok = (n == 4) && (re <= 1e-6) && (rh <= 1e-6) && (rt <= 1e-9);
+	printf "%-24s points=%d dE=%.3e dH=%.3e |Etan|/|E|=%.3e -> %s\n", "x-plane dipole near", n, re, rh, rt, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+
+# (bh) x / y 面のモノポール = z 面のモノポール (座標の回転)。zin.csv は全周波数で
+#      一致 (相対 1e-9)。遠方界は z 面が無いので全球の theta を使い、x / y 面の
+#      裏 (重み 0) と面上 (台形則の端の重み 1/2) で半空間を積分する。
+#      モノポールの最大放射は面上 (x = 0) なので、端の重みを誤ると効率が数 % ずれる
+cp "$SRC/monopole_gp.peec" "$WORK/"
+run monopole_gp.peec
+cp "$csv" "$WORK/zin_monoz.csv"
+for ax in x y; do
+	if [ "$ax" = x ]; then pa="0.0005 0 0"; pb="0.5 0 0"; else pa="0 0.0005 0"; pb="0 0.5 0"; fi
+	sed -e "s/^groundplane = 0\$/groundplane = $ax 0/" -e "s/^node = 1 0 0 0.0005\$/node = 1 $pa/" \
+	    -e "s/^wire = 0 0 0.0005 0 0 0.5 /wire = $pa $pb /" "$SRC/monopole_gp.peec" > "$WORK/monopole_${ax}gp.peec"
+	run "monopole_${ax}gp.peec"
+	paste -d, "$WORK/zin_monoz.csv" "$csv" | awk -F, -v lb="monopole $ax-plane = z" 'NR > 1 {
+		e = sqrt((($10 - $3) ^ 2) + (($11 - $4) ^ 2)) / sqrt(($3 ^ 2) + ($4 ^ 2)); if (!(e <= mx)) mx = e; n++
+	} END {
+		ok = (n == 13) && (mx <= 1e-9);
+		printf "%-24s rows=%d max rel diff=%.3e -> %s (<= 1e-9)\n", lb, n, mx, ok ? "OK" : "NG";
+		exit ok ? 0 : 1
+	}' || status=1
+	awk '{sub(/^frequency = .*/, "frequency = 1.4376e8 1.4376e8 0"); print}
+	     /^title = /{print "farfield = 36 24"}' "$WORK/monopole_${ax}gp.peec" > "$WORK/monopole_${ax}ff.peec"
+	run "monopole_${ax}ff.peec"
+	chk "mono $ax-plane D = 2 x dip" "$(awk -v m="$(getD)" -v d="$dd" 'BEGIN{printf "%.6f", m/d}')" 2.0 0.01
+	chk "mono $ax-plane ff eff" "$(getEff)" 1.0 0.005
+done
+
+# (bi) 3 面のコーナー (x, y, z の鏡像 7 個) : 短い単線の L と C (Grover の平行
+#      フィラメント公式の和)。y 面を外した 2 面 (鏡像 3 個) も同じ式で判定する
+cp "$SRC/corner_wire.peec" "$WORK/"
+run corner_wire.peec
+chk "corner3 L (7 images)" "$(getL)" 1.0457789e-8 0.001
+awk '{sub(/5.8e7 4$/, "5.8e7 1"); print} /^title = /{print "capacitance = 1"}' \
+	"$SRC/corner_wire.peec" > "$WORK/corner_wire_cap.peec"
+run corner_wire_cap.peec
+chk "corner3 C (2 cells)" "$(getC)" 4.3369546e-13 0.001
+sed '/^groundplane = y/d' "$SRC/corner_wire.peec" > "$WORK/corner2_wire.peec"
+run corner2_wire.peec
+chk "corner2 L (3 images)" "$(getL)" 1.0360212e-8 0.001
+sed '/^groundplane = y/d' "$WORK/corner_wire_cap.peec" > "$WORK/corner2_wire_cap.peec"
+run corner2_wire_cap.peec
+chk "corner2 C (3 images)" "$(getC)" 4.2958581e-13 0.001
+
+# 書き間違いは拒否されること : 平行な 2 面 (鏡像が無限級数)、座標の欠落、
+# 面の裏にはみ出す導体
+nbad=0
+for gpl in "groundplane = z 0.5" "groundplane = x" "groundplane = x 0.5"; do
+	awk -v l="$gpl" '{print} /^groundplane = 0$/{print l}' "$SRC/wire_gp.peec" > "$WORK/gp_bad.peec"
+	if (cd "$WORK" && "$PEEC" -n 1 gp_bad.peec > gp_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+done
+if [ "$nbad" -eq 3 ]; then
+	printf "%-24s -> OK (3/3 malformed inputs rejected)\n" "groundplane parser guard"
+else
+	printf "%-24s -> NG (%d/3 malformed inputs rejected)\n" "groundplane parser guard" "$nbad" >&2
+	status=1
+fi
+
+# (bl) 有限の地板 (plate) が無限地板 (鏡像法の平均電位法) に収束すること
+getCport() { awk -F, -v tp="$TWOPI" 'NR==2{printf "%.9e", -1/(tp*$2*$4)}' "$csv"; }
+cp "$SRC/finite_gp.peec" "$WORK/"
+run finite_gp.peec
+c80=$(getCport)
+chk "finite plate C -> image" "$c80" 4.3091894e-13 0.005
+sed -e 's/^plate = .*/plate = -0.02 -0.02 0  0.04 0 0  0 0.04 0  1e-5 5.8e7 8 8/' \
+    -e 's/^node = 9 .*/node = 9 -0.02 -0.02 0/' "$SRC/finite_gp.peec" > "$WORK/finite_gp40.peec"
+run finite_gp40.peec
+awk -v a="$(getCport)" -v b="$c80" -v e=4.3091894e-13 'BEGIN {
+	e40 = (a / e) - 1; e80 = (b / e) - 1;
+	ok = (e40 < 0) && (e80 < 0) && (-e40 > -2 * e80);
+	printf "%-24s err(W=40mm)=%+.4f%% err(W=80mm)=%+.4f%% -> %s (both < 0, |e40| > 2|e80|)\n", "finite plate convergence", e40 * 100, e80 * 100, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+
+echo "--- round wire cross-section (skin and proximity)"
+# (bk) 丸線の断面分割 (10 x 10 格子の円内 80 セル) : 地板の鏡像が往復線の帰路
+#      (中心間隔 2.5a)。x = a/delta = 0.3 の低周波漸近 R/R_dc - 1 = x^4 [1/48 + Σ]
+#      で表皮効果 (孤立線) と近接効果 (鏡像との差) を分けて判定する
+cp "$SRC/wire_prox.peec" "$WORK/"
+run wire_prox.peec
+cp "$csv" "$WORK/zin_prox_gp.csv"
+sed '/^groundplane/d' "$SRC/wire_prox.peec" > "$WORK/wire_prox_iso.peec"
+run wire_prox_iso.peec
+cp "$csv" "$WORK/zin_prox_iso.csv"
+chk "round sub Rdc" "$(getR)" 2.1952406e-3 1e-6
+lsub=$(getL)
+# zin.csv の 2 行目 (1 Hz = DC 参照) に対する 3 行目の抵抗の増分
+rinc() { awk -F, 'NR == 2 {r0 = $3} NR == 3 {printf "%.12e", ($3 / r0) - 1}' "$1"; }
+chk "round sub skin c_iso" "$(awk -v a="$(rinc "$WORK/zin_prox_iso.csv")" 'BEGIN {printf "%.9e", a / 0.0081}')" 0.0208333333 0.05
+chk "round sub prox c_prox" "$(awk -v g="$(rinc "$WORK/zin_prox_gp.csv")" -v i="$(rinc "$WORK/zin_prox_iso.csv")" \
+	'BEGIN {printf "%.9e", (g - i) / 0.0081}')" 0.041128038 0.03
+# x = 2 (delta = a/2) の孤立線 : Bessel の厳密解 (ka/2) J0(ka)/J1(ka) の増分
+sed -e '/^groundplane/d' -e 's/^frequency = .*/frequency = 1 17469.1696 1/' "$SRC/wire_prox.peec" > "$WORK/wire_prox_x2.peec"
+run wire_prox_x2.peec
+chk "round sub skin x=2" "$(rinc "$csv")" 0.264642906 0.05
+# 内部インダクタンス : 分割しない細線 (表面電流のカーネル) との差 = mu0 l/(8 pi)
+sed -e '/^groundplane/d' -e 's/ 5.8e7 4 10$/ 5.8e7 4/' "$SRC/wire_prox.peec" > "$WORK/wire_prox_thin.peec"
+run wire_prox_thin.peec
+chk "round sub L internal" "$(awk -v a="$lsub" -v b="$(getL)" 'BEGIN {printf "%.9e", a - b}')" 2.0e-8 0.05
+# 鏡像 = 実在の帰路 (6 x 6 格子) : 往復線の Zin = 2 x Zin(鏡像) (体積セルの鏡像の番人)
+sed 's/ 5.8e7 4 10$/ 5.8e7 4 6/' "$SRC/wire_prox.peec" > "$WORK/wire_prox6.peec"
+run wire_prox6.peec
+cp "$csv" "$WORK/zin_prox6.csv"
+awk '/^groundplane/ {next}
+     /^port = / {print "node = 3 0 0 -0.00125"; print "node = 4 0.4 0 -0.00125";
+                 print "wire = 0 0 -0.00125 0.4 0 -0.00125 1e-3 5.8e7 4 6";
+                 print "resistor = 2 4 1e-12"; print "port = 1 3 50"; next}
+     {print}' "$WORK/wire_prox6.peec" > "$WORK/wire_prox_pair.peec"
+run wire_prox_pair.peec
+paste -d, "$WORK/zin_prox6.csv" "$csv" | awk -F, 'NR > 1 {
+	e = sqrt((($10 - (2 * $3)) ^ 2) + (($11 - (2 * $4)) ^ 2)) / sqrt(($10 ^ 2) + ($11 ^ 2)); if (!(e <= mx)) mx = e; n++
+} END {
+	ok = (n == 2) && (mx <= 1e-6);
+	printf "%-24s rows=%d max|Zpair-2Zimg|/|Zpair|=%.3e -> %s (<= 1e-6)\n", "round sub image = pair", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# 断面分割数 0 は拒否
+sed 's/ 5.8e7 4 10$/ 5.8e7 4 0/' "$SRC/wire_prox.peec" > "$WORK/wire_prox_bad.peec"
+if (cd "$WORK" && "$PEEC" -n 1 wire_prox_bad.peec > wire_prox_bad.out 2>&1); then
+	printf "%-24s -> NG (wire with 0 cross-section cells accepted)\n" "round sub parser guard" >&2
+	status=1
+else
+	printf "%-24s -> OK (wire with 0 cross-section cells rejected)\n" "round sub parser guard"
+fi
+
 echo "--- near field"
 # near.csv の第 n データ行 (1 始まり) から 1 列を取り出す
 nfcol() { awk -F, -v r="$2" -v c="$3" 'NR == (r + 1) {printf "%.9e", $c}' "$WORK/$1"; }
@@ -545,6 +889,79 @@ chk "pw standing Ey (l/8)" "$(nfcol nearpw.csv 2 8)" 1.41421356237 0.000001
 chk "pw standing Ey (l/4)" "$(nfcol nearpw.csv 3 8)" 2.0 0.000001
 chk "pw standing Hx (z=0)" "$(nfcol nearpw.csv 1 11)" "$(awk -v e="$ETA0" 'BEGIN{printf "%.12e", 2/e}')" 0.000001
 chk "pw standing Hx (l/2)" "$(nfcol nearpw.csv 5 11)" "$(awk -v e="$ETA0" 'BEGIN{printf "%.12e", -2/e}')" 0.000001
+
+# (bf) 複数の平面波の同時入射。逆向きの 2 波は自由空間の定在波
+#      E_z = -2 cos(kx)、H_y = -(2j/η0) sin(kx) (散乱体は e^・t^ = 0 で結合しない)
+cp "$SRC/pw_counter.peec" "$WORK/"
+run pw_counter.peec
+awk -F, -v e="$ETA0" 'NR > 1 {
+	PI = atan2(0, -1); k = 2 * PI / 2; x = $2;
+	ez = -2 * cos(k * x); hy = -2 * sin(k * x) / e;
+	d = sqrt((($9 - ez) ^ 2) + ($10 ^ 2)); if (!(d <= de)) de = d;
+	d = sqrt(($13 ^ 2) + (($14 - hy) ^ 2)) * e; if (!(d <= dh)) dh = d;
+	n++
+} END {
+	ok = (n == 3) && (de <= 2e-6) && (dh <= 2e-6);
+	printf "%-24s points=%d max|dEz|=%.3e max|dHy|*eta0=%.3e -> %s (<= 2e-6)\n", "pw counter standing wave", n, de, dh, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/nearpw.csv" || status=1
+# 重ね合わせ : 2 波の同時入射の Voc と散乱遠方界 = 1 波ずつの実行の和
+#   (非対称な折れ曲がりダイポール、2 波目は振幅 0.7・位相 40°)
+sed 's/^planewave = .*/planewave = 30 45 1 1.0\nplanewave = 120 255 2 0.7 40/' "$SRC/bent_pw.peec" > "$WORK/pw_two.peec"
+run pw_two.peec
+cp "$WORK/pw.csv" "$WORK/pw_two.csv"
+cp "$WORK/farpw.csv" "$WORK/farpw_two.csv"
+sed 's/^planewave = .*/planewave = 30 45 1 1.0/' "$SRC/bent_pw.peec" > "$WORK/pw_w1.peec"
+run pw_w1.peec
+cp "$WORK/pw.csv" "$WORK/pw_w1.csv"
+cp "$WORK/farpw.csv" "$WORK/farpw_w1.csv"
+sed 's/^planewave = .*/planewave = 120 255 2 0.7 40/' "$SRC/bent_pw.peec" > "$WORK/pw_w2.peec"
+run pw_w2.peec
+paste -d, "$WORK/pw_two.csv" "$WORK/pw_w1.csv" "$WORK/pw.csv" | awk -F, 'NR > 1 {
+	er = $10 + $17; ei = $11 + $18;
+	d = sqrt((($3 - er) ^ 2) + (($4 - ei) ^ 2)) / sqrt((er * er) + (ei * ei)); if (!(d <= mx)) mx = d; n++
+} END {
+	ok = (n == 1) && (mx <= 1e-9);
+	printf "%-24s rel.diff=%.3e -> %s (<= 1e-9)\n", "pw superposition (Voc)", mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# farpw.csv の RCS 列は 1 波目の振幅で規格化するので、電界 rE_s (4 成分) で比べる
+paste -d, "$WORK/farpw_two.csv" "$WORK/farpw_w1.csv" "$WORK/farpw.csv" | awk -F, 'NR > 1 {
+	d = 0; a = 0;
+	for (c = 4; c <= 7; c++) {x = $c - ($(c + 9) + $(c + 18)); d += x * x; a += $c * $c}
+	d = sqrt(d); a = sqrt(a); if (!(d <= mx)) mx = d; if (a > am) am = a; n++
+} END {
+	r = mx / am; ok = (n == 888) && (r <= 1e-8);
+	printf "%-24s dirs=%d max|dF|/max|F|=%.3e -> %s (<= 1e-8)\n", "pw superposition (farpw)", n, r, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# 地板あり : 入射波ごとに反射波が付くこと (λ/4 モノポール、2 波)
+sed -e 's/^frequency = .*/frequency = 1.4376e8 1.4376e8 0/' \
+    -e 's/^title = .*/title = monopole, two plane waves\nplanewave = 60 0 1 1.0\nplanewave = 30 90 1 0.5 -60/' \
+    "$SRC/monopole_gp.peec" > "$WORK/mono_two.peec"
+run mono_two.peec
+cp "$WORK/pw.csv" "$WORK/pw_mono_two.csv"
+sed '/^planewave = 30 90 1 0.5 -60$/d' "$WORK/mono_two.peec" > "$WORK/mono_w1.peec"
+run mono_w1.peec
+cp "$WORK/pw.csv" "$WORK/pw_mono_w1.csv"
+sed '/^planewave = 60 0 1 1.0$/d' "$WORK/mono_two.peec" > "$WORK/mono_w2.peec"
+run mono_w2.peec
+paste -d, "$WORK/pw_mono_two.csv" "$WORK/pw_mono_w1.csv" "$WORK/pw.csv" | awk -F, 'NR > 1 {
+	er = $10 + $17; ei = $11 + $18;
+	d = sqrt((($3 - er) ^ 2) + (($4 - ei) ^ 2)) / sqrt((er * er) + (ei * ei)); if (!(d <= mx)) mx = d; n++
+} END {
+	ok = (n == 1) && (mx <= 1e-9);
+	printf "%-24s rel.diff=%.3e -> %s (<= 1e-9)\n", "pw superposition (gp)", mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# 上限 (PW_MAX = 8 行) を超える planewave は拒否
+awk '/^planewave/ {if (!done) {for (i = 0; i < 9; i++) print "planewave = 90 0 1 1.0"; done = 1} next} {print}' "$SRC/pw_counter.peec" > "$WORK/pw_bad.peec"
+if (cd "$WORK" && "$PEEC" -n 1 pw_bad.peec > pw_bad.out 2>&1); then
+	printf "%-24s -> NG (9 planewave lines must be rejected)\n" "planewave count guard" >&2
+	status=1
+else
+	printf "%-24s -> OK (9 planewave lines rejected)\n" "planewave count guard"
+fi
 
 # (ao) 閉ループの磁界遮蔽 : 中心で H_tot/H_inc = 1 - j w mu0 G A/(R + j w L)
 #      (ファラデー + Grover の L + Biot-Savart の中心磁界 G = 2 sqrt(2)/(pi s))
@@ -695,6 +1112,117 @@ sed -e 's/^frequency = .*/frequency = 1.4376e8 1.4376e8 0/' \
 run mono_pw.peec
 cp "$WORK/far.csv" "$WORK/far_mono.csv"
 recip "$WORK/mono_pw.peec" "$WORK/far_mono.csv" 1.4376e8 60 0 1
+
+# (bj) コーナーの相反 : 送信の鏡像 7 個 (farfield) と受信の反射波 7 個 (planewave、
+#      面ごとの位相 2 k r^_a c_a の和) が整合すること。面は原点から外した位置。
+#      面の裏・z 面の下は除き、各面の手前 (cos phi > 0、sin phi > 0) の方向で判定
+awk '{print} /^title = /{print "groundplane = -0.3"; print "groundplane = x -0.25"; print "groundplane = y -0.2"}' \
+	"$SRC/bent_pw.peec" > "$WORK/bent_corner3.peec"
+run bent_corner3.peec
+cp "$WORK/far.csv" "$WORK/far_corner3.csv"
+chk "corner3 ff efficiency" "$(getEff)" 1.0 0.005
+for spec in "60 30 1" "30 45 2" "75 60 2" "45 15 1" "85 75 1"; do
+	# shellcheck disable=SC2086
+	recip "$WORK/bent_corner3.peec" "$WORK/far_corner3.csv" 1.5e8 $spec
+done
+# 2 面 (x, z) : y < 0 の方向も使える
+sed '/^groundplane = y/d' "$WORK/bent_corner3.peec" > "$WORK/bent_corner2.peec"
+run bent_corner2.peec
+cp "$WORK/far.csv" "$WORK/far_corner2.csv"
+chk "corner2 ff efficiency" "$(getEff)" 1.0 0.005
+for spec in "60 330 2" "80 300 1" "40 0 1"; do
+	# shellcheck disable=SC2086
+	recip "$WORK/bent_corner2.peec" "$WORK/far_corner2.csv" 1.5e8 $spec
+done
+
+echo "--- higher-order current basis (basis = 1)"
+# (bm) 区分線形の電流基底 (basis.c) : 独立実装 (tools/basis_study.py) との一致、
+#      粗い格子での精度、放射効率、鏡像、対称性、送受の相反、低周波の極限
+addbasis() { awk '{print} /^title = /{print "basis = 1"}' "$1"; }
+zrel() { awk -F, -v r="$1" -v x="$2" 'NR == 2 {printf "%.9e", sqrt((($3 - r) ^ 2) + (($4 - x) ^ 2)) / sqrt((r * r) + (x * x))}' "$csv"; }
+cp "$SRC/basis_dipole.peec" "$WORK/"
+run basis_dipole.peec
+r1n4=$(getR)
+chk "basis1 ff efficiency" "$(getEff)" 1.0 0.005
+awk -v e="$(zrel 70.05859 -4.727462)" 'BEGIN {ok = (e <= 2e-4);
+	printf "%-24s |dZ|/|Z|=%.3e -> %s (<= 2e-4)\n", "basis1 = study (4/arm)", e, ok ? "OK" : "NG"; exit ok ? 0 : 1}' || status=1
+sed 's/ 5.8e7 4$/ 5.8e7 8/' "$SRC/basis_dipole.peec" > "$WORK/basis_dipole8.peec"
+run basis_dipole8.peec
+r1n8=$(getR)
+awk -v e="$(zrel 71.43439 -1.758106)" 'BEGIN {ok = (e <= 2e-4);
+	printf "%-24s |dZ|/|Z|=%.3e -> %s (<= 2e-4)\n", "basis1 = study (8/arm)", e, ok ? "OK" : "NG"; exit ok ? 0 : 1}' || status=1
+# 粗い格子での精度 : 参照は従来の基底の片腕 32 分割
+for nd in 4 8 32; do
+	sed -e '/^basis/d' -e "s/ 5.8e7 4\$/ 5.8e7 $nd/" "$SRC/basis_dipole.peec" > "$WORK/basis0_dipole$nd.peec"
+	run "basis0_dipole$nd.peec"
+	eval "r0n$nd=\$(getR)"
+done
+awk -v a="$r1n4" -v b="$r0n4" -v c="$r1n8" -v d="$r0n8" -v r="$r0n32" 'BEGIN {
+	e14 = a - r; e04 = b - r; e18 = c - r; e08 = d - r;
+	ok = ((e14 < 0 ? -e14 : e14) * 3 <= (e04 < 0 ? -e04 : e04)) && ((e18 < 0 ? -e18 : e18) < (e08 < 0 ? -e08 : e08));
+	printf "%-24s Rin err 4/arm %+.3f vs %+.3f, 8/arm %+.3f vs %+.3f ohm -> %s (4/arm <= 1/3, 8/arm smaller)\n", "basis1 coarse accuracy", e14, e04, e18, e08, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# 鏡像 : モノポール = ダイポール/2 (全周波数)
+addbasis "$SRC/dipole_halfwave.peec" > "$WORK/basis_dh.peec"
+run basis_dh.peec
+cp "$csv" "$WORK/zin_basis_dh.csv"
+addbasis "$SRC/monopole_gp.peec" > "$WORK/basis_mono.peec"
+run basis_mono.peec
+paste -d, "$WORK/zin_basis_dh.csv" "$csv" | awk -F, 'NR > 1 {
+	e = sqrt((($10 - ($3 / 2)) ^ 2) + (($11 - ($4 / 2)) ^ 2)) / sqrt((($3 / 2) ^ 2) + (($4 / 2) ^ 2)); if (!(e <= mx)) mx = e; n++
+} END {
+	ok = (n == 13) && (mx <= 1e-6);
+	printf "%-24s rows=%d max rel=%.3e -> %s (<= 1e-6)\n", "basis1 monopole = dip/2", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# Galerkin の対称性 : 2 素子アレイの S21 = S12
+sed '/^nearfield/d' "$SRC/array_dipoles.peec" > "$WORK/basis_arr0.peec"
+addbasis "$WORK/basis_arr0.peec" > "$WORK/basis_arr.peec"
+run basis_arr.peec
+awk 'NF == 9 && $1 !~ /^[!#]/ {d = sqrt((($4 - $6) ^ 2) + (($5 - $7) ^ 2)) / sqrt(($4 ^ 2) + ($5 ^ 2)); n++}
+END {ok = (n == 1) && (d <= 1e-9);
+	printf "%-24s |S21-S12|/|S21|=%.3e -> %s (<= 1e-9)\n", "basis1 2-port symmetry", d, ok ? "OK" : "NG"; exit ok ? 0 : 1}' "$WORK/peec.s2p" || status=1
+# 送受の相反 (遠方界の傾斜関数の項と平面波の右辺の電荷行)
+addbasis "$SRC/bent_pw.peec" > "$WORK/basis_bent.peec"
+run basis_bent.peec
+cp "$WORK/far.csv" "$WORK/far_basis_bent.csv"
+for spec in "30 45 1" "90 30 2" "120 255 2"; do
+	# shellcheck disable=SC2086
+	recip "$WORK/basis_bent.peec" "$WORK/far_basis_bent.csv" 1.5e8 $spec
+done
+addbasis "$WORK/mono_pw.peec" > "$WORK/basis_mono_pw.peec"
+run basis_mono_pw.peec
+cp "$WORK/far.csv" "$WORK/far_basis_mono.csv"
+recip "$WORK/basis_mono_pw.peec" "$WORK/far_basis_mono.csv" 1.4376e8 30 90 1
+# 低周波 (1 kHz) では basis = 0 と一致 (K, X の結合は omega^2 で消える)
+awk '{sub(/^frequency = .*/, "frequency = 1e3 1e3 0"); print} /^title = /{print "capacitance = 1"}' \
+	"$SRC/wire_gp.peec" > "$WORK/basis_lf0.peec"
+run basis_lf0.peec
+cp "$csv" "$WORK/zin_basis_lf0.csv"
+addbasis "$WORK/basis_lf0.peec" > "$WORK/basis_lf1.peec"
+run basis_lf1.peec
+paste -d, "$WORK/zin_basis_lf0.csv" "$csv" | awk -F, 'NR == 2 {
+	e = sqrt((($10 - $3) ^ 2) + (($11 - $4) ^ 2)) / sqrt(($3 ^ 2) + ($4 ^ 2));
+	ok = (e <= 1e-9);
+	printf "%-24s rel=%.3e -> %s (<= 1e-9)\n", "basis1 low-f = basis0", e, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# 書き間違い・未対応の組み合わせは拒否 : capacitance = 0、面導体、近傍界、basis = 2
+nbad=0
+awk '{print} /^title = /{print "basis = 1"}' "$SRC/wire_gp.peec" > "$WORK/basis_bad1.peec"
+addbasis "$SRC/compress_cap.peec" | sed '/^compression/d' > "$WORK/basis_bad2.peec"
+addbasis "$SRC/array_dipoles.peec" > "$WORK/basis_bad3.peec"
+sed 's/^basis = 1$/basis = 2/' "$SRC/basis_dipole.peec" > "$WORK/basis_bad4.peec"
+for k in 1 2 3 4; do
+	if (cd "$WORK" && "$PEEC" -n 1 "basis_bad$k.peec" > basis_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+done
+if [ "$nbad" -eq 4 ]; then
+	printf "%-24s -> OK (4/4 unsupported inputs rejected)\n" "basis parser guard"
+else
+	printf "%-24s -> NG (%d/4 unsupported inputs rejected)\n" "basis parser guard" "$nbad" >&2
+	status=1
+fi
 
 # (aq) 周波数分散 (単極 Debye) : 空気ケースとのアドミタンス差が
 #      dY(f) = j w eps0 (epsr*(f) - 1) A/d に一致すること (等電位面間の
@@ -855,6 +1383,66 @@ if [ "$nbad" -eq 3 ]; then
 	printf "%-24s -> OK (3/3 malformed inputs rejected)\n" "lorentz parser guard"
 else
 	printf "%-24s -> NG (%d/3 malformed inputs rejected)\n" "lorentz parser guard" "$nbad" >&2
+	status=1
+fi
+
+# (ba) 導電性の誘電体 : Drude 項 (eps_inf = 3、fp = 4 MHz、g = 1 MHz) と一定の
+#      導電率 (epsr = 4、sigma = 1e-3 S/m)。空気ケースとの差
+#      dY(f) = j w eps0 (epsr*(f) - 1) A/d を 5 点 x (G, B) で解析式と比べる。
+#      ddy <ファイル> <a/b の式の種類> : 最大相対誤差と点数
+ddy() {
+	paste -d, "$1" "$csv" | awk -F, -v kind="$2" 'BEGIN {
+		PI = atan2(0, -1); e0 = 8.854187817620389e-12; K = e0 * 0.0016 / 4e-4
+	}
+	NR > 1 {
+		f = $2; w = 2 * PI * f;
+		da = ($3 * $3) + ($4 * $4);     g1 = $3 / da;  b1 = -$4 / da;
+		db = ($10 * $10) + ($11 * $11); g2 = $10 / db; b2 = -$11 / db;
+		if (kind == "drude") {
+			fp = 4e6; g = 1e6; den = (f ^ 4) + ((f * g) ^ 2);
+			a = 3 - (fp * fp * f * f / den); b = -(fp * fp * f * g / den)
+		} else {
+			a = 4; b = -1e-3 / (w * e0)
+		}
+		eG = w * K * (-b); eB = w * K * (a - 1);
+		dg = ((g1 - g2) / eG) - 1; if (dg < 0) dg = -dg; if (!(dg <= mx)) mx = dg;
+		dbv = ((b1 - b2) / eB) - 1; if (dbv < 0) dbv = -dbv; if (!(dbv <= mx)) mx = dbv;
+		n++
+	} END {printf "%d %.3e\n", n, mx}'
+}
+for kind in drude sigma; do
+	cp "$SRC/diel_$kind.peec" "$WORK/"
+	run "diel_$kind.peec"
+	cp "$csv" "$WORK/zin_$kind.csv"
+	sed '/^dielectric/d' "$SRC/diel_$kind.peec" > "$WORK/diel_${kind}_air.peec"
+	run "diel_${kind}_air.peec"
+	cp "$csv" "$WORK/zin_${kind}_air.csv"
+	set -- $(ddy "$WORK/zin_$kind.csv" "$kind")
+	awk -v n="$1" -v e="$2" -v lb="$kind dY (5 freqs)" 'BEGIN {
+		ok = (n == 5) && (e <= 2e-3);
+		printf "%-24s freqs=%d max rel err=%.3e -> %s (<= 2e-3)\n", lb, n, e, ok ? "OK" : "NG";
+		exit ok ? 0 : 1
+	}' || status=1
+done
+# epsr = 1 でも導電性があればセルを作る (分極なし・伝導だけ) : G = sigma A/d = 4 mS
+sed 's/ 0.0004 4 8 8 2 0 4 sigma 1e-3$/ 0.0004 1 8 8 2 0 1 sigma 1e-3/' "$SRC/diel_sigma.peec" > "$WORK/diel_sigma1.peec"
+run diel_sigma1.peec
+cp "$csv" "$WORK/zin_sigma1.csv"
+chk "sigma brick (epsr=1) G" "$(paste -d, "$WORK/zin_sigma1.csv" "$WORK/zin_sigma_air.csv" | awk -F, 'NR == 2 {
+	print ($3 / (($3 * $3) + ($4 * $4))) - ($10 / (($10 * $10) + ($11 * $11)))}')" 4e-3 1e-3
+
+# 書き間違いは拒否されること : Drude の fp <= 0・g <= 0・語の不足、
+# 導電率 <= 0 (2 通り)、tand と導電率の併用
+nbad=0
+for dl in "0.0004 3 8 8 2 0 3 drude 0 1e6" "0.0004 3 8 8 2 0 3 drude 4e6 0" "0.0004 3 8 8 2 0 3 drude 4e6" \
+          "0.0004 4 8 8 2 0 4 sigma 0" "0.0004 4 8 8 2 0 4 sigma -1e-3" "0.0004 4 8 8 2 0.01 4 sigma 1e-3"; do
+	sed "s/ 0.0004 4 8 8 2 0 4 sigma 1e-3\$/ $dl/" "$SRC/diel_sigma.peec" > "$WORK/diel_bad.peec"
+	if (cd "$WORK" && "$PEEC" -n 1 diel_bad.peec > diel_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+done
+if [ "$nbad" -eq 6 ]; then
+	printf "%-24s -> OK (6/6 malformed inputs rejected)\n" "drude/sigma parser guard"
+else
+	printf "%-24s -> NG (%d/6 malformed inputs rejected)\n" "drude/sigma parser guard" "$nbad" >&2
 	status=1
 fi
 
@@ -1356,6 +1944,203 @@ if [ "$nbad" -eq 4 ]; then
 	printf "%-24s -> OK (4/4 malformed inputs rejected)\n" "mixedmode parser guard"
 else
 	printf "%-24s -> NG (%d/4 malformed inputs rejected)\n" "mixedmode parser guard" "$nbad" >&2
+	status=1
+fi
+
+echo "--- transmission line (tline)"
+# (az) 伝送線路 : 進行波の関係 (Branin) で MNA に組んだ線路を、tan / tanh を使う
+#      教科書の入力インピーダンス式・整合線路の S・時間領域の遅延と比べる。
+#      tlzin <損失dB> : zin.csv と Zin = Z0 (ZL + Z0 tanh γl)/(Z0 + ZL tanh γl)
+#      (Z0 = 50, ZL = 100, td = 1 ns, γl = L ln10/20 + j 2π f td) の最大相対誤差。
+#      tanh は θ = π/2 で発散するので、分子分母に cosh γl を掛けた
+#      Zin = Z0 (ZL ch + Z0 sh)/(Z0 ch + ZL sh) (ch = cosh γl、sh = sinh γl) で組む
+#      (gawk は 0 除算で停止し、mawk は NaN を黙って比較から外す)
+tlzin() {
+	awk -F, -v L="$1" 'NR > 1 {
+		PI = atan2(0, -1); z0 = 50; zl = 100;
+		x = L * log(10) / 20; y = 2 * PI * $2 * 1e-9;
+		cx = (exp(x) + exp(-x)) / 2; sx = (exp(x) - exp(-x)) / 2;
+		chr = cx * cos(y); chi = sx * sin(y); shr = sx * cos(y); shi = cx * sin(y);
+		nr = (zl * chr) + (z0 * shr); ni = (zl * chi) + (z0 * shi);
+		dr = (z0 * chr) + (zl * shr); di = (z0 * chi) + (zl * shi); dd = (dr * dr) + (di * di);
+		er = z0 * ((nr * dr) + (ni * di)) / dd; ei = z0 * ((ni * dr) - (nr * di)) / dd;
+		e = sqrt((($3 - er) ^ 2) + (($4 - ei) ^ 2)) / sqrt((er * er) + (ei * ei)); if (!(e <= mx)) mx = e; n++
+	} END {printf "%d %.3e\n", n, mx}' "$csv"
+}
+cp "$SRC/tline_term.peec" "$WORK/"
+run tline_term.peec
+chk "tline lambda/4 Zin" "$(awk -F, 'NR == 3 {print $3}' "$csv")" 25 1e-9
+set -- $(tlzin 0)
+awk -v n="$1" -v e="$2" 'BEGIN {
+	ok = (n == 5) && (e <= 1e-8);
+	printf "%-24s freqs=%d max rel err=%.3e -> %s (<= 1e-8)\n", "tline Zin (lossless)", n, e, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+sed 's/^tline = 1 0 2 0 50 1e-9$/tline = 1 0 2 0 50 1e-9 2/' "$SRC/tline_term.peec" > "$WORK/tline_term_loss.peec"
+run tline_term_loss.peec
+set -- $(tlzin 2)
+awk -v n="$1" -v e="$2" 'BEGIN {
+	ok = (n == 5) && (e <= 1e-8);
+	printf "%-24s freqs=%d max rel err=%.3e -> %s (<= 1e-8)\n", "tline Zin (2 dB loss)", n, e, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+
+# 整合線路 : S11 = S22 = 0、S21 = S12 = a e^{-j 2π f td} (a = 10^(-3/20)、td = 2 ns)
+cp "$SRC/tline_matched.peec" "$WORK/"
+run tline_matched.peec
+awk 'NF == 9 && $1 !~ /^[!#]/ {
+	PI = atan2(0, -1); a = exp(-3 * log(10) / 20); ph = 2 * PI * $1 * 2e-9;
+	er = a * cos(ph); ei = -a * sin(ph);
+	d = sqrt(($2 ^ 2) + ($3 ^ 2) + ($8 ^ 2) + ($9 ^ 2) + (($4 - er) ^ 2) + (($5 - ei) ^ 2) + (($6 - er) ^ 2) + (($7 - ei) ^ 2));
+	if (!(d <= mx)) mx = d; n++
+} END {
+	ok = (n == 10) && (mx <= 1e-9);
+	printf "%-24s freqs=%d max|S-S_exact|=%.3e -> %s (<= 1e-9)\n", "tline matched S (3 dB)", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/peec.s2p" || status=1
+
+# TDR : y(t) = Γ x(t - 2 td)、Γ = 0.5、2 td = 2.5 ns = 32 dt (循環)
+cp "$SRC/tline_tdr.peec" "$WORK/"
+run tline_tdr.peec
+awk -F, '$1 == "X" {x[nx++] = $5} $1 == "S" {y[ny++] = $5}
+END {
+	for (k = 0; k < ny; k++) {d = y[k] - (0.5 * x[(k - 32 + nx) % nx]); if (d < 0) d = -d; if (!(d <= mx)) mx = d}
+	ok = (nx == 128) && (ny == 128) && (mx <= 1e-9);
+	printf "%-24s max|y-G x(t-2td)|=%.3e -> %s (<= 1e-9)\n", "tline TDR delay", mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/tran.csv" || status=1
+
+# PEEC 構造との接続 : 半波長ダイポールを線路 (Z0 = 50、td = 1 ns) の先で測ると
+#   Zin = Z0 (Zd + j Z0 tan θ)/(Z0 + j Zd tan θ)、Zd は線路なしのダイポールの Zin
+# (容量性 + 遅延の PEEC に浮いた端子対で繋ぐ : 端子電流は行き帰りで等しいので
+#  総電荷の保存を壊さない)
+cp "$SRC/dipole_halfwave.peec" "$WORK/"
+run dipole_halfwave.peec
+cp "$csv" "$WORK/zin_tl_dip0.csv"
+sed 's/^port = 1 2 50$/port = 10 0 50\ntline = 10 0 1 2 50 1e-9/' "$SRC/dipole_halfwave.peec" > "$WORK/tline_dipole.peec"
+run tline_dipole.peec
+cp "$csv" "$WORK/zin_tl_dip.csv"
+paste -d, "$WORK/zin_tl_dip0.csv" "$WORK/zin_tl_dip.csv" | awk -F, 'NR > 1 {
+	PI = atan2(0, -1); z0 = 50; th = 2 * PI * $2 * 1e-9; c = cos(th); s = sin(th);
+	# Zin = Z0 (Zd cos θ + j Z0 sin θ)/(Z0 cos θ + j Zd sin θ) (tan の発散を避ける形)
+	nr = $3 * c; ni = ($4 * c) + (z0 * s); dr = (z0 * c) - ($4 * s); di = $3 * s; dd = (dr * dr) + (di * di);
+	er = z0 * ((nr * dr) + (ni * di)) / dd; ei = z0 * ((ni * dr) - (nr * di)) / dd;
+	e = sqrt((($10 - er) ^ 2) + (($11 - ei) ^ 2)) / sqrt((er * er) + (ei * ei)); if (!(e <= mx)) mx = e; n++
+} END {
+	ok = (n == 13) && (mx <= 1e-7);
+	printf "%-24s freqs=%d max rel err=%.3e -> %s (<= 1e-7)\n", "tline-fed dipole", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+
+# 圧縮経路 : 線路の端子電流は前処理の回路側 (Schur 補元) に入る。近似が入らない
+# 規模なので密経路とビット単位で一致する (不変条件 16)
+sed 's/^end$/compression = 1\nend/' "$WORK/tline_dipole.peec" > "$WORK/tline_dipole_c.peec"
+run tline_dipole_c.peec
+paste -d, "$WORK/zin_tl_dip.csv" "$csv" | awk -F, 'NR > 1 {
+	e = sqrt((($3 - $10) ^ 2) + (($4 - $11) ^ 2)) / sqrt(($3 * $3) + ($4 * $4)); if (!(e <= mx)) mx = e; n++
+} END {
+	ok = (n == 13) && (mx <= 1e-12);
+	printf "%-24s max rel diff=%.3e -> %s (<= 1e-12)\n", "tline compress = dense", mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+
+# 書き間違いは拒否されること : 語の不足、Z0 <= 0、遅延 <= 0、損失 < 0、
+# 端子対の 2 ノードが同一
+nbad=0
+for tl in "tline = 1 0 2 0 50" "tline = 1 0 2 0 0 1e-9" "tline = 1 0 2 0 50 -1e-9" \
+          "tline = 1 0 2 0 50 1e-9 -3" "tline = 1 1 2 0 50 1e-9"; do
+	sed "s/^tline = .*/$tl/" "$SRC/tline_term.peec" > "$WORK/tline_bad.peec"
+	if (cd "$WORK" && "$PEEC" -n 1 tline_bad.peec > tline_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+done
+if [ "$nbad" -eq 5 ]; then
+	printf "%-24s -> OK (5/5 malformed inputs rejected)\n" "tline parser guard"
+else
+	printf "%-24s -> NG (%d/5 malformed inputs rejected)\n" "tline parser guard" "$nbad" >&2
+	status=1
+fi
+
+# (bd) RLGC 線路 (tline ... rlgc) : 電信方程式の Zin (複素 Z0・γ)、集中定数の
+#      梯子 (独立なモデル)、無損失の rlgc = Z0/遅延の形
+tlrlgc() {
+	awk -F, -v len=0.5 -v r="$1" -v l=2.5e-7 -v g="$2" -v c=1e-10 -v rs="$3" -v tand="$4" -v zl=100 '
+	function csq(ar, ai,   m, a) {m = sqrt(sqrt((ar * ar) + (ai * ai))); a = atan2(ai, ar) / 2; SR = m * cos(a); SI = m * sin(a)}
+	NR > 1 {
+		PI = atan2(0, -1); f = $2; w = 2 * PI * f;
+		zr = r + (rs * sqrt(f)); zi = w * l; yr = g + (w * c * tand); yi = w * c;
+		yy = (yr * yr) + (yi * yi); qr = ((zr * yr) + (zi * yi)) / yy; qi = ((zi * yr) - (zr * yi)) / yy;
+		csq(qr, qi); z0r = SR; z0i = SI;
+		csq((zr * yr) - (zi * yi), (zr * yi) + (zi * yr)); x = SR * len; y = SI * len;
+		cx = (exp(x) + exp(-x)) / 2; sx = (exp(x) - exp(-x)) / 2;
+		chr = cx * cos(y); chi = sx * sin(y); shr = sx * cos(y); shi = cx * sin(y);
+		nr = (zl * chr) + ((z0r * shr) - (z0i * shi)); ni = (zl * chi) + ((z0r * shi) + (z0i * shr));
+		dr = ((z0r * chr) - (z0i * chi)) + (zl * shr); di = ((z0r * chi) + (z0i * chr)) + (zl * shi);
+		tr = (z0r * nr) - (z0i * ni); ti = (z0r * ni) + (z0i * nr); dd = (dr * dr) + (di * di);
+		er = ((tr * dr) + (ti * di)) / dd; ei = ((ti * dr) - (tr * di)) / dd;
+		e = sqrt((($3 - er) ^ 2) + (($4 - ei) ^ 2)) / sqrt((er * er) + (ei * ei)); if (!(e <= mx)) mx = e; n++
+	} END {printf "%d %.3e\n", n, mx}' "$csv"
+}
+cp "$SRC/tline_rlgc.peec" "$WORK/"
+run tline_rlgc.peec
+set -- $(tlrlgc 5 1e-4 1e-3 0.01)
+awk -v n="$1" -v e="$2" 'BEGIN {
+	ok = (n == 5) && (e <= 1e-8);
+	printf "%-24s freqs=%d max rel err=%.3e -> %s (<= 1e-8)\n", "tline rlgc Zin", n, e, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# 梯子 : T 形 N 段 (直列 R/2·L/2、並列 G·C)。Rs = tanδ = 0 の分布定数と比べる
+sed -e 's/ 1e-10 1e-3 0.01$/ 1e-10/' -e 's/^frequency = .*/frequency = 1e6 2e8 4/' "$SRC/tline_rlgc.peec" > "$WORK/tline_rlgc0.peec"
+run tline_rlgc0.peec
+cp "$csv" "$WORK/zin_rlgc0.csv"
+for N in 32 64; do
+	awk -v N="$N" 'BEGIN {
+		len = 0.5; R = 5; L = 2.5e-7; G = 1e-4; C = 1e-10; d = len / N;
+		print "OpenPEEC 1 0"; print "title = RLGC ladder (T sections)";
+		for (k = 0; k < N; k++) {
+			a = 1 + (4 * k); x = a + 1; cc = a + 2; y = a + 3; b = a + 4;
+			printf "resistor = %d %d %.15g\n", a, x, R * d / 2;
+			printf "inductor = L%da %d %d %.15g\n", k, x, cc, L * d / 2;
+			printf "inductor = L%db %d %d %.15g\n", k, cc, y, L * d / 2;
+			printf "resistor = %d %d %.15g\n", y, b, R * d / 2;
+			printf "capacitor = %d 0 %.15g\n", cc, C * d;
+			printf "resistor = %d 0 %.15g\n", cc, 1 / (G * d);
+		}
+		printf "resistor = %d 0 100\n", 1 + (4 * N);
+		print "port = 1 0 50"; print "frequency = 1e6 2e8 4"; print "end";
+	}' > "$WORK/tline_ladder$N.peec"
+	run "tline_ladder$N.peec"
+	lerr=$(paste -d, "$WORK/zin_rlgc0.csv" "$csv" | awk -F, 'NR > 1 {
+		e = sqrt((($3 - $10) ^ 2) + (($4 - $11) ^ 2)) / sqrt(($3 ^ 2) + ($4 ^ 2)); if (!(e <= mx)) mx = e
+	} END {printf "%.6e", mx}')
+	if [ "$N" = 32 ]; then l32=$lerr; else l64=$lerr; fi
+done
+awk -v a="$l32" -v b="$l64" 'BEGIN {
+	ok = (b <= 1e-3) && (a >= 3 * b);
+	printf "%-24s err(64)=%.3e err(32)/err(64)=%.2f -> %s (<= 1e-3, >= 3)\n", "tline rlgc vs ladder", b, a / b, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# 無損失の rlgc (Z0 = √(L/C) = 50、td = l √(LC) = 1 ns) = Z0/遅延の形
+cp "$SRC/tline_term.peec" "$WORK/"
+run tline_term.peec
+cp "$csv" "$WORK/zin_tl_z0td.csv"
+sed 's/^tline = 1 0 2 0 50 1e-9$/tline = 1 0 2 0 rlgc 0.2 0 2.5e-7 0 1e-10/' "$SRC/tline_term.peec" > "$WORK/tline_term_rlgc.peec"
+run tline_term_rlgc.peec
+paste -d, "$WORK/zin_tl_z0td.csv" "$csv" | awk -F, 'NR > 1 {
+	e = sqrt((($3 - $10) ^ 2) + (($4 - $11) ^ 2)) / sqrt(($3 ^ 2) + ($4 ^ 2)); if (!(e <= mx)) mx = e; n++
+} END {
+	ok = (n == 5) && (mx <= 1e-12);
+	printf "%-24s freqs=%d max rel diff=%.3e -> %s (<= 1e-12)\n", "tline rlgc = Z0/td", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+nbad=0
+for tl in "tline = 1 0 2 0 rlgc 0.5 5 2.5e-7 1e-4" "tline = 1 0 2 0 rlgc 0.5 5 0 1e-4 1e-10" \
+          "tline = 1 0 2 0 rlgc 0.5 5 2.5e-7 1e-4 0" "tline = 1 0 2 0 rlgc 0.5 -5 2.5e-7 1e-4 1e-10"; do
+	sed "s/^tline = .*/$tl/" "$SRC/tline_rlgc.peec" > "$WORK/tline_bad.peec"
+	if (cd "$WORK" && "$PEEC" -n 1 tline_bad.peec > tline_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+done
+if [ "$nbad" -eq 4 ]; then
+	printf "%-24s -> OK (4/4 malformed inputs rejected)\n" "tline rlgc parser guard"
+else
+	printf "%-24s -> NG (%d/4 malformed inputs rejected)\n" "tline rlgc parser guard" "$nbad" >&2
 	status=1
 fi
 

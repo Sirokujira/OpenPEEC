@@ -7,6 +7,7 @@
 
 集中定数 MNA + 導体形状からの部分要素抽出 (インダクタンス L / 電位係数 P /
 抵抗 R) → 入力インピーダンス Zin(f)、Z / S 行列、電流・電荷分布、遠方界。
+集中定数には伝送線路 (`tline`、TEM 線路を進行波の関係で組む) も含む。
 導体は丸線 (`wire`) / 角線 (`bar`) / 面導体 (`plate` = 矩形、`quad` = 凸四辺形、
 `disk` = 円板)、らせん / 円形ループ (`helix`、直線 `wire` 列に展開)。`plate` は `分割数t` (省略時 1) を 2 以上にすると厚み方向にも
 分割し、体積セル (矩形バー) として厚み方向の電流分布 (表皮効果) を解く。
@@ -31,7 +32,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、157 判定)
+# 検証 (解析解・文献値との比較、247 判定)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -42,7 +43,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 157 判定すべて OK (h5py が
+**変更したら必ず `peec_check.sh` を通すこと。** 247 判定すべて OK (h5py が
 無い環境の `peec2h5 converter` だけは SKIP) でなければ完了ではない。
 「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
@@ -61,6 +62,7 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/pe
 | `src/volume.c` | 体積セル (矩形バー) の Hoer–Love 閉形式 (plate の厚み分割) |
 | `src/polygon.c` | 多角形セル (quad/disk パネル) の幾何二重積分 (多角形閉形式) |
 | `src/potential.c` | 電位係数 P と節点容量行列 C = P⁻¹ |
+| `src/basis.c` | 区分線形の電流基底 (basis = 1) の結合 K / X、平面波の右辺と遠方界の傾斜関数の項 |
 | `src/skin.c` | 表皮効果 (丸線は Bessel、角線は合成式) |
 | `src/mna.c` | MNA 番号付けとスタンプ |
 | `src/lu.c` | 複素 LU 分解 (部分ピボット) |
@@ -74,6 +76,7 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/pe
 | `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv` / 平面波の全界 `nearpw.csv`、E / H の遅延ポテンシャル) |
 | `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
 | `tools/peec2h5.py` | CSV → HDF5 変換 (本体の依存を増やさないための外付け) |
+| `tools/basis_study.py` | 電流基底の次数の検討 (純 Python の独立実装。basis = 1 の検証の参照値) |
 
 状態はグローバル変数ではなく `peec_t` コンテキスト構造体 1 個を main で
 確保して関数に渡す。
@@ -147,7 +150,15 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
    桁落ち)。正しく実装すると体積分割の部分和が全体に一致する加法性が機械精度で
    成り立つ。また体積セルの厚み方向再配分は Lp 行列が陽に解くので、`zint_seg()`
    は体積セルに表皮効果の合成式を適用しない (二重計上)。
-   (`thick plate L (Grover)` / `thick plate R (ndivt=1/2)` / `slab skin ratio (extr.)`)
+   bar の断面分割 (`分割数w 分割数t`) も同じ体積セルで、区間の両端ノードを共有する。
+   丸線の断面分割 (`wire` の `断面分割数` n) も同じで、n × n 格子のうち中心が円内の
+   セルを残し、総面積が πa² になるよう格子間隔を伸縮する (DC 抵抗が厳密)。
+   Hoer–Love の交代和は条件数 ~ (区間長/セル幅)³ なので、区間長はセル幅の数百倍
+   以下にする (座標の丸めの差 1e-16 が L に 1e-7 で出る)。
+   (`thick plate L (Grover)` / `thick plate R (ndivt=1/2)` / `slab skin ratio (extr.)` /
+   `bar sub L (Grover)` / `bar sub L (10x4 = 5x2)` / `bar slab = plate slab` /
+   `round sub skin c_iso` / `round sub prox c_prox` / `round sub skin x=2` /
+   `round sub L internal` / `round sub image = pair`)
 7. **多角形セルの規格化と桁落ちフリーの対数項** — パネル (quad/disk) のセルは
    `w̄ = 面積/len` で規格化する ((4) の一般化。`len·w̄ = 面積` なので P の式は
    共通のまま)。`poly_potential()` の対数項は l < 0 の側を恒等式
@@ -161,13 +172,18 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
    銅シートで −24% だった)。
    (`quad sheet Rin (DC)` / `quad sheet L vs plate` / `quad sheet R vs plate (HF)` /
    `quad sheet R (skin at DC)` / `disk C (extrapolated)` / `annulus Rin (DC)`)
-8. **鏡像の符号規約 (groundplane)** — 鏡像セルは幾何鏡像 (`seg_mirror()`,
+8. **鏡像の符号規約 (groundplane)** — 鏡像セルは幾何鏡像 (`seg_image()`,
    partial.c)。Lp は `(t₁·t₂′) I(s₁, M s₂)` を**減算** (= 鏡像電流の
-   水平反転・垂直保存)、P は鏡像電荷 −q の相互項を減算、**自己項 (対角) も
-   自分の鏡像との相互項を引く**。遠方界の鏡像も同じ規約 (鏡像位置 + t′ +
-   電流 −I)。M は等長変換かつ対合なので行列の対称性は保たれる。
+   面に平行な成分反転・垂直成分保存)、P は鏡像電荷 −q の相互項を減算、
+   **自己項 (対角) も自分の鏡像との相互項を引く**。遠方界・近傍界・平面波の
+   反射波も同じ規約 (鏡像位置 + t′ + 電流 −I)。M は等長変換かつ対合なので
+   行列の対称性は保たれる。直交する複数の面 (3 枚まで) では面の部分集合
+   m ごとに鏡像が 1 つで、符号は (−1)^|m| (`gp_sign()`。2 回反射した鏡像は
+   **加算**)。平行な 2 面は無限級数になるのでパーサが拒否する。
    (`wire-gp L (images)` / `wire-gp C (to plane)` / `monopole = dipole/2` —
-   モノポール = ダイポール/2 が全符号を同時に判定する)
+   モノポール = ダイポール/2 が全符号を同時に判定する。複数面は
+   `corner3 L (7 images)` / `corner3 C (2 cells)` / `x-plane dipole far` /
+   `monopole x-plane = z` / コーナーの `recip`)
 9. **誘電体は εr* − 1 だけを枝に載せる (二重計上禁止)** — 真空 (ε0) は電位
    係数 P が受け持ち、誘電体の枝は複素比誘電率 εr* = εr(1 − j tanδ) の
    **過剰分だけ**を持つ : `Y = jωε0(εr*−1)A/len = ω(gexc + j cexc)`、
@@ -178,9 +194,13 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
    (mna.c) が周波数ごとの εr*(f) から過剰分だけを組む。定数 tanδ と分散の
    併用は損失の二重計上なので入力検証で拒否する。Lorentz 極
    Δε f0²/(f0²−f²+jfg) は分母の虚部が +jfg (e^{jωt} 規約で因果的・損失側)。
+   導電性の Drude 項 −fp²/(f²−jfg) と導電率 −jσ/(ωε0) は直流で発散するので
+   直流極限の和 ε∞ + ΣΔε = εr に入れない (Y は直流で σA/len に収まる)。
+   導電性があれば εr = 1 でもセルを作る。
    (`dielectric dC (pp)` / `dielectric epsr=1 noop` / `dielectric G (tand)` /
    `dielectric tand=0 noop` / `debye dY (3 freqs)` / `lorentz dY (5 freqs)` /
-   `lorentz+debye dY`)
+   `lorentz+debye dY` / `drude dY (5 freqs)` / `sigma dY (5 freqs)` /
+   `sigma brick (epsr=1) G`)
 10. **遠方界の規格化とポインティング整合** — r E = −j(ωμ0/4π)[N − (N·r̂)r̂]、
     U = |rE|²/(2η0)。係数を触るとパターン (D) は変わらず**効率だけが静かに
     狂う**ため、Prad = ∮U dΩ が Pin = Re(Zin)/2 と一致することが番人になる。
@@ -257,6 +277,38 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
     成り立つ (retardation = 0 では σ_e は吸収分のみ)。
     (`loop RCS sigma(y^)` / `loop sigma_ext (optical)` / `dipole scat energy` /
     `farpw compensation`)
+20. **伝送線路は進行波の関係で組み、T = a e^{−jω td} の偏角が遅延** —
+    端子電流 i1 / i2 (どちらも線路へ流れ込む向き) を未知数に足し、
+    `v1 − Z0 i1 = T (v2 + Z0 i2)`、`v2 − Z0 i2 = T (v1 + Z0 i1)` の 2 行を
+    スタンプする (mna.c)。Z / Y 行列の形は cot / csc を含み ω td = nπ で
+    特異になるが、この形は対角が常に −Z0。exp(+jωt) 規約で e^{−jωtd} が遅延
+    なので、符号を取り違えると反射が前進し S21 の位相が逆に回る。端子対ごとに
+    電流は行き帰りで等しい (同相の経路を作らない) ので、容量性 PEEC の総電荷の
+    保存 (3) を壊さず浮いた端子対で構造に繋げる。損失 dB は無ひずみ線路の
+    片道減衰で、Z0 は実数のまま。`rlgc` の形 (R + Rs√f、G + ωC tanδ) は複素 Z0 と
+    T = e^{−γ·長さ} を同じスタンプに入れるだけ (主値の平方根 Re ≥ 0 で受動側)。
+    未知数ブロックは offS より前 (回路側) なので圧縮経路では前処理の Schur 補元に入る。
+    (`tline Zin (lossless)` / `tline Zin (2 dB loss)` / `tline matched S (3 dB)` /
+    `tline TDR delay` / `tline-fed dipole` / `tline compress = dense` /
+    `tline rlgc Zin` / `tline rlgc vs ladder` / `tline rlgc = Z0/td`)
+21. **励振の重みはポート解の重ね合わせ、Pin は wᴴZw** — `excitation` の重み
+    w_j で電流 (`segi`) と**電荷 (`cellq`) の両方**を重ね合わせる (output.c の
+    `exc_mix()`。近傍界の −∇φ は電荷から来る)。入力電力は相互結合を含む
+    Pin = ½Re(Σ conj(w_i) Z_ij w_j) (`exc_pin()`)。行が無ければ base をそのまま
+    返して従来とビット一致。重みの位相は e^{+j 位相} (電源と同じ規約)。
+    (`array antiphase null` / `array near Ez (x=0)` / `array Pin = Re(wHZw)/2` /
+    `array ff eff (antiphase)` / `array ff eff (in-phase)` /
+    `excitation superposition` / `excitation default`)
+22. **区分線形の電流基底 (basis = 1) は電荷で駆動する傾斜関数** — J = Σ I_k p_k +
+    Σ c_n χ_n、c_n = jω q_n、χ_n は節点 n の電荷セルの半区間上の (L_h − s) ô_h/L_n
+    (ô_h は節点から外向き、節点側の端は seg_t の `nend`)。χ_n で試験すると
+    <χ_n, −∇φ> = φ(節点) − φ̄_n なので節点電位は点電位で、電荷行に
+    jω(Kᵀ I + X c)、KVL 行に + ω² K q を足す (電荷を陽な未知数にする並びが必須)。
+    平面波の右辺 (電荷行に + <χ_n, E_inc>) と遠方界 (c_n χ_n の放射) も同じ関数で
+    足さないと送受の相反が崩れる。ω → 0 で従来に戻り、basis = 0 はビット一致。
+    (`basis1 = study (4/arm)` / `basis1 coarse accuracy` / `basis1 ff efficiency` /
+    `basis1 monopole = dip/2` / `basis1 2-port symmetry` / `basis1 low-f = basis0` /
+    basis 系の `recip`)
 
 ## メモリ
 
@@ -302,6 +354,18 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
    実装との相互検証。コード自身の出力を期待値にすると回帰テストにしかならない。
 4. スクリプトは POSIX sh + awk/grep/sed のみ。CI は Windows でも同じスクリプトを
    Git Bash (`shell: bash`) で走らせる。
+5. **awk は実装差に注意 (CI は gawk、ローカルは mawk のことがある)**。gawk は
+   0 除算で停止し、mawk は inf / NaN を黙って返す。NaN は `if (e > mx) mx = e`
+   の最大値から**黙って抜け落ちる**ので、その点の比較が無かったことになる
+   (実際に踏んだ : tan の発散する θ = π/2 の行がローカルでは比較されず、CI では
+   停止した)。期待値の式は発散点の無い形 (tan より sin/cos、tanh より
+   cosh/sinh) で書き、誤差の最大値は `if (!(e <= mx)) mx = e` と書いて NaN を
+   判定の失敗に変える。点数 (`n == 5` など) も必ず確かめる。
+6. **走っている `peec_check.sh` を編集しない**。sh はスクリプトを逐次読みするので、
+   実行中 (sanitize ビルドだと 1 時間近くかかる) に行を足すと読み位置がずれ、
+   無関係な行で構文エラーや不可解なコマンド (実際に踏んだ : `cp: invalid option
+   -- '8'`) になって止まる。長い検証は写しを `data/sample/` に置いて走らせる
+   (`SRC` はスクリプトの場所から決まる) か、編集を終えてから走らせる。
 
 許容誤差の目安 :
 
@@ -339,23 +403,37 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
 
 ## 既知の制限
 
-- 厚み方向の電流分布 (体積セル) は `plate` の `分割数t` で対応済み。ただし
-  Hoer–Love 閉形式が使えるのは軸・断面がそろった平行バー対のみで、それ以外
-  (遠方・非平行) は中立面リボンの面積分に落ちる。`wire` / `bar` の断面分割は
-  未対応。層間は各格子点で並列接続 (共有ノード、VFI 近似) であり、厚み方向の
-  伝導は陽には解かない。
+- 厚み方向の電流分布 (体積セル) は `plate` の `分割数t` と `bar` の
+  `分割数w 分割数t` (断面分割) で対応済み。ただし Hoer–Love 閉形式が使えるのは
+  軸・断面がそろった平行バー対のみで、それ以外 (遠方・非平行) は中立面リボンの
+  面積分に落ちる。丸線 (`wire`) は `断面分割数` で断面を等面積の階段近似に
+  分割できる (収束は O(セル幅)、n = 10 で抵抗の増分 −2〜3%)。分割しない丸線の
+  表皮効果は Bessel の内部インピーダンス (近接効果は扱わない)。層間・断面内は各ノードで並列接続
+  (共有ノード、VFI 近似) であり、厚み方向・断面内の横方向の伝導は陽には解かない。
 - 面導体は平面パネル (矩形 `plate` / 凸四辺形 `quad` / 円板 `disk`) のみ。
   3 次元曲面 (円筒など) は平面パネルのファセット化で近似する。
-  `quad` / `disk` は厚さ 1 層 (厚み方向分割は plate のみ)。パネルの
+  `quad` / `disk` の厚み方向分割 (`分割数t`) は層を厚みのない多角形の面積分で
+  結合する (plate の層は Hoer–Love) ので少ない層数での誤差が大きい。パネルの
   DC 抵抗は格子の双対幅で決まり、矩形格子では厳密、歪んだ格子・極格子
   では O(格子幅²) の系統誤差を含む (弦近似)。
-- 電流は区間ごと一定、電荷はセルごと一定の低次基底。共振近傍の精度は分割数依存。
-- 地板 (`groundplane`) は z = 一定の無限 PEC 面 1 枚のみ。積分回数は 2 倍に
-  なるが未知数は増えない。導体は z ≥ 地板に置く (下はエラー)。
+- 既定 (basis = 0) は電流が区間ごと一定、電荷がセルごと一定の低次基底。共振近傍の
+  精度は分割数依存 (互い違い格子で Rin は 2 次以上の収束)。`basis = 1` は細線の
+  電流を連続な区分線形にする高次基底 (節点電荷で駆動する傾斜関数の Galerkin、
+  basis.c) で、粗い格子で正確 (Rin 誤差が片腕 4 分割で 1/3、8 分割で 1/2) だが、
+  電荷が区分一定のままなので漸近的には 1 次程度で従来より遅い (電荷も高次に
+  すると節点電位 = セル平均の回路解釈が成り立たない)。面導体・体積セル・誘電体・
+  圧縮・近傍界とは併用不可。独立実装の `tools/basis_study.py` で検討を再現できる。
+  Xin はデルタギャップのギャップ容量で対数的に増えるので収束判定に使わない。
+- 地板 (`groundplane`) は軸に垂直な無限 PEC 面で、互いに直交する 3 枚まで
+  (平行な 2 面・斜めの面は不可)。積分回数は 2^面数 倍になるが未知数は
+  増えない。導体は各面の + 側に置く (はみ出しはエラー)。x / y 面の遠方界は
+  面の手前の半空間を φ の台形則 (面上は重み 1/2) で積分するので、φ 分割数は
+  4 の倍数にして面上を格子点に載せる。
 - 誘電体 (`dielectric`) は直交直方体のみ。損失は一定 tanδ または多極分散
-  (Debye 極 `f de` と Lorentz 極 `lorentz f0 de g` の任意の組合せ) の
-  どちらか (併用は損失の二重計上なので入力検証で拒否)。直流極限が有限で
-  ない模型 (Drude) は未対応。
+  (Debye 極 `f de`、Lorentz 極 `lorentz f0 de g`、導電性の Drude 項
+  `drude fp g` と導電率 `sigma s` の任意の組合せ) のどちらか (併用は損失の
+  二重計上なので入力検証で拒否)。Drude と導電率は直流で発散するので直流極限の
+  和 ε∞ + ΣΔε = εr には入れない (枝のアドミタンスは直流で σA/len に収まる)。
 - 面格子の縁寄せは `grading = 1` (plate/quad 余弦・disk 正弦)。plate の
   メッシュ生成は非一様間隔対応 : 幅・中心・電荷セルは格子座標配列の
   隣接中点 (双対区間) から導く。等間隔時の式は従来と同一で省略時は
@@ -363,17 +441,20 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
   (座標がずれると nodetol マージが外れて接続が切れる)。
   節点の束縛電荷は a–b 面内の双対矩形パネルで表す近似 (表面電荷が a–b 面に
   支配的な配置 — 基板・平行平板 — で正確)。`capacitance = 1` 必須。
-- 遠方界 (`farfield`) の `far.csv` は port #1 の 1 A 励振に対する値。効率が意味を持つのは
+- 遠方界 (`farfield`) の `far.csv` は port #1 の 1 A 励振、または `excitation` の
+  電流励振の重ね合わせ (Pin は相互結合込みの Re(wᴴZw)/2) に対する値。効率が意味を持つのは
   `retardation = 1` のとき (準静的電流は放射を含まない)。平面波併用時の
   `farpw.csv` は誘起電流の散乱界と RCS。光学定理の消光断面積は地板なしのときのみ。
-- 近傍界 (`nearfield`) の `near.csv` は port #1 の 1 A 励振、`nearpw.csv` は
+- 近傍界 (`nearfield`) の `near.csv` は port #1 の 1 A 励振 (または `excitation`)、`nearpw.csv` は
   平面波入射時の全界 (入射 + 反射 + 散乱)。入射界は `retardation` に依らず
   k = ω/c で評価する。観測点はセル寸法
   程度以上離すこと (セル上の積分は数点の求積)。`capacitance = 0` では電荷が
   無いので E は −jωA の項だけ、`retardation = 0` では部分要素と揃えて
   静的 (k = 0) に評価する。
-- 平面波 (`planewave`) は 1 方向・1 偏波の単一入射波 (重ね合わせは実行を分けて
-  線形性で足す)。`pw.csv` はポート間に素子が無いときだけ Voc として読める。
+- 平面波 (`planewave`) は 1 行が 1 波。複数行 (PW_MAX = 8 行まで) は同時入射の
+  重ね合わせ (起電力・入射界・散乱界とも)。leff / RCS は 1 行目の振幅で規格化、
+  光学定理の消光断面積は単一波・地板なしのときだけ。`pw.csv` はポート間に素子が
+  無いときだけ Voc として読める。
 - 過渡応答 (`transient`) は掃引の逆フーリエ変換なので、応答が `1/Δf` 以内に
   減衰しないと巻き込み (時間領域エイリアス) が起きる。Q の高い共振では
   分割数を増やす。時間分解の下限は Δt = 1/(2f_max) で、既定の −40 dB では

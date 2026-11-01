@@ -1,0 +1,29 @@
+# 検証 (bl) : 有限サイズの地板 (plate) → 無限地板 (鏡像法) への収束
+#   短い水平単線 (長さ l = 20 mm、半径 a = 0.5 mm、ndiv = 1) を高さ h = 5 mm に置き、
+#   その下に一辺 W = 80 mm (= 16h) の正方形の薄板 (plate、16 x 16 格子、セル 5 mm = h)
+#   を置く。ポートは単線と板の隅の間 (2 端子の容量、f = 1 kHz で Zin = 1/(j omega C))。
+#
+#   板が無限に広ければ鏡像法と同じで、平均電位法 (ndiv = 1 の対称な 2 セル = 一様電荷)
+#     C_img = 4 pi eps0 l^2 / (I_self - I(2h))
+#     I_self = 2[l asinh(l/a) - sqrt(l^2 + a^2) + a]                  = 0.136274816
+#     I(D)   = 2[l asinh(l/D') - sqrt(l^2 + D'^2) + D'], D' = sqrt(D^2 + a^2)
+#              (D = 2h = 10 mm)                                       = 0.032993205
+#     C_img  = 4.3091894e-13 F   (groundplane = 0 の実行と 7 桁一致)
+#   有限の板は縁から回り込む電束の分だけ C が小さく、W が大きいほど C_img に近づく。
+#   peec_check.sh の判定 :
+#   (1) W = 80 mm : C = C_img (許容 0.5%、実測 -0.15%。板の大きさと格子の誤差)
+#   (2) W = 40 mm (8 x 8 格子、同じセル幅) の誤差 (実測 -0.81%) は W = 80 mm の
+#       2 倍より大きく、どちらも C_img より小さい (下からの収束)
+#   別経路の離散化 (板のパネル格子 vs 鏡像セル) が同じ極限に向かうことの判定で、
+#   有限地板を plate で組むときの格子の目安 (セル幅 <= 高さ) も兼ねる。
+OpenPEEC 1 0
+title = wire over a finite plate ground (converges to the image method)
+capacitance = 1
+node = 1 -0.01 0 0.005
+node = 2 0.01 0 0.005
+node = 9 -0.04 -0.04 0
+wire = -0.01 0 0.005 0.01 0 0.005 5e-4 5.8e7 1
+plate = -0.04 -0.04 0  0.08 0 0  0 0.08 0  1e-5 5.8e7 16 16
+port = 1 9 50
+frequency = 1e3 1e3 0
+end

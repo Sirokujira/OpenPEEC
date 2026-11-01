@@ -2,7 +2,8 @@
 mna.c
 
 修正節点解析 (MNA)
-未知数の並び : [節点電位 (基準除く) | i_L (L 素子) | i_V (電圧源) | i_S (ワイヤ区間)]
+未知数の並び : [節点電位 (基準除く) | i_L (L 素子) | i_V (電圧源) | i_T (伝送線路の
+端子電流、1 本 2 個) | i_S (ワイヤ区間)]
 ワイヤ区間の枝方程式 : v_a - v_b - R_k i_k - jw Σ_m Lp[k][m] i_m = 0
 */
 
@@ -34,6 +35,12 @@ int mna_numbering(peec_t *p, FILE *fp_log)
 	for (int i = 0; i < p->nsrc; i++) {
 		markused(used, p->src[i].n1);
 		markused(used, p->src[i].n2);
+	}
+	for (int i = 0; i < p->ntl; i++) {
+		markused(used, p->tl[i].n1);
+		markused(used, p->tl[i].n2);
+		markused(used, p->tl[i].n3);
+		markused(used, p->tl[i].n4);
 	}
 	for (int i = 0; i < p->nport; i++) {
 		markused(used, p->port[i].n1);
@@ -80,7 +87,8 @@ int mna_numbering(peec_t *p, FILE *fp_log)
 
 	p->offL = p->nnode;
 	p->offV = p->offL + p->nind;
-	p->offS = p->offV + nvsrc;
+	p->offT = p->offV + nvsrc;
+	p->offS = p->offT + (2 * p->ntl);
 	p->nunknown = p->offS + p->nseg;
 
 	/*
@@ -98,7 +106,8 @@ int mna_numbering(peec_t *p, FILE *fp_log)
 	P は H 行列で持てるので密な逆行列は現れない。
 	*/
 	p->offQ = p->nunknown;
-	if (p->compress && p->capacitance && (p->nchg > 0)) {
+	// basis = 1 も同じ並び (電荷行に傾斜関数の結合 K / X を足す、basis.c)
+	if ((p->compress || p->basis) && p->capacitance && (p->nchg > 0)) {
 		if (pot_cells(p)) {
 			printf("%s\n", "*** memory allocation error (potential cells)");
 			return 1;
@@ -125,6 +134,8 @@ int mna_numbering(peec_t *p, FILE *fp_log)
   Lorentz : chi_k = de_k f_k^2/(f_k^2 - f^2 + j f g_k)
           = de_k/(1 - q^2 + j q r)   (q = f/f_k、r = g_k/f_k)
 (各項が因果的で Kramers-Kronig を満たすので、和も満たす)。
+  Drude   : chi_k = -fp_k^2/(f^2 - j f g_k)   (導電性 : 直流導電率 2 pi eps0 fp^2/g)
+  導電率  : chi_k = -j sigma/(w eps0)          (Drude の g -> 無限大の極限)
 Debye 極が 1 個で de = epsr - eps_inf のときが従来の単極で、式は完全に同じ
 (Lorentz 極の分岐は Debye 極の式に触らない : 既存入力は bit 互換)。
 epsr* = a + jb (b <= 0) とすると
@@ -132,7 +143,11 @@ epsr* = a + jb (b <= 0) とすると
 で、-b >= 0 が損失のコンダクタンスになる。極ごとの寄与は
   Debye   : b_k = -de_k q/(1 + q^2) <= 0
   Lorentz : b_k = -de_k q r/((1 - q^2)^2 + (q r)^2) <= 0
-なので、和も必ず損失側に入る。Lorentz では a - 1 が負 (共振の少し上で
+  Drude   : b_k = -(fp/f)^2 (g/f)/(1 + (g/f)^2) <= 0
+  導電率  : b_k = -sigma/(w eps0) <= 0
+なので、和も必ず損失側に入る。Drude / 導電率の項は f -> 0 で -b が 1/f で
+発散するが、Y = w eps0 gfac (-b + ...) の w が打ち消して Y -> sigma A/len
+(有限) に収まる (分極電流の枝が伝導電流の枝になる)。Lorentz では a - 1 が負 (共振の少し上で
 epsr' < 1) になり得て、そのとき枝のサセプタンスは誘導性になる
 (-b > 0 が残るので Y は 0 にならず、Z = 1/Y は有限)。
 */
@@ -142,11 +157,22 @@ static d_complex_t zint_diel(const peec_t *p, const seg_t *s, double omega, doub
 	if (dl->npole > 0) {
 		d_complex_t er = d_complex(dl->epsinf, 0);
 		for (int k = 0; k < dl->npole; k++) {
-			if (dl->plor[k]) {
+			if (dl->pkind[k] == POLE_LORENTZ) {
 				const double q = f / dl->pf[k];
 				const double r = dl->pg[k] / dl->pf[k];
 				er = d_add(er, d_div(d_complex(dl->pde[k], 0),
 					d_complex(1 - (q * q), q * r)));
+				continue;
+			}
+			if (dl->pkind[k] == POLE_DRUDE) {
+				// -fp^2/(f^2 - j f g) = -(fp/f)^2/(1 - j g/f) (f > 0)
+				const double u = dl->pf[k] / f;
+				er = d_add(er, d_div(d_complex(-(u * u), 0),
+					d_complex(1, -dl->pg[k] / f)));
+				continue;
+			}
+			if (dl->pkind[k] == POLE_SIGMA) {
+				er = d_add(er, d_complex(0, -dl->pde[k] / (omega * EPS0)));
 				continue;
 			}
 			er = d_add(er, d_div(d_complex(dl->pde[k], 0),
@@ -191,6 +217,37 @@ static void stamp(sink_t *s, int i, int j, d_complex_t v)
 	sp->ci[sp->nnz] = j;
 	sp->val[sp->nnz] = v;
 	sp->nnz++;
+}
+
+// 複素平方根 (主値 : 実部 >= 0)
+static d_complex_t tl_csqrt(d_complex_t z)
+{
+	const double m = sqrt(d_abs(z));
+	const double a = 0.5 * atan2(z.i, z.r);
+	return d_complex(m * cos(a), m * sin(a));
+}
+
+/*
+RLGC 線路の特性インピーダンスと透過 (tline ... rlgc)
+
+  Zs = R + Rs sqrt(f) + j w L       (直列 : DC 抵抗 + 表皮効果 + インダクタンス)
+  Yp = G + w C tanδ + j w C         (並列 : 漏れ + 誘電損 + 容量)
+  Z0 = sqrt(Zs/Yp)、γ = sqrt(Zs Yp) (どちらも主値 : Re >= 0 で受動・減衰側)
+  T  = e^{-γ len}
+
+一様な TEM 線路の電信方程式の解は、複素 Z0 でも入射波 (v + Z0 i)/2 と
+反射波 (v - Z0 i)/2 に分かれて b1 = T a2、b2 = T a1 になるので、進行波の
+スタンプはそのまま使える (Z0 が実数・T = att e^{-j w td} の場合はその特例)。
+*/
+static void tl_rlgc(const tline_t *t, double omega, d_complex_t *zc, d_complex_t *tt)
+{
+	const double f = omega / (2 * PI);
+	const d_complex_t zs = d_complex(t->r + (t->rs * sqrt(f)), omega * t->l);
+	const d_complex_t yp = d_complex(t->g + (omega * t->c * t->tand), omega * t->c);
+	*zc = tl_csqrt(d_div(zs, yp));
+	const d_complex_t gl = d_rmul(t->len, tl_csqrt(d_mul(zs, yp)));
+	const double ea = exp(-gl.r);
+	*tt = d_complex(ea * cos(gl.i), -ea * sin(gl.i));
 }
 
 // 共通の組み立て。skiplp = 1 なら密なカーネルブロック (Lp / P) を飛ばす
@@ -262,6 +319,62 @@ static void assemble(const peec_t *p, double f, sink_t *s, int skiplp)
 		stamp(s, r, i2, d_complex(-1, 0));
 	}
 
+	/*
+	伝送線路 (tline) : 端子電流 i1 は n1 -> 線路 -> n2、i2 は n3 -> 線路 -> n4
+	(どちらも線路へ流れ込む向き、v1 = v(n1) - v(n2)、v2 = v(n3) - v(n4))。
+	端子対ごとの入射波 a = (v + Z0 i)/2 と反射波 b = (v - Z0 i)/2 が
+	b1 = T a2、b2 = T a1 (T = att e^{-j w td}) で結ばれる進行波 (Branin) の形
+
+	  v1 - Z0 i1 - T (v2 + Z0 i2) = 0
+	  v2 - Z0 i2 - T (v1 + Z0 i1) = 0
+
+	で組む。Z / Y 行列の形 (cot, csc を含む) と違い w td = n pi で特異に
+	ならず、対角は常に -Z0。T の偏角 -w td は exp(+j w t) 規約での遅延。
+	各端子対の電流は行き帰りで等しい (同相の経路を作らない) ので、容量性
+	PEEC の総電荷の保存 (不変条件 3) も壊さない。
+	*/
+	for (int i = 0; i < p->ntl; i++) {
+		const tline_t *t = &p->tl[i];
+		const int a1 = map[t->n1];
+		const int b1 = map[t->n2];
+		const int a2 = map[t->n3];
+		const int b2 = map[t->n4];
+		const int r1 = p->offT + (2 * i);
+		const int r2 = r1 + 1;
+		// 特性インピーダンス zc と透過 T = e^{-γ len}
+		d_complex_t zc, tt;
+		if (t->rlgc) {
+			tl_rlgc(t, omega, &zc, &tt);
+		}
+		else {
+			const double ph = omega * t->td;
+			zc = d_complex(t->z0, 0);
+			tt = d_complex(t->att * cos(ph), -t->att * sin(ph));
+		}
+		const d_complex_t mt = d_rmul(-1, tt);
+		const d_complex_t mtz = d_rmul(-1, d_mul(zc, tt));
+		const d_complex_t mz = d_rmul(-1, zc);
+		// KCL : 端子電流は n1 (n3) から出て n2 (n4) へ戻る
+		stamp(s, a1, r1, d_complex(1, 0));
+		stamp(s, b1, r1, d_complex(-1, 0));
+		stamp(s, a2, r2, d_complex(1, 0));
+		stamp(s, b2, r2, d_complex(-1, 0));
+		// v1 - Z0 i1 - T v2 - T Z0 i2 = 0
+		stamp(s, r1, a1, d_complex(1, 0));
+		stamp(s, r1, b1, d_complex(-1, 0));
+		stamp(s, r1, r1, mz);
+		stamp(s, r1, a2, mt);
+		stamp(s, r1, b2, tt);
+		stamp(s, r1, r2, mtz);
+		// v2 - Z0 i2 - T v1 - T Z0 i1 = 0
+		stamp(s, r2, a2, d_complex(1, 0));
+		stamp(s, r2, b2, d_complex(-1, 0));
+		stamp(s, r2, r2, mz);
+		stamp(s, r2, a1, mt);
+		stamp(s, r2, b1, tt);
+		stamp(s, r2, r1, mtz);
+	}
+
 	// ワイヤ区間 (枝電流 + 密な相互インダクタンスブロック)
 	for (int k = 0; k < p->nseg; k++) {
 		const int i1 = map[p->seg[k].n1];
@@ -301,6 +414,27 @@ static void assemble(const peec_t *p, double f, sink_t *s, int skiplp)
 				if (skiplp) continue;
 				for (int j = 0; j < p->ncell; j++) {
 					stamp(s, ri, p->offQ + j, pot_entry(p, i, j, kw));
+				}
+			}
+			/*
+			basis = 1 (区分線形の電流、basis.c) : 傾斜関数の振幅 c = j omega q を
+			通じた vector potential の結合
+			  KVL 行 k : - j omega Σ K_kn c_n           = + omega^2 K_kn q_n
+			  電荷行 n : + j omega (Σ K_ln I_l + Σ X_nm c_m) = j omega K_ln I_l - omega^2 X_nm q_m
+			*/
+			if (p->basis && (p->bk != NULL)) {
+				const int nc = p->ncell;
+				const double w2 = omega * omega;
+				for (int i = 0; i < nc; i++) {
+					const int ri = p->offQ + i;
+					for (int l = 0; l < p->nseg; l++) {
+						const d_complex_t kv = p->bk[((size_t)l * nc) + i];
+						stamp(s, ri, p->offS + l, d_mul(d_complex(0, omega), kv));
+						stamp(s, p->offS + l, ri, d_rmul(w2, kv));
+					}
+					for (int j = 0; j < nc; j++) {
+						stamp(s, ri, p->offQ + j, d_rmul(-w2, p->bx[((size_t)i * nc) + j]));
+					}
 				}
 			}
 		}
@@ -417,9 +551,10 @@ exp(jwt) 系では E(r) = E0 e^ exp(+j k r^・r) で、区間内は直線かつ�
 (幅で規格化した Lp と同じ扱い)。多角形セルは wv を持たないので軸方向のみ
 (セル寸法 << 波長 では差は O((kw)^2))。
 
-地板 (groundplane) があるときは PEC 面での反射波を足す : 到来方向を z 鏡像に
-し、偏波の水平成分を反転・垂直成分を保存する。z = gpz で接線成分が打ち消され
-(partial.c の鏡像規約と同一)、位相は面上で一致するよう 2 k r^z gpz だけずらす。
+地板 (groundplane) があるときは PEC 面での反射波を足す : 到来方向を面で鏡像に
+し、偏波の面に平行な成分を反転・垂直成分を保存する。面上で接線成分が打ち消され
+(partial.c の鏡像規約と同一)、位相は面上で一致するよう 2 k r^_a c だけずらす。
+直交する複数の面では面の部分集合ごとに反射波が 1 つ (pw_waves())。
 */
 static double pw_sinc(double x)
 {
@@ -458,32 +593,45 @@ static d_complex_t pw_emf(const seg_t *s, const double *rh, const double *ev,
 右辺 (mna_rhs_planewave) と近傍界の入射界 (nearfield.c) が同じ規約を使うための
 共通部 : 到来方向・偏波・地板での反射の符号と位相をここ 1 箇所で決める。
 */
-int pw_waves(const peec_t *p, double kw, pw_wave_t w[2])
+int pw_waves(const peec_t *p, double kw, pw_wave_t *w)
 {
-	const double th = p->pwth * PI / 180;
-	const double ph = p->pwph * PI / 180;
-	const double st = sin(th), ct = cos(th), cp = cos(ph), sp = sin(ph);
-	const double rh[3] = {st * cp, st * sp, ct};
-	const double thh[3] = {ct * cp, ct * sp, -st};
-	const double phh[3] = {-sp, cp, 0};
-	for (int c = 0; c < 3; c++) {
-		w[0].rh[c] = rh[c];
-		w[0].ev[c] = (p->pwpol == 2) ? phh[c] : thh[c];
-	}
-	w[0].e0 = d_polar_deg(p->pwamp, p->pwphase);
-	if (!p->gp) return 1;
+	int nw = 0;
+	for (int iw = 0; iw < p->npw; iw++) {
+		const double th = p->pwi_th[iw] * PI / 180;
+		const double ph = p->pwi_ph[iw] * PI / 180;
+		const double st = sin(th), ct = cos(th), cp = cos(ph), sp = sin(ph);
+		const double rh[3] = {st * cp, st * sp, ct};
+		const double thh[3] = {ct * cp, ct * sp, -st};
+		const double phh[3] = {-sp, cp, 0};
+		pw_wave_t *a = &w[nw++];
+		for (int c = 0; c < 3; c++) {
+			a->rh[c] = rh[c];
+			a->ev[c] = (p->pwi_pol[iw] == 2) ? phh[c] : thh[c];
+		}
+		a->e0 = d_polar_deg(p->pwi_amp[iw], p->pwi_phase[iw]);
 
-	// 反射波 (地板) : 到来方向を z 鏡像、偏波の水平成分を反転、
-	// 位相は z = gpz で入射波と一致するようずらす
-	w[1].rh[0] = rh[0];
-	w[1].rh[1] = rh[1];
-	w[1].rh[2] = -rh[2];
-	w[1].ev[0] = -w[0].ev[0];
-	w[1].ev[1] = -w[0].ev[1];
-	w[1].ev[2] = w[0].ev[2];
-	const double psi = 2 * kw * rh[2] * p->gpz;
-	w[1].e0 = d_mul(w[0].e0, d_complex(cos(psi), sin(psi)));
-	return 2;
+		// 反射波 (地板) : 面の部分集合 m ごとに 1 波。到来方向と偏波を幾何鏡像し、
+		// 偏波に (-1)^|m| を掛ける (z 面 1 枚なら水平成分反転・垂直成分保存)。
+		// 位相は面上で入射波と一致するよう Σ 2 k r^_a c_a だけずらす
+		// (面が直交していれば反射は可換で、位相は面ごとの和になる)
+		const pw_wave_t a0 = *a;
+		for (int m = 1; m <= gp_nimg(p); m++) {
+			pw_wave_t *b = &w[nw++];
+			*b = a0;
+			gp_vec(p, m, b->rh);
+			gp_vec(p, m, b->ev);
+			const double sg = gp_sign(m);
+			for (int c = 0; c < 3; c++) {
+				b->ev[c] = sg * b->ev[c];
+			}
+			double psi = 0;
+			for (int k = 0; k < p->ngp; k++) {
+				if ((m >> k) & 1) psi += 2 * kw * rh[p->gpax[k]] * p->gpc[k];
+			}
+			b->e0 = d_mul(a0.e0, d_complex(cos(psi), sin(psi)));
+		}
+	}
+	return nw;
 }
 
 void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b)
@@ -494,16 +642,19 @@ void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b)
 	memset(b, 0, (size_t)n * sizeof(d_complex_t));
 	if (!p->pw) return;
 
-	pw_wave_t w[2];
+	pw_wave_t w[PW_WMAX];
 	const int nw = pw_waves(p, kw, w);
 
 	for (int k = 0; k < p->nseg; k++) {
+		// 入射波 (と地板の反射波) の起電力の和 : 線形なので同時入射は重ね合わせ
 		d_complex_t emf = pw_emf(&p->seg[k], w[0].rh, w[0].ev, w[0].e0, kw);
-		if (nw > 1) {
-			emf = d_add(emf, pw_emf(&p->seg[k], w[1].rh, w[1].ev, w[1].e0, kw));
+		for (int iw = 1; iw < nw; iw++) {
+			emf = d_add(emf, pw_emf(&p->seg[k], w[iw].rh, w[iw].ev, w[iw].e0, kw));
 		}
 		b[p->offS + k] = d_rmul(-1, emf);
 	}
+	// basis = 1 : 電荷行 (傾斜関数の試験) の右辺 + <chi_n, E_inc>
+	basis_rhs_planewave(p, kw, w, nw, b);
 }
 
 // 独立電源励振 (isource : 電流は電源内部を n1 -> n2 に流れる = SPICE 規約)

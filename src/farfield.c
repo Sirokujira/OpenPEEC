@@ -3,8 +3,9 @@ farfield.c
 
 遠方界の後処理 (farfield = 分割数theta 分割数phi)
 
-port #1 を 1 A で励振したときの区間電流 I_m (solve.c が捕捉する p->segi)
-から放射ベクトル
+port #1 を 1 A で励振したときの区間電流 I_m (solve.c が捕捉する p->segi、
+excitation の行があればポート解を重み w_j で重ね合わせた電流 : exc_mix) から
+放射ベクトル
 
   N(r^) = sum_m I_m len_m t^_m sinc(k len_m (r^・t^_m)/2) exp(+j k r^・r_cm)
 
@@ -20,7 +21,8 @@ port #1 を 1 A で励振したときの区間電流 I_m (solve.c が捕捉す�
   Prad = ∫∫ (|Et|^2 + |Ep|^2) / (2 eta0) sin(theta) dtheta dphi
 
 (theta は台形則、phi は周期矩形則)。指向性 D = 4 pi U / Prad、
-利得 G = 4 pi U / Pin (Pin = Re(Zin_port1) / 2 : 1 A 励振の入力電力)、
+利得 G = 4 pi U / Pin (Pin = Re(Zin_port1) / 2 : 1 A 励振の入力電力。
+excitation があれば Pin = Re(w^H Z w)/2 : 相互結合を含む全ポートの入力電力)、
 放射効率 eff = Prad / Pin。G は導体損を含み、D は含まない。
 
 地板 (groundplane) があるときは鏡像電流を加算して上半球のみを評価する。
@@ -48,8 +50,8 @@ static void ff_nvec(const peec_t *p, const d_complex_t *cur, double kw,
 	const double rh[3], d_complex_t nv[3])
 {
 	for (int c = 0; c < 3; c++) nv[c] = d_complex(0, 0);
-	const int npass = p->gp ? 2 : 1;
-	for (int pass = 0; pass < npass; pass++) {
+	const int nimg = gp_nimg(p);
+	for (int pass = 0; pass <= nimg; pass++) {
 		for (int m = 0; m < p->nseg; m++) {
 			const seg_t *s = &p->seg[m];
 			double tv[3], rc[3];
@@ -58,11 +60,11 @@ static void ff_nvec(const peec_t *p, const d_complex_t *cur, double kw,
 				rc[c] = 0.5 * (s->x1[c] + s->x2[c]);
 			}
 			double sgn = 1;
-			if (pass == 1) {
-				// 鏡像 : 幾何鏡像 + 電流 -I (水平反転・垂直保存)
-				tv[2] = -tv[2];
-				rc[2] = (2 * p->gpz) - rc[2];
-				sgn = -1;
+			if (pass > 0) {
+				// 鏡像 : 幾何鏡像 + 電流 (-1)^|m| 倍 (z 面 1 枚なら水平反転・垂直保存)
+				gp_vec(p, pass, tv);
+				gp_pt(p, pass, rc);
+				sgn = gp_sign(pass);
 			}
 			const double rt = (rh[0] * tv[0]) + (rh[1] * tv[1]) + (rh[2] * tv[2]);
 			const double rr = (rh[0] * rc[0]) + (rh[1] * rc[1]) + (rh[2] * rc[2]);
@@ -76,6 +78,21 @@ static void ff_nvec(const peec_t *p, const d_complex_t *cur, double kw,
 	}
 }
 
+
+// 地板の x / y 面がある方向の重み : 導体側 (+) は 1、面上は 0.5 (台形則の端)、
+// 面の裏 (導体の内側) は 0。z 面は theta を 0 .. pi/2 に限る (thmax) ので含めない
+static double ff_region(const peec_t *p, const double rh[3])
+{
+	double w = 1;
+	for (int k = 0; k < p->ngp; k++) {
+		const int a = p->gpax[k];
+		if (a == 2) continue;
+		if (rh[a] < -1e-12) return 0;
+		if (rh[a] <= 1e-12) w *= 0.5;
+	}
+	return w;
+}
+
 int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 {
 	if ((p->ffnth <= 0) || (p->ffnph <= 0)) return 0;
@@ -83,7 +100,7 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 
 	const int nth = p->ffnth;
 	const int nph = p->ffnph;
-	const double thmax = p->gp ? (PI / 2) : PI;
+	const double thmax = gp_hasax(p, 2) ? (PI / 2) : PI;   // z 面があれば上半球
 	const double eta0 = MU0 * C0;
 
 	FILE *fp = fopen(fn, "w");
@@ -100,11 +117,19 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 	d_complex_t *et = (d_complex_t *)malloc((size_t)ndir * sizeof(d_complex_t));
 	d_complex_t *ep = (d_complex_t *)malloc((size_t)ndir * sizeof(d_complex_t));
 	double *uu = (double *)malloc((size_t)ndir * sizeof(double));
-	if ((et == NULL) || (ep == NULL) || (uu == NULL)) {
+	d_complex_t *cbuf = (d_complex_t *)malloc((size_t)p->nseg * sizeof(d_complex_t));
+	double *wreg = (double *)malloc((size_t)ndir * sizeof(double));
+	// basis = 1 : 傾斜関数の振幅に使うセル電荷 (励振の重みで重ね合わせる)
+	d_complex_t *qbuf = (d_complex_t *)malloc((size_t)(p->ncell > 0 ? p->ncell : 1) * sizeof(d_complex_t));
+	if ((et == NULL) || (ep == NULL) || (uu == NULL) || (cbuf == NULL) || (wreg == NULL) || (qbuf == NULL)) {
 		printf("%s\n", "*** memory allocation error (farfield)");
-		free(et); free(ep); free(uu);
+		free(et); free(ep); free(uu); free(cbuf); free(wreg); free(qbuf);
 		fclose(fp);
 		return 1;
+	}
+	for (int k = 0; k < p->nexc; k++) {
+		fprintf(fp_log, "farfield : excitation port %d = %g A (%g deg)\n",
+			p->exc[k].port + 1, p->exc[k].amp, p->exc[k].phase);
 	}
 
 	fprintf(fp, "frequency[Hz],theta[deg],phi[deg],rEtheta_real[V],rEtheta_imag[V],rEphi_real[V],rEphi_imag[V],D[dBi],G[dBi]\n");
@@ -113,6 +138,9 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 		const double f = freq_at(p, ifreq);
 		const double kw = 2 * PI * f / C0;
 		const double coef = 2 * PI * f * MU0 / (4 * PI);   // omega mu0 / 4 pi
+		const d_complex_t *cur = exc_mix(p, &p->segi[DIDX(p, ifreq, 0, 0)], p->nseg, cbuf);
+		const d_complex_t *qcur = (p->basis && (p->cellq != NULL))
+			? exc_mix(p, &p->cellq[QIDX(p, ifreq, 0, 0)], p->ncell, qbuf) : NULL;
 
 		// 方向ごとの遠方界と放射強度 U
 		for (int it = 0; it <= nth; it++) {
@@ -128,7 +156,8 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 				const double phh[3] = {-sp, cp, 0};
 
 				d_complex_t nv[3];
-				ff_nvec(p, &p->segi[DIDX(p, ifreq, 0, 0)], kw, rh, nv);
+				ff_nvec(p, cur, kw, rh, nv);
+				basis_ff_add(p, qcur, 2 * PI * f, kw, rh, nv);
 
 				// 横成分 : Etheta = -j coef (N・theta^)、Ephi = -j coef (N・phi^)
 				d_complex_t nt = d_complex(0, 0), np = d_complex(0, 0);
@@ -139,7 +168,14 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 				const int id = (it * nph) + ip;
 				et[id] = d_complex(coef * nt.i, -coef * nt.r);
 				ep[id] = d_complex(coef * np.i, -coef * np.r);
+				// x / y 面の裏 (導体の内側) は場が無い
+				const double wr = ff_region(p, rh);
+				if (wr <= 0) {
+					et[id] = d_complex(0, 0);
+					ep[id] = d_complex(0, 0);
+				}
 				uu[id] = (d_norm(et[id]) + d_norm(ep[id])) / (2 * eta0);
+				wreg[id] = wr;
 			}
 		}
 
@@ -150,14 +186,14 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 			const double st = sin(thmax * it / nth);
 			double row = 0;
 			for (int ip = 0; ip < nph; ip++) {
-				row += uu[(it * nph) + ip];
+				row += wreg[(it * nph) + ip] * uu[(it * nph) + ip];
 			}
 			prad += wt * st * row;
 		}
 		prad *= (thmax / nth) * (2 * PI / nph);
 
-		// 入力電力 (port #1 に 1 A) と最大指向性
-		const double pin = 0.5 * p->zin[ifreq].r;
+		// 入力電力 (port #1 に 1 A、excitation があれば Re(w^H Z w)/2) と最大指向性
+		const double pin = exc_pin(p, ifreq);
 		int imax = 0;
 		for (int id = 1; id < ndir; id++) {
 			if (uu[id] > uu[imax]) imax = id;
@@ -187,6 +223,9 @@ int output_far(const peec_t *p, const char *fn, FILE *fp_log)
 	free(et);
 	free(ep);
 	free(uu);
+	free(cbuf);
+	free(wreg);
+	free(qbuf);
 	fclose(fp);
 
 	return 0;
@@ -231,7 +270,7 @@ int output_farpw(const peec_t *p, const char *fn, FILE *fp_log)
 
 	const int nth = p->ffnth;
 	const int nph = p->ffnph;
-	const double thmax = p->gp ? (PI / 2) : PI;
+	const double thmax = gp_hasax(p, 2) ? (PI / 2) : PI;   // z 面があれば上半球
 	const double e2 = p->pwamp * p->pwamp;
 
 	FILE *fp = fopen(fn, "w");
@@ -242,11 +281,12 @@ int output_farpw(const peec_t *p, const char *fn, FILE *fp_log)
 
 	const int ndir = (nth + 1) * nph;
 	double *ss = (double *)malloc((size_t)ndir * sizeof(double));
+	double *sw = (double *)malloc((size_t)ndir * sizeof(double));
 	d_complex_t *et = (d_complex_t *)malloc((size_t)ndir * sizeof(d_complex_t));
 	d_complex_t *ep = (d_complex_t *)malloc((size_t)ndir * sizeof(d_complex_t));
-	if ((ss == NULL) || (et == NULL) || (ep == NULL)) {
+	if ((ss == NULL) || (sw == NULL) || (et == NULL) || (ep == NULL)) {
 		printf("%s\n", "*** memory allocation error (farfield, planewave)");
-		free(ss); free(et); free(ep);
+		free(ss); free(sw); free(et); free(ep);
 		fclose(fp);
 		return 1;
 	}
@@ -262,6 +302,8 @@ int output_farpw(const peec_t *p, const char *fn, FILE *fp_log)
 		const double kw = 2 * PI * f / C0;
 		const double coef = 2 * PI * f * MU0 / (4 * PI);   // omega mu0 / 4 pi
 		const d_complex_t *cur = &p->segipw[(size_t)ifreq * p->nseg];
+		const d_complex_t *qcur = (p->basis && (p->cellqpw != NULL))
+			? &p->cellqpw[(size_t)ifreq * p->ncell] : NULL;
 
 		for (int it = 0; it <= nth; it++) {
 			const double th = thmax * it / nth;
@@ -277,6 +319,7 @@ int output_farpw(const peec_t *p, const char *fn, FILE *fp_log)
 
 				d_complex_t nv[3];
 				ff_nvec(p, cur, kw, rh, nv);
+				basis_ff_add(p, qcur, 2 * PI * f, kw, rh, nv);
 				d_complex_t nt = d_complex(0, 0), np = d_complex(0, 0);
 				for (int c = 0; c < 3; c++) {
 					nt = d_add(nt, d_rmul(thh[c], nv[c]));
@@ -285,7 +328,13 @@ int output_farpw(const peec_t *p, const char *fn, FILE *fp_log)
 				const int id = (it * nph) + ip;
 				et[id] = d_complex(coef * nt.i, -coef * nt.r);
 				ep[id] = d_complex(coef * np.i, -coef * np.r);
+				const double wr = ff_region(p, rh);
+				if (wr <= 0) {
+					et[id] = d_complex(0, 0);
+					ep[id] = d_complex(0, 0);
+				}
 				ss[id] = 4 * PI * (d_norm(et[id]) + d_norm(ep[id])) / e2;
+				sw[id] = wr;
 			}
 		}
 
@@ -296,7 +345,7 @@ int output_farpw(const peec_t *p, const char *fn, FILE *fp_log)
 			const double st = sin(thmax * it / nth);
 			double row = 0;
 			for (int ip = 0; ip < nph; ip++) {
-				row += ss[(it * nph) + ip];
+				row += sw[(it * nph) + ip] * ss[(it * nph) + ip];
 			}
 			sigs += wt * st * row;
 		}
@@ -313,13 +362,18 @@ int output_farpw(const peec_t *p, const char *fn, FILE *fp_log)
 		}
 
 		if (p->gp) {
-			fprintf(fp_log, "farfield (planewave) : f = %.5e Hz, sigma_scat = %.9e m^2 (upper half space; sigma_ext not defined with ground plane)\n",
+			fprintf(fp_log, "farfield (planewave) : f = %.5e Hz, sigma_scat = %.9e m^2 (half/quarter space; sigma_ext not defined with ground plane)\n",
 				f, sigs);
+			continue;
+		}
+		if (p->npw > 1) {
+			fprintf(fp_log, "farfield (planewave) : f = %.5e Hz, sigma_scat = %.9e m^2 (normalized by wave #1; sigma_ext not defined for %d incident waves)\n",
+				f, sigs, p->npw);
 			continue;
 		}
 
 		// 光学定理 : 伝搬方向 d = -r^_inc の前方散乱振幅
-		pw_wave_t w[2];
+		pw_wave_t w[PW_WMAX];
 		pw_waves(p, kw, w);
 		const double dv[3] = {-w[0].rh[0], -w[0].rh[1], -w[0].rh[2]};
 		d_complex_t nv[3];
@@ -336,6 +390,7 @@ int output_farpw(const peec_t *p, const char *fn, FILE *fp_log)
 	fflush(fp_log);
 
 	free(ss);
+	free(sw);
 	free(et);
 	free(ep);
 	fclose(fp);
