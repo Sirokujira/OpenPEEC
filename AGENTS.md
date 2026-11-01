@@ -32,7 +32,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、259 判定)
+# 検証 (解析解・文献値との比較、265 判定)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -43,7 +43,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 259 判定すべて OK (h5py が
+**変更したら必ず `peec_check.sh` を通すこと。** 265 判定すべて OK (h5py が
 無い環境の `peec2h5 converter` だけは SKIP) でなければ完了ではない。
 「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
@@ -72,7 +72,7 @@ ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/pe
 | `src/hmatrix.c` | Lp / P の H 行列圧縮 (クラスタツリー + ACA、compression = 1) |
 | `src/precond.c` | 葉ブロック消去 + 回路 Schur 補元の前処理 (compression = 1) |
 | `src/solve.c` | 周波数掃引、Z → S 変換 |
-| `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp`、混合モード `mixed.csv`、`dist.csv` |
+| `src/output.c` | `peec.log` の表、`zin.csv`、Touchstone `peec.sNp` / 2.0 `peec.ts`、混合モード `mixed.csv`、`dist.csv` |
 | `src/farfield.c` | 遠方界後処理 (`farfield` → `far.csv`、D / G / 放射効率。平面波の散乱界・RCS・光学定理 → `farpw.csv`) |
 | `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv` / 平面波の全界 `nearpw.csv`、E / H の遅延ポテンシャル) |
 | `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
@@ -392,7 +392,9 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
 `port` を複数書くと Z 行列 (ポート j に 1A 注入、他ポート開放) と S 行列
 (電力波の定義、`solve.c` の `z_to_s()`) を求め、`peec.log` の表と Touchstone
 `peec.sNp` に出力する。基準抵抗はポートごとに指定できるが、Touchstone 1.1 は
-1 個しか記録できないので port#1 の値を書いて注記する。
+1 個しか記録できないので port#1 の値を書いて注記する。`touchstone = 2` で
+Touchstone 2.0 の `peec.ts` も書き、全ポートの基準抵抗を `[Reference]` に記録する
+(`output_touchstone2()`、データは行優先で 2 ポートは `[Two-Port Data Order] 12_21`)。
 **2 ポートだけ Touchstone の列順が S11 S21 S12 S22 と転置になる** (仕様)。
 
 `mixedmode = p1 n1 [p2 n2 ...]` で混合モード S_mm = M S Mᵀ (差動 / 同相) を

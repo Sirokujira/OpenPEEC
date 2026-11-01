@@ -1,0 +1,29 @@
+# 検証 (bo) : Touchstone 2.0 出力 (touchstone = 2 → peec.ts) — 基準抵抗が混在する 3 ポート
+#   星形の抵抗回路 : 端子 i (= 1, 2, 3) と中心節点 4 の間に R_i = 10 / 20 / 30 ohm、
+#   中心と基準 (0) の間に R0 = 40 ohm と C0 = 10 pF の並列。ポート i は端子 i と 0 の間で、
+#   基準抵抗は z0 = 50 / 75 / 100 ohm (ポートごとに違う)。
+#   Z 行列は閉形式 : Z0(f) = 1/(1/R0 + j 2 pi f C0)、Z_ii = R_i + Z0、Z_ij = Z0 (i != j)。
+#
+#   peec_check.sh の判定 :
+#   (1) peec.ts の S と [Reference] から Z = sqrt(Zr) (I - S)^-1 (I + S) sqrt(Zr)
+#       (実の基準抵抗の電力波の定義) を awk の複素 Gauss-Jordan で組み直し、閉形式の
+#       Z 行列 (9 要素 x 3 周波数) と一致 (相対 1e-7。S は 10 桁で書かれるので
+#       その丸めが上限)。基準抵抗を port#1 の 1 個にした 1.1 の値では一致しない
+#   (2) 書式 : [Version] 2.0、[Number of Ports] 3、[Number of Frequencies] とデータ行数、
+#       [Reference] 50 75 100、[Network Data] ... [End]
+#   (3) 2 ポート版 (ポート 3 を消す) : [Two-Port Data Order] 12_21 があり、行優先
+#       S11 S12 S21 S22 から組んだ Z が閉形式と一致
+#   (4) touchstone を書かなければ peec.ts は作らない (後方互換)、touchstone = 3 は拒否
+OpenPEEC 1 0
+title = resistive star with mixed reference impedances (Touchstone 2.0)
+touchstone = 2
+resistor = 1 4 10
+resistor = 2 4 20
+resistor = 3 4 30
+resistor = 4 0 40
+capacitor = 4 0 10e-12
+port = 1 0 50
+port = 2 0 75
+port = 3 0 100
+frequency = 1e8 1e9 2
+end

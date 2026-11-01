@@ -188,6 +188,63 @@ int output_touchstone(const peec_t *p)
 
 
 /*
+Touchstone 2.0 出力 (peec.ts) — touchstone = 2 のときだけ (peec.sNp と併せて書く)
+
+1.1 との違いは [Reference] でポートごとの基準抵抗を全部書けること。OpenPEEC の
+S は電力波の定義でポートごとの z0 を使う (solve.c の z_to_s) ので、z0 が混在する
+多ポートは 2.0 でないと正しく記録できない (1.1 は port#1 の値だけ)。
+キーワードは [Version] 2.0 / オプション行 / [Number of Ports] /
+[Two-Port Data Order] (2 ポートのみ必須、ここでは 12_21 = 行優先) /
+[Number of Frequencies] / [Reference] / [Network Data] ... [End]。データは全ポート
+数で行優先 S11 S12 ... S1N S21 ... (2 ポートも 1.1 の 21_12 順にしない)。
+オプション行の R はポートごとの基準が [Reference] にあるときは無視される仕様だが、
+1.1 の読み手のために port#1 の値を書く。
+*/
+int output_touchstone2(const peec_t *p, const char *fn)
+{
+	const int np = p->nport;
+	if ((p->tsver != 2) || (np <= 0) || (p->smat == NULL)) return 0;
+
+	FILE *fp = fopen(fn, "w");
+	if (fp == NULL) {
+		printf("*** file %s open error.\n", fn);
+		return 1;
+	}
+
+	fprintf(fp, "! %s Ver.%d.%d.%d\n", PROGRAM, VERSION_MAJOR, VERSION_MINOR, VERSION_BUILD);
+	fprintf(fp, "! %s\n", p->title);
+	fprintf(fp, "[Version] 2.0\n");
+	fprintf(fp, "# Hz S RI R %.16g\n", p->port[0].z0);
+	fprintf(fp, "[Number of Ports] %d\n", np);
+	if (np == 2) {
+		fprintf(fp, "[Two-Port Data Order] 12_21\n");
+	}
+	fprintf(fp, "[Number of Frequencies] %d\n", p->nfreq);
+	fprintf(fp, "[Reference]");
+	for (int i = 0; i < np; i++) {
+		fprintf(fp, " %.16g", p->port[i].z0);
+	}
+	fprintf(fp, "\n[Network Data]\n");
+
+	for (int ifreq = 0; ifreq < p->nfreq; ifreq++) {
+		fprintf(fp, "%.9e", freq_at(p, ifreq));
+		for (int i = 0; i < np; i++) {
+			if (i > 0) fprintf(fp, "\n%*s", 15, "");
+			for (int j = 0; j < np; j++) {
+				const d_complex_t sv = p->smat[ZIDX(p, ifreq, i, j)];
+				fprintf(fp, " %.9e %.9e", sv.r, sv.i);
+			}
+		}
+		fprintf(fp, "\n");
+	}
+	fprintf(fp, "[End]\n");
+
+	fclose(fp);
+	return 0;
+}
+
+
+/*
 混合モード S パラメータ (mixed.csv) — mixedmode 指定時のみ
 
 差動対 k = (正側ポート p_k, 負側ポート n_k) について、電力波を
