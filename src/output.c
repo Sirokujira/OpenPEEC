@@ -350,6 +350,12 @@ int output_pw(const peec_t *p, const char *fn, FILE *fp_log)
 
 	fprintf(fp_log, "=== plane wave response === (arrival theta = %.2f deg, phi = %.2f deg, %s pol., E0 = %.4g V/m)\n",
 		p->pwth, p->pwph, (p->pwpol == 2) ? "phi" : "theta", p->pwamp);
+	// 複数波の同時入射 : Voc は全波の重ね合わせ、leff は 1 波目の振幅で割った値
+	for (int iw = 1; iw < p->npw; iw++) {
+		fprintf(fp_log, "  + wave #%d : arrival theta = %.2f deg, phi = %.2f deg, %s pol., E0 = %.4g V/m (%.2f deg)\n",
+			iw + 1, p->pwi_th[iw], p->pwi_ph[iw], (p->pwi_pol[iw] == 2) ? "phi" : "theta",
+			p->pwi_amp[iw], p->pwi_phase[iw]);
+	}
 	for (int iport = 0; iport < p->nport; iport++) {
 		fprintf(fp_log, "port #%d\n", iport + 1);
 		fprintf(fp_log, "  %s\n", "frequency[Hz]  |Voc|[V]   leff[m]      Pav[W]");

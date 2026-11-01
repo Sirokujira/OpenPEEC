@@ -796,17 +796,30 @@ int input_data(FILE *fp, peec_t *p)
 		}
 		else if (!strcmp(strkey, "planewave")) {
 			// planewave = theta phi 偏波 振幅 [位相deg]
-			// (theta, phi) は到来方向 (伝搬方向はその逆)、偏波 1 = theta / 2 = phi
-			if (ntoken < 6) err = 1;
+			// (theta, phi) は到来方向 (伝搬方向はその逆)、偏波 1 = theta / 2 = phi。
+			// 複数行は同時に入射する波 (重ね合わせ、PW_MAX 行まで)。1 行目が
+			// leff (pw.csv) と RCS (farpw.csv) の振幅の規格化に使われる
+			if ((ntoken < 6) || (p->npw >= PW_MAX)) err = 1;
 			else {
-				p->pwth = atof(token[2]);
-				p->pwph = atof(token[3]);
-				p->pwpol = atoi(token[4]);
-				p->pwamp = atof(token[5]);
-				p->pwphase = (ntoken >= 7) ? atof(token[6]) : 0;
-				if ((p->pwpol != 1) && (p->pwpol != 2)) err = 1;
-				if (p->pwamp <= 0) err = 1;
-				if (!err) p->pw = 1;
+				const int k = p->npw;
+				p->pwi_th[k] = atof(token[2]);
+				p->pwi_ph[k] = atof(token[3]);
+				p->pwi_pol[k] = atoi(token[4]);
+				p->pwi_amp[k] = atof(token[5]);
+				p->pwi_phase[k] = (ntoken >= 7) ? atof(token[6]) : 0;
+				if ((p->pwi_pol[k] != 1) && (p->pwi_pol[k] != 2)) err = 1;
+				if (p->pwi_amp[k] <= 0) err = 1;
+				if (!err) {
+					if (k == 0) {
+						p->pwth = p->pwi_th[0];
+						p->pwph = p->pwi_ph[0];
+						p->pwpol = p->pwi_pol[0];
+						p->pwamp = p->pwi_amp[0];
+						p->pwphase = p->pwi_phase[0];
+					}
+					p->npw++;
+					p->pw = 1;
+				}
 			}
 			if (err) {
 				printf(errfmt2, "planewave");

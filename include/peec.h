@@ -30,6 +30,8 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 #define FN_NEARPW "nearpw.csv"
 #define FN_MM "mixed.csv"
 #define FN_FARPW "farpw.csv"
+#define PW_MAX 8                  // planewave の行 (同時入射の波) の上限
+#define PW_WMAX (2 * PW_MAX)      // 地板の反射波を含む波の数の上限
 
 // 数学・物理定数 (自前マクロ : <math.h> の M_PI には依存しない)
 #define PI   (4.0 * atan(1.0))
@@ -292,9 +294,13 @@ typedef struct {
 	int    nmm;
 	int    mmport[2 * MM_MAXPAIR];
 	int    pw;                    // planewave : 平面波入射 (外部界励振)
-	double pwth, pwph;            // 平面波の到来方向 (theta, phi) [deg]
-	int    pwpol;                 // 偏波 : 1 = theta 偏波、2 = phi 偏波
-	double pwamp, pwphase;        // 振幅 [V/m] と位相 [deg]
+	double pwth, pwph;            // 平面波の到来方向 (theta, phi) [deg] (1 波目)
+	int    pwpol;                 // 偏波 : 1 = theta 偏波、2 = phi 偏波 (1 波目)
+	double pwamp, pwphase;        // 振幅 [V/m] と位相 [deg] (1 波目 : leff / RCS の規格化)
+	// planewave の行ごとの入射波 (複数行で同時入射 = 重ね合わせ)。[0] は上の 1 波目と同じ
+	int    npw;
+	double pwi_th[PW_MAX], pwi_ph[PW_MAX], pwi_amp[PW_MAX], pwi_phase[PW_MAX];
+	int    pwi_pol[PW_MAX];
 	int    tran;                  // transient = 1 : 過渡応答 (掃引の逆フーリエ変換)
 	double tranatt;               // 帯域端でのガウス励振の減衰 [dB] (既定 40)
 	int    grading;               // grading = 1 : 面格子の縁寄せ (plate/quad 余弦、disk 正弦)
@@ -448,7 +454,7 @@ typedef struct {
 	double ev[3];                 // 偏波 (単位ベクトル)
 	d_complex_t e0;               // 複素振幅 [V/m] (原点での値)
 } pw_wave_t;
-int  pw_waves(const peec_t *p, double kw, pw_wave_t w[2]);
+int  pw_waves(const peec_t *p, double kw, pw_wave_t *w);   // w は PW_WMAX 個
 void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b);
 
 // lu.c

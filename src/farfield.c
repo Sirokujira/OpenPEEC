@@ -326,9 +326,14 @@ int output_farpw(const peec_t *p, const char *fn, FILE *fp_log)
 				f, sigs);
 			continue;
 		}
+		if (p->npw > 1) {
+			fprintf(fp_log, "farfield (planewave) : f = %.5e Hz, sigma_scat = %.9e m^2 (normalized by wave #1; sigma_ext not defined for %d incident waves)\n",
+				f, sigs, p->npw);
+			continue;
+		}
 
 		// 光学定理 : 伝搬方向 d = -r^_inc の前方散乱振幅
-		pw_wave_t w[2];
+		pw_wave_t w[PW_WMAX];
 		pw_waves(p, kw, w);
 		const double dv[3] = {-w[0].rh[0], -w[0].rh[1], -w[0].rh[2]};
 		d_complex_t nv[3];

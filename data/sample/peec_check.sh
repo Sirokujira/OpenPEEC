@@ -720,6 +720,79 @@ chk "pw standing Ey (l/4)" "$(nfcol nearpw.csv 3 8)" 2.0 0.000001
 chk "pw standing Hx (z=0)" "$(nfcol nearpw.csv 1 11)" "$(awk -v e="$ETA0" 'BEGIN{printf "%.12e", 2/e}')" 0.000001
 chk "pw standing Hx (l/2)" "$(nfcol nearpw.csv 5 11)" "$(awk -v e="$ETA0" 'BEGIN{printf "%.12e", -2/e}')" 0.000001
 
+# (bf) 複数の平面波の同時入射。逆向きの 2 波は自由空間の定在波
+#      E_z = -2 cos(kx)、H_y = -(2j/η0) sin(kx) (散乱体は e^・t^ = 0 で結合しない)
+cp "$SRC/pw_counter.peec" "$WORK/"
+run pw_counter.peec
+awk -F, -v e="$ETA0" 'NR > 1 {
+	PI = atan2(0, -1); k = 2 * PI / 2; x = $2;
+	ez = -2 * cos(k * x); hy = -2 * sin(k * x) / e;
+	d = sqrt((($9 - ez) ^ 2) + ($10 ^ 2)); if (!(d <= de)) de = d;
+	d = sqrt(($13 ^ 2) + (($14 - hy) ^ 2)) * e; if (!(d <= dh)) dh = d;
+	n++
+} END {
+	ok = (n == 3) && (de <= 2e-6) && (dh <= 2e-6);
+	printf "%-24s points=%d max|dEz|=%.3e max|dHy|*eta0=%.3e -> %s (<= 2e-6)\n", "pw counter standing wave", n, de, dh, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/nearpw.csv" || status=1
+# 重ね合わせ : 2 波の同時入射の Voc と散乱遠方界 = 1 波ずつの実行の和
+#   (非対称な折れ曲がりダイポール、2 波目は振幅 0.7・位相 40°)
+sed 's/^planewave = .*/planewave = 30 45 1 1.0\nplanewave = 120 255 2 0.7 40/' "$SRC/bent_pw.peec" > "$WORK/pw_two.peec"
+run pw_two.peec
+cp "$WORK/pw.csv" "$WORK/pw_two.csv"
+cp "$WORK/farpw.csv" "$WORK/farpw_two.csv"
+sed 's/^planewave = .*/planewave = 30 45 1 1.0/' "$SRC/bent_pw.peec" > "$WORK/pw_w1.peec"
+run pw_w1.peec
+cp "$WORK/pw.csv" "$WORK/pw_w1.csv"
+cp "$WORK/farpw.csv" "$WORK/farpw_w1.csv"
+sed 's/^planewave = .*/planewave = 120 255 2 0.7 40/' "$SRC/bent_pw.peec" > "$WORK/pw_w2.peec"
+run pw_w2.peec
+paste -d, "$WORK/pw_two.csv" "$WORK/pw_w1.csv" "$WORK/pw.csv" | awk -F, 'NR > 1 {
+	er = $10 + $17; ei = $11 + $18;
+	d = sqrt((($3 - er) ^ 2) + (($4 - ei) ^ 2)) / sqrt((er * er) + (ei * ei)); if (!(d <= mx)) mx = d; n++
+} END {
+	ok = (n == 1) && (mx <= 1e-9);
+	printf "%-24s rel.diff=%.3e -> %s (<= 1e-9)\n", "pw superposition (Voc)", mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# farpw.csv の RCS 列は 1 波目の振幅で規格化するので、電界 rE_s (4 成分) で比べる
+paste -d, "$WORK/farpw_two.csv" "$WORK/farpw_w1.csv" "$WORK/farpw.csv" | awk -F, 'NR > 1 {
+	d = 0; a = 0;
+	for (c = 4; c <= 7; c++) {x = $c - ($(c + 9) + $(c + 18)); d += x * x; a += $c * $c}
+	d = sqrt(d); a = sqrt(a); if (!(d <= mx)) mx = d; if (a > am) am = a; n++
+} END {
+	r = mx / am; ok = (n == 888) && (r <= 1e-8);
+	printf "%-24s dirs=%d max|dF|/max|F|=%.3e -> %s (<= 1e-8)\n", "pw superposition (farpw)", n, r, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# 地板あり : 入射波ごとに反射波が付くこと (λ/4 モノポール、2 波)
+sed -e 's/^frequency = .*/frequency = 1.4376e8 1.4376e8 0/' \
+    -e 's/^title = .*/title = monopole, two plane waves\nplanewave = 60 0 1 1.0\nplanewave = 30 90 1 0.5 -60/' \
+    "$SRC/monopole_gp.peec" > "$WORK/mono_two.peec"
+run mono_two.peec
+cp "$WORK/pw.csv" "$WORK/pw_mono_two.csv"
+sed '/^planewave = 30 90 1 0.5 -60$/d' "$WORK/mono_two.peec" > "$WORK/mono_w1.peec"
+run mono_w1.peec
+cp "$WORK/pw.csv" "$WORK/pw_mono_w1.csv"
+sed '/^planewave = 60 0 1 1.0$/d' "$WORK/mono_two.peec" > "$WORK/mono_w2.peec"
+run mono_w2.peec
+paste -d, "$WORK/pw_mono_two.csv" "$WORK/pw_mono_w1.csv" "$WORK/pw.csv" | awk -F, 'NR > 1 {
+	er = $10 + $17; ei = $11 + $18;
+	d = sqrt((($3 - er) ^ 2) + (($4 - ei) ^ 2)) / sqrt((er * er) + (ei * ei)); if (!(d <= mx)) mx = d; n++
+} END {
+	ok = (n == 1) && (mx <= 1e-9);
+	printf "%-24s rel.diff=%.3e -> %s (<= 1e-9)\n", "pw superposition (gp)", mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# 上限 (PW_MAX = 8 行) を超える planewave は拒否
+awk '/^planewave/ {if (!done) {for (i = 0; i < 9; i++) print "planewave = 90 0 1 1.0"; done = 1} next} {print}' "$SRC/pw_counter.peec" > "$WORK/pw_bad.peec"
+if (cd "$WORK" && "$PEEC" -n 1 pw_bad.peec > pw_bad.out 2>&1); then
+	printf "%-24s -> NG (9 planewave lines must be rejected)\n" "planewave count guard" >&2
+	status=1
+else
+	printf "%-24s -> OK (9 planewave lines rejected)\n" "planewave count guard"
+fi
+
 # (ao) 閉ループの磁界遮蔽 : 中心で H_tot/H_inc = 1 - j w mu0 G A/(R + j w L)
 #      (ファラデー + Grover の L + Biot-Savart の中心磁界 G = 2 sqrt(2)/(pi s))
 cp "$SRC/loop_shield.peec" "$WORK/"

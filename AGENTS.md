@@ -32,7 +32,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、194 判定)
+# 検証 (解析解・文献値との比較、199 判定)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -43,7 +43,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 194 判定すべて OK (h5py が
+**変更したら必ず `peec_check.sh` を通すこと。** 199 判定すべて OK (h5py が
 無い環境の `peec2h5 converter` だけは SKIP) でなければ完了ではない。
 「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
@@ -412,8 +412,10 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
   程度以上離すこと (セル上の積分は数点の求積)。`capacitance = 0` では電荷が
   無いので E は −jωA の項だけ、`retardation = 0` では部分要素と揃えて
   静的 (k = 0) に評価する。
-- 平面波 (`planewave`) は 1 方向・1 偏波の単一入射波 (重ね合わせは実行を分けて
-  線形性で足す)。`pw.csv` はポート間に素子が無いときだけ Voc として読める。
+- 平面波 (`planewave`) は 1 行が 1 波。複数行 (PW_MAX = 8 行まで) は同時入射の
+  重ね合わせ (起電力・入射界・散乱界とも)。leff / RCS は 1 行目の振幅で規格化、
+  光学定理の消光断面積は単一波・地板なしのときだけ。`pw.csv` はポート間に素子が
+  無いときだけ Voc として読める。
 - 過渡応答 (`transient`) は掃引の逆フーリエ変換なので、応答が `1/Δf` 以内に
   減衰しないと巻き込み (時間領域エイリアス) が起きる。Q の高い共振では
   分割数を増やす。時間分解の下限は Δt = 1/(2f_max) で、既定の −40 dB では

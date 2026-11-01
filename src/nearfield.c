@@ -375,7 +375,7 @@ int output_near(const peec_t *p, const char *fn, const char *fnpw, FILE *fp_log)
 		if (fpw != NULL) {
 			// 散乱界 (誘起電流・電荷) + 入射界 (実際の波数 k = omega/c)
 			const double kinc = 2 * PI * f / C0;
-			pw_wave_t w[2];
+			pw_wave_t w[PW_WMAX];
 			const int nw = pw_waves(p, kinc, w);
 			const d_complex_t *curpw = &p->segipw[(size_t)ifreq * p->nseg];
 			const d_complex_t *chgpw = (hascharge && (p->cellqpw != NULL))

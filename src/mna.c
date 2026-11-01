@@ -570,32 +570,37 @@ static d_complex_t pw_emf(const seg_t *s, const double *rh, const double *ev,
 右辺 (mna_rhs_planewave) と近傍界の入射界 (nearfield.c) が同じ規約を使うための
 共通部 : 到来方向・偏波・地板での反射の符号と位相をここ 1 箇所で決める。
 */
-int pw_waves(const peec_t *p, double kw, pw_wave_t w[2])
+int pw_waves(const peec_t *p, double kw, pw_wave_t *w)
 {
-	const double th = p->pwth * PI / 180;
-	const double ph = p->pwph * PI / 180;
-	const double st = sin(th), ct = cos(th), cp = cos(ph), sp = sin(ph);
-	const double rh[3] = {st * cp, st * sp, ct};
-	const double thh[3] = {ct * cp, ct * sp, -st};
-	const double phh[3] = {-sp, cp, 0};
-	for (int c = 0; c < 3; c++) {
-		w[0].rh[c] = rh[c];
-		w[0].ev[c] = (p->pwpol == 2) ? phh[c] : thh[c];
-	}
-	w[0].e0 = d_polar_deg(p->pwamp, p->pwphase);
-	if (!p->gp) return 1;
+	int nw = 0;
+	for (int iw = 0; iw < p->npw; iw++) {
+		const double th = p->pwi_th[iw] * PI / 180;
+		const double ph = p->pwi_ph[iw] * PI / 180;
+		const double st = sin(th), ct = cos(th), cp = cos(ph), sp = sin(ph);
+		const double rh[3] = {st * cp, st * sp, ct};
+		const double thh[3] = {ct * cp, ct * sp, -st};
+		const double phh[3] = {-sp, cp, 0};
+		pw_wave_t *a = &w[nw++];
+		for (int c = 0; c < 3; c++) {
+			a->rh[c] = rh[c];
+			a->ev[c] = (p->pwi_pol[iw] == 2) ? phh[c] : thh[c];
+		}
+		a->e0 = d_polar_deg(p->pwi_amp[iw], p->pwi_phase[iw]);
+		if (!p->gp) continue;
 
-	// 反射波 (地板) : 到来方向を z 鏡像、偏波の水平成分を反転、
-	// 位相は z = gpz で入射波と一致するようずらす
-	w[1].rh[0] = rh[0];
-	w[1].rh[1] = rh[1];
-	w[1].rh[2] = -rh[2];
-	w[1].ev[0] = -w[0].ev[0];
-	w[1].ev[1] = -w[0].ev[1];
-	w[1].ev[2] = w[0].ev[2];
-	const double psi = 2 * kw * rh[2] * p->gpz;
-	w[1].e0 = d_mul(w[0].e0, d_complex(cos(psi), sin(psi)));
-	return 2;
+		// 反射波 (地板) : 到来方向を z 鏡像、偏波の水平成分を反転、
+		// 位相は z = gpz で入射波と一致するようずらす
+		pw_wave_t *b = &w[nw++];
+		b->rh[0] = rh[0];
+		b->rh[1] = rh[1];
+		b->rh[2] = -rh[2];
+		b->ev[0] = -a->ev[0];
+		b->ev[1] = -a->ev[1];
+		b->ev[2] = a->ev[2];
+		const double psi = 2 * kw * rh[2] * p->gpz;
+		b->e0 = d_mul(a->e0, d_complex(cos(psi), sin(psi)));
+	}
+	return nw;
 }
 
 void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b)
@@ -606,13 +611,14 @@ void mna_rhs_planewave(const peec_t *p, double f, d_complex_t *b)
 	memset(b, 0, (size_t)n * sizeof(d_complex_t));
 	if (!p->pw) return;
 
-	pw_wave_t w[2];
+	pw_wave_t w[PW_WMAX];
 	const int nw = pw_waves(p, kw, w);
 
 	for (int k = 0; k < p->nseg; k++) {
+		// 入射波 (と地板の反射波) の起電力の和 : 線形なので同時入射は重ね合わせ
 		d_complex_t emf = pw_emf(&p->seg[k], w[0].rh, w[0].ev, w[0].e0, kw);
-		if (nw > 1) {
-			emf = d_add(emf, pw_emf(&p->seg[k], w[1].rh, w[1].ev, w[1].e0, kw));
+		for (int iw = 1; iw < nw; iw++) {
+			emf = d_add(emf, pw_emf(&p->seg[k], w[iw].rh, w[iw].ev, w[iw].e0, kw));
 		}
 		b[p->offS + k] = d_rmul(-1, emf);
 	}

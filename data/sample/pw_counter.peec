@@ -1,0 +1,21 @@
+# 検証 (bf) : 複数の平面波の同時入射 — 自由空間の定在波
+#   planewave を 2 行書き、+x から (θ = 90°, φ = 0°) と -x から (θ = 90°, φ = 180°)
+#   到来する振幅 1 V/m・θ 偏波の 2 波を同時に入射させる。θ^ はどちらも -z なので
+#     E = -z^ (e^{+jkx} + e^{-jkx}) = -2 cos(kx) z^
+#     H = -(1/η0) Σ r^ × E  ->  H_y = -(2j/η0) sin(kx)
+#   (伝搬方向は -r^。r^ = ±x^ で r^ × (-z^) = ±y^)。散乱体は y 方向の短い
+#   線 (e^・t^ = 0 で起電力 0、誘起電流 0) なので全界は入射界そのもの。
+#   f = c/2 = 149.896229 MHz (λ = 2 m ちょうど) で x = 0、λ/8、λ/4 (y = 1 m の線上) :
+#     E_z = -2、-√2、0、 H_y = 0、-j√2/η0、-2j/η0
+#   判定は 1e-6 (地板の定在波 pw_standing.peec と同じ)。
+OpenPEEC 1 0
+title = counter-propagating plane waves (free-space standing wave)
+planewave = 90 0 1 1.0
+planewave = 90 180 1 1.0
+node = 1 0 -0.05 -1
+node = 2 0 0.05 -1
+wire = 0 -0.05 -1 0 0.05 -1 1e-3 5.8e7 1
+port = 1 2 50
+nearfield = 0 1 0  0.5 1 0  2 0 0
+frequency = 1.49896229e8 1.49896229e8 0
+end
