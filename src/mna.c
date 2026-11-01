@@ -529,9 +529,10 @@ exp(jwt) 系では E(r) = E0 e^ exp(+j k r^・r) で、区間内は直線かつ�
 (幅で規格化した Lp と同じ扱い)。多角形セルは wv を持たないので軸方向のみ
 (セル寸法 << 波長 では差は O((kw)^2))。
 
-地板 (groundplane) があるときは PEC 面での反射波を足す : 到来方向を z 鏡像に
-し、偏波の水平成分を反転・垂直成分を保存する。z = gpz で接線成分が打ち消され
-(partial.c の鏡像規約と同一)、位相は面上で一致するよう 2 k r^z gpz だけずらす。
+地板 (groundplane) があるときは PEC 面での反射波を足す : 到来方向を面で鏡像に
+し、偏波の面に平行な成分を反転・垂直成分を保存する。面上で接線成分が打ち消され
+(partial.c の鏡像規約と同一)、位相は面上で一致するよう 2 k r^_a c だけずらす。
+直交する複数の面では面の部分集合ごとに反射波が 1 つ (pw_waves())。
 */
 static double pw_sinc(double x)
 {
@@ -586,19 +587,27 @@ int pw_waves(const peec_t *p, double kw, pw_wave_t *w)
 			a->ev[c] = (p->pwi_pol[iw] == 2) ? phh[c] : thh[c];
 		}
 		a->e0 = d_polar_deg(p->pwi_amp[iw], p->pwi_phase[iw]);
-		if (!p->gp) continue;
 
-		// 反射波 (地板) : 到来方向を z 鏡像、偏波の水平成分を反転、
-		// 位相は z = gpz で入射波と一致するようずらす
-		pw_wave_t *b = &w[nw++];
-		b->rh[0] = rh[0];
-		b->rh[1] = rh[1];
-		b->rh[2] = -rh[2];
-		b->ev[0] = -a->ev[0];
-		b->ev[1] = -a->ev[1];
-		b->ev[2] = a->ev[2];
-		const double psi = 2 * kw * rh[2] * p->gpz;
-		b->e0 = d_mul(a->e0, d_complex(cos(psi), sin(psi)));
+		// 反射波 (地板) : 面の部分集合 m ごとに 1 波。到来方向と偏波を幾何鏡像し、
+		// 偏波に (-1)^|m| を掛ける (z 面 1 枚なら水平成分反転・垂直成分保存)。
+		// 位相は面上で入射波と一致するよう Σ 2 k r^_a c_a だけずらす
+		// (面が直交していれば反射は可換で、位相は面ごとの和になる)
+		const pw_wave_t a0 = *a;
+		for (int m = 1; m <= gp_nimg(p); m++) {
+			pw_wave_t *b = &w[nw++];
+			*b = a0;
+			gp_vec(p, m, b->rh);
+			gp_vec(p, m, b->ev);
+			const double sg = gp_sign(m);
+			for (int c = 0; c < 3; c++) {
+				b->ev[c] = sg * b->ev[c];
+			}
+			double psi = 0;
+			for (int k = 0; k < p->ngp; k++) {
+				if ((m >> k) & 1) psi += 2 * kw * rh[p->gpax[k]] * p->gpc[k];
+			}
+			b->e0 = d_mul(a0.e0, d_complex(cos(psi), sin(psi)));
+		}
 	}
 	return nw;
 }

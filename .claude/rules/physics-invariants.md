@@ -95,9 +95,21 @@ Hoer–Love の対 (bar_use_hl) に乗る。電荷セルは分割前の区間の
 断面分布は扱わない)。加法性は長さ/断面 ~ 2000 の細長いセルで閉形式の和に
 桁落ちが出て 1e-6 程度になる (L の分割数不変性の判定はこのため 2e-5)。
 
+丸線 (`wire`) の断面分割 (`断面分割数` n) も同じ体積セル。n × n の正方格子の
+うち中心 (u, v) が u² + v² ≤ n²/4 (公称間隔 2a/n 単位、半整数・整数なので
+等号は起こらない) のセルを残し、格子間隔を h = a √(π/N) (N = 残ったセル数) に
+伸縮して総面積を πa² に合わせる (DC 抵抗が厳密)。局所枠は bar と同じなので、
+平行な 2 本の丸線・地板の鏡像のセルも Hoer–Love の対に乗る。表皮効果は
+`zint_seg()` が体積セルに適用しないので Bessel と二重計上にならない。
+Hoer–Love の交代和は条件数 ~ (区間長/セル幅)³ で、同じ配置を別の絶対座標で
+組むと丸めの差 1e-16 が L に 1e-7 (区間長/セル幅 = 500) で出る
+(`round sub image = pair` の許容が 1e-6 なのはこのため)。
+
 **番人**: `thick plate L (Grover)` / `thick plate R (ndivt=1/2)` /
 `slab skin ratio (extr.)` / `slab skin convergence` / `bar sub Rin (DC)` /
 `bar sub L (Grover)` / `bar sub L (10x4 = 5x2)` / `bar slab ratio (extr.)` /
+`round sub skin c_iso` / `round sub prox c_prox` (低周波漸近の近接係数) /
+`round sub skin x=2` (Bessel) / `round sub L internal` / `round sub image = pair` /
 `bar slab convergence` / `bar slab = plate slab` (2 次元格子の plate と断面ごと
 1 ノードの角線という別経路の離散化が 0.07% で一致)
 
@@ -141,8 +153,8 @@ Hoer–Love の対 (bar_use_hl) に乗る。電荷セルは分割前の区間の
 
 ## (8) 鏡像の符号規約 (groundplane)
 
-鏡像セルは**幾何鏡像** (z → 2 gpz − z、wv の z 反転、pv/papex も鏡像) を
-`seg_mirror()` (partial.c) で作り、
+鏡像セルは**幾何鏡像** (面 k の軸 a = gpax[k] について x_a → 2 gpc[k] − x_a、
+wv の a 成分反転、pv/papex も鏡像) を `seg_image()` (partial.c) で作り、
 
 - Lp : 相互項 `(t₁·t₂′) I(s₁, M s₂)` を**減算**する (t₂′ は鏡像の幾何方向)。
   これが「鏡像電流 = 水平成分反転・垂直成分保存」と同値になる。
@@ -150,14 +162,30 @@ Hoer–Love の対 (bar_use_hl) に乗る。電荷セルは分割前の区間の
   水平線の L 減少 / 垂直線の L 増加がそれぞれ逆転する。
 - P : 鏡像電荷は −q なので相互項をそのまま減算する。
 - 自己項 (対角) も自分の鏡像との相互項を引くこと。忘れると高さ依存が消える。
-- 遠方界 (farfield.c) の鏡像は「鏡像位置 + t′ + 電流 −I」で同じ規約。
+- 遠方界 (farfield.c)・近傍界 (nearfield.c) の鏡像は「鏡像位置 + t′ + 電流 −I」で
+  同じ規約。平面波の反射波 (mna.c の `pw_waves()`) も到来方向と偏波を幾何鏡像し、
+  偏波に −1 を掛け、位相を面上で入射波と一致させる (2 k r̂_a c)。
+
+**直交する複数の面 (3 枚まで)** : 面の部分集合 m (ビット k = 面 k) ごとに
+鏡像が 1 つ (2^ngp − 1 個)。幾何鏡像は反射の合成、符号は (−1)^|m|
+(`gp_sign()`) なので **2 回反射した鏡像は加算**になる (z 面と x 面の角では
+(x, z) 両方を反射した鏡像の電流が元と同じ符号)。反射は直交面どうしなら可換
+なので順序に依らず、反射波の位相は面ごとの 2 k r̂_a c_a の和。平行な 2 面は
+無限級数になるのでパーサが拒否する。遠方界は導体側の領域だけを積分する :
+z 面があれば θ ≤ 90°、x / y 面は裏 (r̂_a < 0) を 0、面上を台形則の重み 1/2
+(`ff_region()`)。z 面 1 枚のときは演算が以前の z 専用の実装と同一 (出力は
+ビット一致を確認済み)。
 
 M は等長変換かつ対合なので I(s₁, M s₂) = I(M s₁, s₂) が成り立ち、
 行列の対称性は保たれる (片側だけ鏡像を取ってよい根拠)。
 
 **番人**: `wire-gp L (images)` / `wire-gp C (to plane)` /
 `monopole = dipole/2` (λ/4 モノポール = 半波長ダイポール/2 が離散化レベルで
-一致することが、L・P・遅延・給電のすべての符号を同時に判定する)
+一致することが、L・P・遅延・給電のすべての符号を同時に判定する)。
+複数面は `corner3 L (7 images)` / `corner3 C (2 cells)` / `corner2 L/C`
+(Grover の平行フィラメント公式の鏡像和) / `x-plane dipole Rin/Xin/far/near`
+(x 面の鏡像 = 逆相アレイ) / `monopole x-plane = z` / `mono x-plane ff eff`
+(面上の重み 1/2) / コーナーの `recip` (送信の鏡像 = 受信の反射波)
 
 ## (9) 誘電体は εr − 1 だけを枝に載せる (二重計上禁止)
 

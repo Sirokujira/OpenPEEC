@@ -32,7 +32,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、199 判定)
+# 検証 (解析解・文献値との比較、233 判定)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -43,7 +43,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 199 判定すべて OK (h5py が
+**変更したら必ず `peec_check.sh` を通すこと。** 233 判定すべて OK (h5py が
 無い環境の `peec2h5 converter` だけは SKIP) でなければ完了ではない。
 「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
@@ -149,8 +149,14 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
    成り立つ。また体積セルの厚み方向再配分は Lp 行列が陽に解くので、`zint_seg()`
    は体積セルに表皮効果の合成式を適用しない (二重計上)。
    bar の断面分割 (`分割数w 分割数t`) も同じ体積セルで、区間の両端ノードを共有する。
+   丸線の断面分割 (`wire` の `断面分割数` n) も同じで、n × n 格子のうち中心が円内の
+   セルを残し、総面積が πa² になるよう格子間隔を伸縮する (DC 抵抗が厳密)。
+   Hoer–Love の交代和は条件数 ~ (区間長/セル幅)³ なので、区間長はセル幅の数百倍
+   以下にする (座標の丸めの差 1e-16 が L に 1e-7 で出る)。
    (`thick plate L (Grover)` / `thick plate R (ndivt=1/2)` / `slab skin ratio (extr.)` /
-   `bar sub L (Grover)` / `bar sub L (10x4 = 5x2)` / `bar slab = plate slab`)
+   `bar sub L (Grover)` / `bar sub L (10x4 = 5x2)` / `bar slab = plate slab` /
+   `round sub skin c_iso` / `round sub prox c_prox` / `round sub skin x=2` /
+   `round sub L internal` / `round sub image = pair`)
 7. **多角形セルの規格化と桁落ちフリーの対数項** — パネル (quad/disk) のセルは
    `w̄ = 面積/len` で規格化する ((4) の一般化。`len·w̄ = 面積` なので P の式は
    共通のまま)。`poly_potential()` の対数項は l < 0 の側を恒等式
@@ -164,13 +170,18 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
    銅シートで −24% だった)。
    (`quad sheet Rin (DC)` / `quad sheet L vs plate` / `quad sheet R vs plate (HF)` /
    `quad sheet R (skin at DC)` / `disk C (extrapolated)` / `annulus Rin (DC)`)
-8. **鏡像の符号規約 (groundplane)** — 鏡像セルは幾何鏡像 (`seg_mirror()`,
+8. **鏡像の符号規約 (groundplane)** — 鏡像セルは幾何鏡像 (`seg_image()`,
    partial.c)。Lp は `(t₁·t₂′) I(s₁, M s₂)` を**減算** (= 鏡像電流の
-   水平反転・垂直保存)、P は鏡像電荷 −q の相互項を減算、**自己項 (対角) も
-   自分の鏡像との相互項を引く**。遠方界の鏡像も同じ規約 (鏡像位置 + t′ +
-   電流 −I)。M は等長変換かつ対合なので行列の対称性は保たれる。
+   面に平行な成分反転・垂直成分保存)、P は鏡像電荷 −q の相互項を減算、
+   **自己項 (対角) も自分の鏡像との相互項を引く**。遠方界・近傍界・平面波の
+   反射波も同じ規約 (鏡像位置 + t′ + 電流 −I)。M は等長変換かつ対合なので
+   行列の対称性は保たれる。直交する複数の面 (3 枚まで) では面の部分集合
+   m ごとに鏡像が 1 つで、符号は (−1)^|m| (`gp_sign()`。2 回反射した鏡像は
+   **加算**)。平行な 2 面は無限級数になるのでパーサが拒否する。
    (`wire-gp L (images)` / `wire-gp C (to plane)` / `monopole = dipole/2` —
-   モノポール = ダイポール/2 が全符号を同時に判定する)
+   モノポール = ダイポール/2 が全符号を同時に判定する。複数面は
+   `corner3 L (7 images)` / `corner3 C (2 cells)` / `x-plane dipole far` /
+   `monopole x-plane = z` / コーナーの `recip`)
 9. **誘電体は εr* − 1 だけを枝に載せる (二重計上禁止)** — 真空 (ε0) は電位
    係数 P が受け持ち、誘電体の枝は複素比誘電率 εr* = εr(1 − j tanδ) の
    **過剰分だけ**を持つ : `Y = jωε0(εr*−1)A/len = ω(gexc + j cexc)`、
@@ -378,8 +389,9 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
 - 厚み方向の電流分布 (体積セル) は `plate` の `分割数t` と `bar` の
   `分割数w 分割数t` (断面分割) で対応済み。ただし Hoer–Love 閉形式が使えるのは
   軸・断面がそろった平行バー対のみで、それ以外 (遠方・非平行) は中立面リボンの
-  面積分に落ちる。丸線 (`wire`) の断面分割は未対応 (丸線の表皮効果は Bessel の
-  内部インピーダンス、近接効果は扱わない)。層間・断面内は各ノードで並列接続
+  面積分に落ちる。丸線 (`wire`) は `断面分割数` で断面を等面積の階段近似に
+  分割できる (収束は O(セル幅)、n = 10 で抵抗の増分 −2〜3%)。分割しない丸線の
+  表皮効果は Bessel の内部インピーダンス (近接効果は扱わない)。層間・断面内は各ノードで並列接続
   (共有ノード、VFI 近似) であり、厚み方向・断面内の横方向の伝導は陽には解かない。
 - 面導体は平面パネル (矩形 `plate` / 凸四辺形 `quad` / 円板 `disk`) のみ。
   3 次元曲面 (円筒など) は平面パネルのファセット化で近似する。
@@ -388,8 +400,11 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
   DC 抵抗は格子の双対幅で決まり、矩形格子では厳密、歪んだ格子・極格子
   では O(格子幅²) の系統誤差を含む (弦近似)。
 - 電流は区間ごと一定、電荷はセルごと一定の低次基底。共振近傍の精度は分割数依存。
-- 地板 (`groundplane`) は z = 一定の無限 PEC 面 1 枚のみ。積分回数は 2 倍に
-  なるが未知数は増えない。導体は z ≥ 地板に置く (下はエラー)。
+- 地板 (`groundplane`) は軸に垂直な無限 PEC 面で、互いに直交する 3 枚まで
+  (平行な 2 面・斜めの面は不可)。積分回数は 2^面数 倍になるが未知数は
+  増えない。導体は各面の + 側に置く (はみ出しはエラー)。x / y 面の遠方界は
+  面の手前の半空間を φ の台形則 (面上は重み 1/2) で積分するので、φ 分割数は
+  4 の倍数にして面上を格子点に載せる。
 - 誘電体 (`dielectric`) は直交直方体のみ。損失は一定 tanδ または多極分散
   (Debye 極 `f de`、Lorentz 極 `lorentz f0 de g`、導電性の Drude 項
   `drude fp g` と導電率 `sigma s` の任意の組合せ) のどちらか (併用は損失の

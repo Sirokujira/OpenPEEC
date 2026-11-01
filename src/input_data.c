@@ -368,7 +368,7 @@ int input_data(FILE *fp, peec_t *p)
 			}
 		}
 		else if (!strcmp(strkey, "wire") || !strcmp(strkey, "bar")) {
-			// wire = x1 y1 z1 x2 y2 z2 半径     導電率 分割数
+			// wire = x1 y1 z1 x2 y2 z2 半径     導電率 分割数 [断面分割数]
 			// bar  = x1 y1 z1 x2 y2 z2 幅 厚さ  導電率 分割数 [分割数w [分割数t]]
 			const int isbar = !strcmp(strkey, "bar");
 			if (ntoken < (isbar ? 12 : 11)) err = 1;
@@ -395,7 +395,9 @@ int input_data(FILE *fp, peec_t *p)
 					e->radius = atof(token[8]);
 					e->sigma = atof(token[9]);
 					e->ndiv = atoi(token[10]);
-					if (e->radius <= 0) err = 1;
+					// 断面分割 (n x n 格子のうち円内のセル。1 = 分割しない)
+					e->ndivw = (ntoken >= 12) ? atoi(token[11]) : 1;
+					if ((e->radius <= 0) || (e->ndivw < 1)) err = 1;
 				}
 				const double dx = e->x2[0] - e->x1[0];
 				const double dy = e->x2[1] - e->x1[1];
@@ -872,8 +874,31 @@ int input_data(FILE *fp, peec_t *p)
 			}
 		}
 		else if (!strcmp(strkey, "groundplane")) {
+			// groundplane = z0            (z = z0 の面 : 従来の書き方)
+			// groundplane = x|y|z c       (軸に垂直な面。互いに直交する 3 枚まで)
+			int ax = 2;
+			double c;
+			if (!strcmp(token[2], "x") || !strcmp(token[2], "y") || !strcmp(token[2], "z")) {
+				ax = token[2][0] - 'x';
+				if (ntoken < 4) err = 1;
+				c = (ntoken >= 4) ? atof(token[3]) : 0;
+			}
+			else {
+				c = atof(token[2]);
+			}
+			// 平行な 2 面 (同じ軸) は鏡像が無限級数になるので扱わない
+			for (int k = 0; k < p->ngp; k++) {
+				if (p->gpax[k] == ax) err = 1;
+			}
+			if (p->ngp >= 3) err = 1;
+			if (err) {
+				printf(errfmt2, "groundplane");
+				return 1;
+			}
+			p->gpax[p->ngp] = ax;
+			p->gpc[p->ngp] = c;
+			p->ngp++;
 			p->gp = 1;
-			p->gpz = atof(token[2]);
 		}
 		else if (!strcmp(strkey, "gmin")) {
 			p->gmin = atof(token[2]);

@@ -402,8 +402,10 @@ int wire_build(peec_t *p, FILE *fp_log)
 	int nchg = 0;
 	for (int i = 0; i < p->nwire; i++) {
 		const wire_t *w = &p->wire[i];
+		// 丸線の断面分割は n x n 格子の部分集合なので n^2 を上限にする
 		const int nsub = (w->shape == SHAPE_BAR)
-			? (((w->ndivw > 1) ? w->ndivw : 1) * ((w->ndivt > 1) ? w->ndivt : 1)) : 1;
+			? (((w->ndivw > 1) ? w->ndivw : 1) * ((w->ndivt > 1) ? w->ndivt : 1))
+			: ((w->ndivw > 1) ? (w->ndivw * w->ndivw) : 1);
 		npoint += w->ndiv + 1;
 		nseg += w->ndiv * nsub;
 		nchg += 2 * w->ndiv;
@@ -540,7 +542,13 @@ int wire_build(peec_t *p, FILE *fp_log)
 				// 電荷セルは分割前の区間のまま (表面電荷の断面分布は扱わない)。
 				const int nw = ((w->shape == SHAPE_BAR) && (w->ndivw > 1)) ? w->ndivw : 1;
 				const int nt = ((w->shape == SHAPE_BAR) && (w->ndivt > 1)) ? w->ndivt : 1;
-				if ((nw * nt) == 1) {
+				// 丸線の断面分割 (ndivw = n >= 2) : n x n の正方格子のうち中心が円内の
+				// セル (矩形バー) を残し、残ったセルの総面積が pi a^2 になるよう格子
+				// 間隔を伸縮する (等面積の階段近似)。どのセルも区間の両端ノードを共有
+				// する (bar と同じ VFI) ので DC 抵抗は len/(sigma pi a^2) に厳密に一致し、
+				// 断面内の電流の再配分 (表皮効果・近接効果) は Lp (Hoer-Love) が解く。
+				const int nr = ((w->shape == SHAPE_ROUND) && (w->ndivw > 1)) ? w->ndivw : 1;
+				if (((nw * nt) == 1) && (nr == 1)) {
 					p->seg[p->nseg++] = full;
 				}
 				else {
@@ -563,14 +571,39 @@ int wire_build(peec_t *p, FILE *fp_log)
 					nv[0] = (t[1] * wv[2]) - (t[2] * wv[1]);
 					nv[1] = (t[2] * wv[0]) - (t[0] * wv[2]);
 					nv[2] = (t[0] * wv[1]) - (t[1] * wv[0]);
-					const double hw = w->width / nw;
-					const double ht = w->thick / nt;
-					for (int iw = 0; iw < nw; iw++) {
-						for (int it = 0; it < nt; it++) {
+					// 格子 (丸線は n x n、角線は nw x nt) と 1 セルの寸法
+					const int gw = (nr > 1) ? nr : nw;
+					const int gt = (nr > 1) ? nr : nt;
+					int nin = 0;
+					if (nr > 1) {
+						// 中心 (u, v) (公称間隔 2a/n 単位、半整数または整数) が円内か。
+						// u^2 + v^2 と n^2/4 は厳密に表せて等号は起こらない
+						for (int iw = 0; iw < nr; iw++) {
+							for (int it = 0; it < nr; it++) {
+								const double u = (iw + 0.5) - (0.5 * nr);
+								const double vv = (it + 0.5) - (0.5 * nr);
+								if (((u * u) + (vv * vv)) <= (0.25 * nr * nr)) nin++;
+							}
+						}
+					}
+					const double hw = (nr > 1) ? (w->radius * sqrt(PI / nin)) : (w->width / nw);
+					const double ht = (nr > 1) ? hw : (w->thick / nt);
+					for (int iw = 0; iw < gw; iw++) {
+						for (int it = 0; it < gt; it++) {
+							double ow, ot;
+							if (nr > 1) {
+								const double u = (iw + 0.5) - (0.5 * nr);
+								const double vv = (it + 0.5) - (0.5 * nr);
+								if (((u * u) + (vv * vv)) > (0.25 * nr * nr)) continue;
+								ow = u * hw;
+								ot = vv * ht;
+							}
+							else {
+								ow = (-0.5 * w->width) + ((iw + 0.5) * hw);
+								ot = (-0.5 * w->thick) + ((it + 0.5) * ht);
+							}
 							seg_t *v = &p->seg[p->nseg];
 							*v = full;
-							const double ow = (-0.5 * w->width) + ((iw + 0.5) * hw);
-							const double ot = (-0.5 * w->thick) + ((it + 0.5) * ht);
 							for (int c = 0; c < 3; c++) {
 								v->x1[c] = s->x1[c] + (ow * wv[c]) + (ot * nv[c]);
 								v->x2[c] = s->x2[c] + (ow * wv[c]) + (ot * nv[c]);
@@ -975,40 +1008,51 @@ int wire_build(peec_t *p, FILE *fp_log)
 
 	p->maxid = autoid;
 
-	// 地板 (groundplane) : すべてのセルが地板より上 (z >= gpz) にあること。
-	// 鏡像法は上半空間でのみ有効なので、下にはみ出す導体はエラーにする。
+	// 地板 (groundplane) : すべてのセルが各地板の + 側 (x_a >= c) にあること。
+	// 鏡像法は導体側の空間 (面 1 枚で半空間、2 枚で 1/4、3 枚で 1/8) でのみ
+	// 有効なので、はみ出す導体はエラーにする。
 	if (p->gp) {
-		for (int i = 0; i < p->nseg + p->nchg; i++) {
-			const seg_t *s = (i < p->nseg) ? &p->seg[i] : &p->chg[i - p->nseg];
-			double mz;
-			if (s->npv > 0) {
-				mz = s->pv[2];
-				for (int k = 1; k < s->npv; k++) {
-					if (s->pv[(3 * k) + 2] < mz) mz = s->pv[(3 * k) + 2];
-				}
-			}
-			else {
-				mz = (s->x1[2] < s->x2[2]) ? s->x1[2] : s->x2[2];
-				if (s->wid > 0) {
-					// リボンの横方向 (体積セルは厚み方向も) の広がり
-					double lo = fabs(0.5 * s->wid * s->wv[2]);
-					if (s->vol) {
-						double t[3];
-						for (int c = 0; c < 3; c++) {
-							t[c] = (s->x2[c] - s->x1[c]) / s->len;
-						}
-						lo += fabs(0.5 * s->thick * ((t[0] * s->wv[1]) - (t[1] * s->wv[0])));
+		for (int k = 0; k < p->ngp; k++) {
+			const int a = p->gpax[k];
+			const double gc = p->gpc[k];
+			for (int i = 0; i < p->nseg + p->nchg; i++) {
+				const seg_t *s = (i < p->nseg) ? &p->seg[i] : &p->chg[i - p->nseg];
+				double mz;
+				if (s->npv > 0) {
+					mz = s->pv[a];
+					for (int q = 1; q < s->npv; q++) {
+						if (s->pv[(3 * q) + a] < mz) mz = s->pv[(3 * q) + a];
 					}
-					mz -= lo;
+				}
+				else {
+					mz = (s->x1[a] < s->x2[a]) ? s->x1[a] : s->x2[a];
+					if (s->wid > 0) {
+						// リボンの横方向 (体積セルは厚み方向 nv = t x wv も) の広がり
+						double lo = fabs(0.5 * s->wid * s->wv[a]);
+						if (s->vol) {
+							double t[3], nv[3];
+							for (int c = 0; c < 3; c++) {
+								t[c] = (s->x2[c] - s->x1[c]) / s->len;
+							}
+							nv[0] = (t[1] * s->wv[2]) - (t[2] * s->wv[1]);
+							nv[1] = (t[2] * s->wv[0]) - (t[0] * s->wv[2]);
+							nv[2] = (t[0] * s->wv[1]) - (t[1] * s->wv[0]);
+							lo += fabs(0.5 * s->thick * nv[a]);
+						}
+						mz -= lo;
+					}
+				}
+				if (mz < gc - p->nodetol) {
+					printf("*** conductor below ground plane (%c = %.3e < %.3e)\n", 'x' + a, mz, gc);
+					fprintf(fp_log, "*** conductor below ground plane (%c = %.3e < %.3e)\n", 'x' + a, mz, gc);
+					return 1;
 				}
 			}
-			if (mz < p->gpz - p->nodetol) {
-				printf("*** conductor below ground plane (z = %.3e < %.3e)\n", mz, p->gpz);
-				fprintf(fp_log, "*** conductor below ground plane (z = %.3e < %.3e)\n", mz, p->gpz);
-				return 1;
-			}
+			fprintf(fp_log, "ground plane : %c = %g (image method)\n", 'x' + a, gc);
 		}
-		fprintf(fp_log, "ground plane : z = %g (image method)\n", p->gpz);
+		if (p->ngp > 1) {
+			fprintf(fp_log, "ground planes : %d orthogonal planes, %d images\n", p->ngp, (1 << p->ngp) - 1);
+		}
 	}
 
 	// 近接ノード警告 (マージされなかったが nodetol の 10 倍未満 : 意図しない分離の可能性)

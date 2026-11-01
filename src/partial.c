@@ -334,30 +334,76 @@ double lp_self(double l, double a)
 }
 
 /*
-鏡像セル (groundplane = z の無限 PEC 地板)
+鏡像セル (groundplane : 互いに直交する x / y / z = 一定の無限 PEC 面、3 枚まで)
 
-幾何鏡像 : x, y はそのまま、z -> 2 gpz - z。リボンの横方向 wv・多角形の
-頂点リング pv・扇の基点 papex も同様に写す (体積セルの厚み方向は中立面に
-対して対称なので追加の変換は不要。多角形の巻き方は反転するが、
-poly_potential は向きに依存しない)。
+面 k (軸 a = gpax[k]、位置 c = gpc[k]) の幾何鏡像は x_a -> 2c - x_a (他の成分は
+そのまま)。リボンの横方向 wv・多角形の頂点リング pv・扇の基点 papex も同様に
+写す (体積セルの厚み方向は中立面に対して対称なので追加の変換は不要。多角形の
+巻き方は反転するが、poly_potential は向きに依存しない)。
 
-鏡像電流は「水平成分反転・垂直成分保存」(-Jx, -Jy, +Jz)。これは幾何鏡像
-した区間 (方向 (tx, ty, -tz)) に -1 倍の電流を流すことと同値なので、
-呼び出し側は t1・t2' (t2' は鏡像の幾何方向) を掛けた相互項を「減算」する。
-鏡像電荷は -q なので、電位係数も鏡像との相互項をそのまま減算する。
+面の部分集合 m (ビット k が面 k) ごとに鏡像が 1 つあり、反射を |m| 回重ねた
+幾何鏡像に電流 (-1)^|m| 倍を流す (1 回の反射では「面に平行な成分反転・垂直
+成分保存」: z 面なら (-Jx, -Jy, +Jz))。呼び出し側は t1・(M t2) (M t2 は鏡像の
+幾何方向) に符号 (-1)^|m| を掛けた相互項を足す。鏡像電荷は (-1)^|m| q なので、
+電位係数も鏡像との相互項に同じ符号を掛けて足す。面が直交していれば反射は
+可換なので鏡像は有限個 (2^ngp - 1) で厳密 (平行な 2 面は無限級数になるので
+パーサが拒否する)。
 
 M は等長変換かつ対合なので I(s1, M s2) = I(M s1, s2) が成り立ち、
 t1・(M t2) = (M t1)・t2 とあわせて行列の対称性は保たれる。
+z 面 1 枚のときは演算が以前の z 専用の実装と同一 (出力はビット一致)。
 */
-void seg_mirror(const seg_t *s, double gpz, seg_t *out)
+int gp_nimg(const peec_t *p)
+{
+	return p->gp ? ((1 << p->ngp) - 1) : 0;
+}
+
+double gp_sign(int m)
+{
+	int c = 0;
+	while (m) {
+		c += m & 1;
+		m >>= 1;
+	}
+	return (c & 1) ? -1.0 : 1.0;
+}
+
+void gp_pt(const peec_t *p, int m, double *x)
+{
+	for (int k = 0; k < p->ngp; k++) {
+		if ((m >> k) & 1) {
+			const int a = p->gpax[k];
+			x[a] = (2 * p->gpc[k]) - x[a];
+		}
+	}
+}
+
+void gp_vec(const peec_t *p, int m, double *v)
+{
+	for (int k = 0; k < p->ngp; k++) {
+		if ((m >> k) & 1) {
+			v[p->gpax[k]] = -v[p->gpax[k]];
+		}
+	}
+}
+
+int gp_hasax(const peec_t *p, int ax)
+{
+	for (int k = 0; k < p->ngp; k++) {
+		if (p->gpax[k] == ax) return 1;
+	}
+	return 0;
+}
+
+void seg_image(const peec_t *p, const seg_t *s, int m, seg_t *out)
 {
 	*out = *s;
-	out->x1[2] = (2 * gpz) - s->x1[2];
-	out->x2[2] = (2 * gpz) - s->x2[2];
-	out->wv[2] = -s->wv[2];
-	out->papex[2] = (2 * gpz) - s->papex[2];
+	gp_pt(p, m, out->x1);
+	gp_pt(p, m, out->x2);
+	gp_vec(p, m, out->wv);
+	gp_pt(p, m, out->papex);
 	for (int k = 0; k < s->npv; k++) {
-		out->pv[(3 * k) + 2] = (2 * gpz) - s->pv[(3 * k) + 2];
+		gp_pt(p, m, &out->pv[3 * k]);
 	}
 }
 
@@ -389,13 +435,17 @@ d_complex_t lp_entry(const peec_t *p, int i, int j, double kw)
 		t1[c] = (si->x2[c] - si->x1[c]) / si->len;
 	}
 
+	const int nimg = gp_nimg(p);
 	if (i == j) {
 		d_complex_t v = neumann_self_k(si, si->aL, kw);
-		if (p->gp) {
+		for (int m = 1; m <= nimg; m++) {
+			// 自己項も自分の鏡像との相互項を足す (符号 (-1)^|m|)
 			seg_t mi;
-			seg_mirror(si, p->gpz, &mi);
-			const double tdm = (t1[0] * t1[0]) + (t1[1] * t1[1]) - (t1[2] * t1[2]);
-			v = d_sub(v, d_rmul(tdm, neumann_pair_k(si, &mi, si->aL, si->aL, kw)));
+			seg_image(p, si, m, &mi);
+			double tm[3] = {t1[0], t1[1], t1[2]};
+			gp_vec(p, m, tm);
+			const double tdm = gp_sign(m) * dot3(t1, tm);
+			v = d_add(v, d_rmul(tdm, neumann_pair_k(si, &mi, si->aL, si->aL, kw)));
 		}
 		return d_rmul(coef, v);
 	}
@@ -405,19 +455,22 @@ d_complex_t lp_entry(const peec_t *p, int i, int j, double kw)
 		t2[c] = (sj->x2[c] - sj->x1[c]) / sj->len;
 	}
 	const double tdot = dot3(t1, t2);
-	const double tdm = (t1[0] * t2[0]) + (t1[1] * t2[1]) - (t1[2] * t2[2]);
 
 	// 直交するセルの寄与は恒等的に 0 (格子状の面導体では約半数を占める)。
 	// 二重積分を丸ごと省く。地板があるときは鏡像側の係数 tdm も見る
-	// (tdm = tdot - 2 t1z t2z なので tdot = 0 でも 0 とは限らない)。
+	// (z 面なら tdm = tdot - 2 t1z t2z なので tdot = 0 でも 0 とは限らない)。
 	d_complex_t v = d_complex(0, 0);
 	if (tdot != 0) {
 		v = d_rmul(tdot, neumann_pair_k(si, sj, si->aL, sj->aL, kw));
 	}
-	if (p->gp && (tdm != 0)) {
+	for (int m = 1; m <= nimg; m++) {
+		double tm[3] = {t2[0], t2[1], t2[2]};
+		gp_vec(p, m, tm);
+		const double tdm = dot3(t1, tm);
+		if (tdm == 0) continue;
 		seg_t mj;
-		seg_mirror(sj, p->gpz, &mj);
-		v = d_sub(v, d_rmul(tdm, neumann_pair_k(si, &mj, si->aL, sj->aL, kw)));
+		seg_image(p, sj, m, &mj);
+		v = d_add(v, d_rmul(gp_sign(m) * tdm, neumann_pair_k(si, &mj, si->aL, sj->aL, kw)));
 	}
 
 	return d_rmul(coef, v);

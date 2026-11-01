@@ -136,11 +136,12 @@ d_complex_t pot_entry(const peec_t *p, int i, int j, double kw)
 				? neumann_self_k(&p->chg[a], p->chg[a].aP, kw)
 				: neumann_pair_k(&p->chg[a], &p->chg[b],
 				                 p->chg[a].aP, p->chg[b].aP, kw);
-			if (p->gp) {
+			for (int m = 1; m <= gp_nimg(p); m++) {
+				// 鏡像電荷は (-1)^|m| q
 				seg_t m2;
-				seg_mirror(&p->chg[b], p->gpz, &m2);
-				v = d_sub(v, neumann_pair_k(&p->chg[a], &m2,
-					p->chg[a].aP, p->chg[b].aP, kw));
+				seg_image(p, &p->chg[b], m, &m2);
+				v = d_add(v, d_rmul(gp_sign(m), neumann_pair_k(&p->chg[a], &m2,
+					p->chg[a].aP, p->chg[b].aP, kw)));
 			}
 			s = d_add(s, v);
 		}
@@ -224,13 +225,13 @@ int pot_fill(peec_t *p, double f, FILE *fp_log)
 				? neumann_self_k(&p->chg[h1], p->chg[h1].aP, kw)
 				: neumann_pair_k(&p->chg[h1], &p->chg[h2],
 				                 p->chg[h1].aP, p->chg[h2].aP, kw);
-			if (p->gp) {
-				// 地板 : 鏡像電荷は -q なので鏡像との相互項を減算する
-				// (自己項 h1 == h2 も自分の鏡像との相互項を引く)
+			for (int m = 1; m <= gp_nimg(p); m++) {
+				// 地板 : 鏡像電荷は (-1)^|m| q なので鏡像との相互項に符号を掛けて足す
+				// (自己項 h1 == h2 も自分の鏡像との相互項を足す)
 				seg_t m2;
-				seg_mirror(&p->chg[h2], p->gpz, &m2);
-				v = d_sub(v, neumann_pair_k(&p->chg[h1], &m2,
-					p->chg[h1].aP, p->chg[h2].aP, kw));
+				seg_image(p, &p->chg[h2], m, &m2);
+				v = d_add(v, d_rmul(gp_sign(m), neumann_pair_k(&p->chg[h1], &m2,
+					p->chg[h1].aP, p->chg[h2].aP, kw)));
 			}
 			ig[(size_t)h1 * nh + h2] = v;
 		}

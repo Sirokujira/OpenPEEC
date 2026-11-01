@@ -31,7 +31,7 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 #define FN_MM "mixed.csv"
 #define FN_FARPW "farpw.csv"
 #define PW_MAX 8                  // planewave の行 (同時入射の波) の上限
-#define PW_WMAX (2 * PW_MAX)      // 地板の反射波を含む波の数の上限
+#define PW_WMAX (8 * PW_MAX)      // 地板 (3 面まで) の反射波を含む波の数の上限
 
 // 数学・物理定数 (自前マクロ : <math.h> の M_PI には依存しない)
 #define PI   (4.0 * atan(1.0))
@@ -284,8 +284,14 @@ typedef struct {
 	int    retardation;           // retardation = 1 : 遅延 (フルウェーブ PEEC)
 	int    accel;                 // acceleration = 1 : 掃引で LU を再利用する GMRES
 	int    dist;                  // distribution = 1 : 電流・電荷分布を出力
-	int    gp;                    // groundplane = z : 無限 PEC 地板 (鏡像法)
-	double gpz;                   // 地板の z 座標 (gp = 1 のとき有効)
+	int    gp;                    // groundplane : 無限 PEC 地板 (鏡像法) が 1 枚以上ある
+	// 地板の面 (互いに直交する x / y / z = 一定の面を 3 枚まで)。面 k は
+	// 軸 gpax[k] (0 = x, 1 = y, 2 = z) が gpc[k] の面で、導体は + 側に置く。
+	// 鏡像は面の部分集合 m (ビット k = 面 k で反射、1 .. 2^ngp - 1) ごとに 1 つで、
+	// 電流・電荷の符号は (-1)^(反射の回数)
+	int    ngp;
+	int    gpax[3];
+	double gpc[3];
 	int    ffnth, ffnph;          // farfield = 分割数theta 分割数phi (0 = 無効)
 	int    nnf;                   // nearfield = ... の行数 (0 = 無効)
 	nf_t   *nf;                   // [nnf] 観測格子
@@ -394,7 +400,12 @@ double hmat_memory_mb(const struct hmat_t *h);
 double hmat_dense_mb(int n);
 
 // partial.c
-void seg_mirror(const seg_t *s, double gpz, seg_t *out);
+int    gp_nimg(const peec_t *p);                       // 鏡像の個数 2^ngp - 1
+double gp_sign(int m);                                  // 鏡像 m の電流・電荷の符号
+void   gp_pt(const peec_t *p, int m, double *x);        // 点 x を鏡像 m へ (その場で)
+void   gp_vec(const peec_t *p, int m, double *v);       // 方向 v を鏡像 m へ (その場で)
+int    gp_hasax(const peec_t *p, int ax);               // 軸 ax の面があるか
+void   seg_image(const peec_t *p, const seg_t *s, int m, seg_t *out);
 // 部分インダクタンス行列の 1 要素 (i, j は区間番号)。圧縮の ACA から呼ぶ。
 d_complex_t lp_entry(const peec_t *p, int i, int j, double kw);
 double neumann_self(double l, double a);
