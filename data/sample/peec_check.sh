@@ -1666,6 +1666,91 @@ else
 	status=1
 fi
 
+# (bd) RLGC 線路 (tline ... rlgc) : 電信方程式の Zin (複素 Z0・γ)、集中定数の
+#      梯子 (独立なモデル)、無損失の rlgc = Z0/遅延の形
+tlrlgc() {
+	awk -F, -v len=0.5 -v r="$1" -v l=2.5e-7 -v g="$2" -v c=1e-10 -v rs="$3" -v tand="$4" -v zl=100 '
+	function csq(ar, ai,   m, a) {m = sqrt(sqrt((ar * ar) + (ai * ai))); a = atan2(ai, ar) / 2; SR = m * cos(a); SI = m * sin(a)}
+	NR > 1 {
+		PI = atan2(0, -1); f = $2; w = 2 * PI * f;
+		zr = r + (rs * sqrt(f)); zi = w * l; yr = g + (w * c * tand); yi = w * c;
+		yy = (yr * yr) + (yi * yi); qr = ((zr * yr) + (zi * yi)) / yy; qi = ((zi * yr) - (zr * yi)) / yy;
+		csq(qr, qi); z0r = SR; z0i = SI;
+		csq((zr * yr) - (zi * yi), (zr * yi) + (zi * yr)); x = SR * len; y = SI * len;
+		cx = (exp(x) + exp(-x)) / 2; sx = (exp(x) - exp(-x)) / 2;
+		chr = cx * cos(y); chi = sx * sin(y); shr = sx * cos(y); shi = cx * sin(y);
+		nr = (zl * chr) + ((z0r * shr) - (z0i * shi)); ni = (zl * chi) + ((z0r * shi) + (z0i * shr));
+		dr = ((z0r * chr) - (z0i * chi)) + (zl * shr); di = ((z0r * chi) + (z0i * chr)) + (zl * shi);
+		tr = (z0r * nr) - (z0i * ni); ti = (z0r * ni) + (z0i * nr); dd = (dr * dr) + (di * di);
+		er = ((tr * dr) + (ti * di)) / dd; ei = ((ti * dr) - (tr * di)) / dd;
+		e = sqrt((($3 - er) ^ 2) + (($4 - ei) ^ 2)) / sqrt((er * er) + (ei * ei)); if (!(e <= mx)) mx = e; n++
+	} END {printf "%d %.3e\n", n, mx}' "$csv"
+}
+cp "$SRC/tline_rlgc.peec" "$WORK/"
+run tline_rlgc.peec
+set -- $(tlrlgc 5 1e-4 1e-3 0.01)
+awk -v n="$1" -v e="$2" 'BEGIN {
+	ok = (n == 5) && (e <= 1e-8);
+	printf "%-24s freqs=%d max rel err=%.3e -> %s (<= 1e-8)\n", "tline rlgc Zin", n, e, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# 梯子 : T 形 N 段 (直列 R/2·L/2、並列 G·C)。Rs = tanδ = 0 の分布定数と比べる
+sed -e 's/ 1e-10 1e-3 0.01$/ 1e-10/' -e 's/^frequency = .*/frequency = 1e6 2e8 4/' "$SRC/tline_rlgc.peec" > "$WORK/tline_rlgc0.peec"
+run tline_rlgc0.peec
+cp "$csv" "$WORK/zin_rlgc0.csv"
+for N in 32 64; do
+	awk -v N="$N" 'BEGIN {
+		len = 0.5; R = 5; L = 2.5e-7; G = 1e-4; C = 1e-10; d = len / N;
+		print "OpenPEEC 1 0"; print "title = RLGC ladder (T sections)";
+		for (k = 0; k < N; k++) {
+			a = 1 + (4 * k); x = a + 1; cc = a + 2; y = a + 3; b = a + 4;
+			printf "resistor = %d %d %.15g\n", a, x, R * d / 2;
+			printf "inductor = L%da %d %d %.15g\n", k, x, cc, L * d / 2;
+			printf "inductor = L%db %d %d %.15g\n", k, cc, y, L * d / 2;
+			printf "resistor = %d %d %.15g\n", y, b, R * d / 2;
+			printf "capacitor = %d 0 %.15g\n", cc, C * d;
+			printf "resistor = %d 0 %.15g\n", cc, 1 / (G * d);
+		}
+		printf "resistor = %d 0 100\n", 1 + (4 * N);
+		print "port = 1 0 50"; print "frequency = 1e6 2e8 4"; print "end";
+	}' > "$WORK/tline_ladder$N.peec"
+	run "tline_ladder$N.peec"
+	lerr=$(paste -d, "$WORK/zin_rlgc0.csv" "$csv" | awk -F, 'NR > 1 {
+		e = sqrt((($3 - $10) ^ 2) + (($4 - $11) ^ 2)) / sqrt(($3 ^ 2) + ($4 ^ 2)); if (!(e <= mx)) mx = e
+	} END {printf "%.6e", mx}')
+	if [ "$N" = 32 ]; then l32=$lerr; else l64=$lerr; fi
+done
+awk -v a="$l32" -v b="$l64" 'BEGIN {
+	ok = (b <= 1e-3) && (a >= 3 * b);
+	printf "%-24s err(64)=%.3e err(32)/err(64)=%.2f -> %s (<= 1e-3, >= 3)\n", "tline rlgc vs ladder", b, a / b, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# 無損失の rlgc (Z0 = √(L/C) = 50、td = l √(LC) = 1 ns) = Z0/遅延の形
+cp "$SRC/tline_term.peec" "$WORK/"
+run tline_term.peec
+cp "$csv" "$WORK/zin_tl_z0td.csv"
+sed 's/^tline = 1 0 2 0 50 1e-9$/tline = 1 0 2 0 rlgc 0.2 0 2.5e-7 0 1e-10/' "$SRC/tline_term.peec" > "$WORK/tline_term_rlgc.peec"
+run tline_term_rlgc.peec
+paste -d, "$WORK/zin_tl_z0td.csv" "$csv" | awk -F, 'NR > 1 {
+	e = sqrt((($3 - $10) ^ 2) + (($4 - $11) ^ 2)) / sqrt(($3 ^ 2) + ($4 ^ 2)); if (!(e <= mx)) mx = e; n++
+} END {
+	ok = (n == 5) && (mx <= 1e-12);
+	printf "%-24s freqs=%d max rel diff=%.3e -> %s (<= 1e-12)\n", "tline rlgc = Z0/td", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+nbad=0
+for tl in "tline = 1 0 2 0 rlgc 0.5 5 2.5e-7 1e-4" "tline = 1 0 2 0 rlgc 0.5 5 0 1e-4 1e-10" \
+          "tline = 1 0 2 0 rlgc 0.5 5 2.5e-7 1e-4 0" "tline = 1 0 2 0 rlgc 0.5 -5 2.5e-7 1e-4 1e-10"; do
+	sed "s/^tline = .*/$tl/" "$SRC/tline_rlgc.peec" > "$WORK/tline_bad.peec"
+	if (cd "$WORK" && "$PEEC" -n 1 tline_bad.peec > tline_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+done
+if [ "$nbad" -eq 4 ]; then
+	printf "%-24s -> OK (4/4 malformed inputs rejected)\n" "tline rlgc parser guard"
+else
+	printf "%-24s -> NG (%d/4 malformed inputs rejected)\n" "tline rlgc parser guard" "$nbad" >&2
+	status=1
+fi
+
 echo "--- current / charge distribution"
 # (s) 単線 8 分割、容量なし : 電荷が溜まらないので全区間に同じ 1A が流れる
 #     (キルヒホッフの電流則。分割数・周波数・材料に依らず厳密)

@@ -1,0 +1,28 @@
+# 検証 (bd) : RLGC 伝送線路 (tline ... rlgc) — 周波数依存の損失
+#   長さ 0.5 m、単位長さあたり L = 250 nH/m、C = 100 pF/m (無損失なら
+#   Z0 = 50 Ω、v = 2e8 m/s)、R = 5 Ω/m + 表皮効果 Rs √f (Rs = 1e-3
+#   Ω/(m √Hz) : 100 MHz で 10 Ω/m)、G = 1e-4 S/m + 誘電損 ωC tanδ
+#   (tanδ = 0.01) の線路を ZL = 100 Ω で終端する。
+#   電信方程式の解 (Pozar 2.7 節) :
+#     Zs = R + Rs √f + jωL,   Yp = G + ωC tanδ + jωC
+#     Z0 = √(Zs/Yp),          γl = √(Zs Yp) l     (どちらも主値、Re >= 0)
+#     Zin = Z0 (ZL cosh γl + Z0 sinh γl) / (Z0 cosh γl + ZL sinh γl)
+#   を 100 kHz .. 1 GHz の対数 4 分割 (5 点) で比べる (判定 1e-8)。実装は
+#   進行波の関係 (b1 = T a2、b2 = T a1、T = e^{-γl}) を複素 Z0 で組むだけなので
+#   式とは独立。100 kHz では R が支配的 (Zin ≈ Rl + ZL ‖ 1/(Gl) 付近)、1 GHz では
+#   電気長 15.7 rad・表皮損失 32 Ω/m で減衰が効く。
+#   検証スクリプトはさらに
+#   - 集中定数の梯子 (T 形 64 / 32 段 : 直列 R/2·L/2、並列 G·C、検証済みの
+#     resistor / inductor / capacitor だけで組む) と比べる : 分布定数の式とは
+#     独立なモデル。O(段長²) で収束するので 64 段で 1e-3、32 段との比 ≥ 3
+#     (Rs = tanδ = 0 の版、1 MHz .. 200 MHz)
+#   - R = G = Rs = tanδ = 0 の rlgc が Z0/遅延の形 (tline_term.peec) とビット近く
+#     一致すること (Z0 = √(L/C)、td = l √(LC)、判定 1e-12)
+#   - rlgc の書き間違い (語の不足、L <= 0、C <= 0、R < 0) の拒否
+OpenPEEC 1 0
+title = lossy RLGC transmission line (skin effect + dielectric loss)
+tline = 1 0 2 0 rlgc 0.5 5 2.5e-7 1e-4 1e-10 1e-3 0.01
+resistor = 2 0 100
+port = 1 0 50
+frequency = 1e5 1e9 4 log
+end

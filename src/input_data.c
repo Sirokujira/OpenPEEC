@@ -260,20 +260,45 @@ int input_data(FILE *fp, peec_t *p)
 		}
 		else if (!strcmp(strkey, "tline")) {
 			// tline = n1 n2 n3 n4 Z0 遅延[s] [損失dB]
+			// tline = n1 n2 n3 n4 rlgc 長さ[m] R[Ω/m] L[H/m] G[S/m] C[F/m] [Rs[Ω/(m√Hz)] [tanδ]]
 			if (ntoken < 8) err = 1;
 			else {
 				APPEND(p->tl, p->ntl, ctl, tline_t);
 				tline_t *e = &p->tl[p->ntl];
+				memset(e, 0, sizeof(tline_t));
 				e->n1 = nodeid(token[2], &err);
 				e->n2 = nodeid(token[3], &err);
 				e->n3 = nodeid(token[4], &err);
 				e->n4 = nodeid(token[5], &err);
-				e->z0 = atof(token[6]);
-				e->td = atof(token[7]);
-				const double db = (ntoken >= 9) ? atof(token[8]) : 0;
-				if ((e->z0 <= 0) || (e->td <= 0) || (db < 0) ||
-				    (e->n1 == e->n2) || (e->n3 == e->n4)) err = 1;
-				e->att = pow(10, -db / 20);
+				if (!strcmp(token[6], "rlgc")) {
+					if (ntoken < 12) err = 1;
+					else {
+						e->rlgc = 1;
+						e->len = atof(token[7]);
+						e->r = atof(token[8]);
+						e->l = atof(token[9]);
+						e->g = atof(token[10]);
+						e->c = atof(token[11]);
+						e->rs = (ntoken >= 13) ? atof(token[12]) : 0;
+						e->tand = (ntoken >= 14) ? atof(token[13]) : 0;
+						if ((e->len <= 0) || (e->l <= 0) || (e->c <= 0) || (e->r < 0) ||
+						    (e->g < 0) || (e->rs < 0) || (e->tand < 0)) err = 1;
+						// 参考値 (ログ用) : 損失を除いた Z0 と遅延
+						if (!err) {
+							e->z0 = sqrt(e->l / e->c);
+							e->td = e->len * sqrt(e->l * e->c);
+						}
+						e->att = 1;
+					}
+				}
+				else {
+					e->z0 = atof(token[6]);
+					e->td = atof(token[7]);
+					const double db = (ntoken >= 9) ? atof(token[8]) : 0;
+					if ((e->z0 <= 0) || (e->td <= 0) || (db < 0)) err = 1;
+					e->att = pow(10, -db / 20);
+				}
+				if ((e->n1 == e->n2) || (e->n3 == e->n4)) err = 1;
 				updatemax(p, e->n1);
 				updatemax(p, e->n2);
 				updatemax(p, e->n3);

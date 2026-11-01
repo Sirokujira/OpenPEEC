@@ -56,10 +56,20 @@ typedef struct {int n1, n2; double z0;} port_t;
 // (ポート j に 1 A、他は開放) を重み w_j = 振幅 e^{j 位相} で重ね合わせた電流・電荷で
 // 評価する。port は 0 始まり。行が無ければ従来どおり port #1 に 1 A
 typedef struct {int port; double amp, phase;} exc_t;
-// 伝送線路 (tline = n1 n2 n3 n4 Z0 遅延 [損失dB]) : 端子対 1 = (n1, n2)、端子対 2 = (n3, n4)。
-// 無損失または無ひずみ線路 (Heaviside、R/L = G/C) : Z0 は実数、att = 10^(-dB/20) は
-// 片道の振幅減衰で周波数に依らない
-typedef struct {int n1, n2, n3, n4; double z0, td, att;} tline_t;
+// 伝送線路 : 端子対 1 = (n1, n2)、端子対 2 = (n3, n4)。
+//   tline = n1 n2 n3 n4 Z0 遅延 [損失dB]
+//     無損失または無ひずみ線路 (Heaviside、R/L = G/C) : Z0 は実数、att = 10^(-dB/20) は
+//     片道の振幅減衰で周波数に依らない
+//   tline = n1 n2 n3 n4 rlgc 長さ R L G C [Rs [tanδ]]
+//     単位長さあたりの RLGC (rlgc = 1)。R(f) = R + Rs sqrt(f) (表皮効果)、
+//     G(f) = G + w C tanδ (誘電損)。Z0 = sqrt((R+jwL)/(G+jwC)) と
+//     γ = sqrt((R+jwL)(G+jwC)) は周波数ごとに複素数で決まる
+typedef struct {
+	int    n1, n2, n3, n4;
+	double z0, td, att;
+	int    rlgc;
+	double len, r, l, g, c, rs, tand;
+} tline_t;
 // 導体断面
 //   SHAPE_ROUND = 丸線 (半径 a)
 //   SHAPE_BAR   = 角線 (幅 w x 厚さ t)  — 細線 (等価半径) として扱う

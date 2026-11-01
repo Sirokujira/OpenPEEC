@@ -218,6 +218,37 @@ static void stamp(sink_t *s, int i, int j, d_complex_t v)
 	sp->nnz++;
 }
 
+// 複素平方根 (主値 : 実部 >= 0)
+static d_complex_t tl_csqrt(d_complex_t z)
+{
+	const double m = sqrt(d_abs(z));
+	const double a = 0.5 * atan2(z.i, z.r);
+	return d_complex(m * cos(a), m * sin(a));
+}
+
+/*
+RLGC 線路の特性インピーダンスと透過 (tline ... rlgc)
+
+  Zs = R + Rs sqrt(f) + j w L       (直列 : DC 抵抗 + 表皮効果 + インダクタンス)
+  Yp = G + w C tanδ + j w C         (並列 : 漏れ + 誘電損 + 容量)
+  Z0 = sqrt(Zs/Yp)、γ = sqrt(Zs Yp) (どちらも主値 : Re >= 0 で受動・減衰側)
+  T  = e^{-γ len}
+
+一様な TEM 線路の電信方程式の解は、複素 Z0 でも入射波 (v + Z0 i)/2 と
+反射波 (v - Z0 i)/2 に分かれて b1 = T a2、b2 = T a1 になるので、進行波の
+スタンプはそのまま使える (Z0 が実数・T = att e^{-j w td} の場合はその特例)。
+*/
+static void tl_rlgc(const tline_t *t, double omega, d_complex_t *zc, d_complex_t *tt)
+{
+	const double f = omega / (2 * PI);
+	const d_complex_t zs = d_complex(t->r + (t->rs * sqrt(f)), omega * t->l);
+	const d_complex_t yp = d_complex(t->g + (omega * t->c * t->tand), omega * t->c);
+	*zc = tl_csqrt(d_div(zs, yp));
+	const d_complex_t gl = d_rmul(t->len, tl_csqrt(d_mul(zs, yp)));
+	const double ea = exp(-gl.r);
+	*tt = d_complex(ea * cos(gl.i), -ea * sin(gl.i));
+}
+
 // 共通の組み立て。skiplp = 1 なら密なカーネルブロック (Lp / P) を飛ばす
 static void assemble(const peec_t *p, double f, sink_t *s, int skiplp)
 {
@@ -309,10 +340,19 @@ static void assemble(const peec_t *p, double f, sink_t *s, int skiplp)
 		const int b2 = map[t->n4];
 		const int r1 = p->offT + (2 * i);
 		const int r2 = r1 + 1;
-		const double ph = omega * t->td;
-		const d_complex_t tt = d_complex(t->att * cos(ph), -t->att * sin(ph));
+		// 特性インピーダンス zc と透過 T = e^{-γ len}
+		d_complex_t zc, tt;
+		if (t->rlgc) {
+			tl_rlgc(t, omega, &zc, &tt);
+		}
+		else {
+			const double ph = omega * t->td;
+			zc = d_complex(t->z0, 0);
+			tt = d_complex(t->att * cos(ph), -t->att * sin(ph));
+		}
 		const d_complex_t mt = d_rmul(-1, tt);
-		const d_complex_t mtz = d_rmul(-t->z0, tt);
+		const d_complex_t mtz = d_rmul(-1, d_mul(zc, tt));
+		const d_complex_t mz = d_rmul(-1, zc);
 		// KCL : 端子電流は n1 (n3) から出て n2 (n4) へ戻る
 		stamp(s, a1, r1, d_complex(1, 0));
 		stamp(s, b1, r1, d_complex(-1, 0));
@@ -321,14 +361,14 @@ static void assemble(const peec_t *p, double f, sink_t *s, int skiplp)
 		// v1 - Z0 i1 - T v2 - T Z0 i2 = 0
 		stamp(s, r1, a1, d_complex(1, 0));
 		stamp(s, r1, b1, d_complex(-1, 0));
-		stamp(s, r1, r1, d_complex(-t->z0, 0));
+		stamp(s, r1, r1, mz);
 		stamp(s, r1, a2, mt);
 		stamp(s, r1, b2, tt);
 		stamp(s, r1, r2, mtz);
 		// v2 - Z0 i2 - T v1 - T Z0 i1 = 0
 		stamp(s, r2, a2, d_complex(1, 0));
 		stamp(s, r2, b2, d_complex(-1, 0));
-		stamp(s, r2, r2, d_complex(-t->z0, 0));
+		stamp(s, r2, r2, mz);
 		stamp(s, r2, a1, mt);
 		stamp(s, r2, b1, tt);
 		stamp(s, r2, r1, mtz);
