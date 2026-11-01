@@ -120,7 +120,8 @@ static int nfq_build(const seg_t *cell, int n, nfq_t *q)
 img != 0 なら求積点を鏡像 img (面の部分集合、gp_pt) の幾何鏡像に置いて評価する。
 */
 static void nf_kernel(const nfq_t *q, int k, const double *pt, double kw,
-	const peec_t *p, int img, d_complex_t *gs, d_complex_t gv[3])
+	const peec_t *p, int img, const double *rnode, double rlen,
+	d_complex_t *gs, d_complex_t gv[3])
 {
 	*gs = d_complex(0, 0);
 	for (int c = 0; c < 3; c++) {
@@ -140,7 +141,14 @@ static void nf_kernel(const nfq_t *q, int k, const double *pt, double kw,
 		const double r = sqrt(r2);
 		const double kr = kw * r;
 		const d_complex_t e = d_complex(cos(kr), -sin(kr));    // exp(-jkR)
-		const double w = q->wt[i];
+		// basis = 1 の傾斜関数 : 重み (L_h - s)、s = 節点からの距離 (鏡像前の点で測る)
+		double w = q->wt[i];
+		if (rnode != NULL) {
+			const double ax = q->px[3 * i] - rnode[0];
+			const double ay = q->px[(3 * i) + 1] - rnode[1];
+			const double az = q->px[(3 * i) + 2] - rnode[2];
+			w *= rlen - sqrt((ax * ax) + (ay * ay) + (az * az));
+		}
 		*gs = d_add(*gs, d_rmul(w / r, e));
 		const d_complex_t h = d_rmul(w / (r2 * r), d_mul(d_complex(1, kr), e));
 		for (int c = 0; c < 3; c++) {
@@ -185,7 +193,7 @@ static void nf_point(const peec_t *p, const nfq_t *qi, const nfq_t *qc,
 			// 幅の規格化 (不変条件 4) : 面セルは (1/wid) x 面積分 = 線積分
 			const d_complex_t ic = d_rmul((s->wid > 0) ? (1 / s->wid) : 1, cur);
 			d_complex_t gs, gv[3];
-			nf_kernel(qi, k, pt, kw, p, mir, &gs, gv);
+			nf_kernel(qi, k, pt, kw, p, mir, NULL, 0, &gs, gv);
 
 			const d_complex_t w = d_mul(ic, gs);
 			for (int c = 0; c < 3; c++) {
@@ -204,6 +212,44 @@ static void nf_point(const peec_t *p, const nfq_t *qi, const nfq_t *qc,
 
 		// 電荷セル : E の -grad phi 項 (鏡像電荷は -q)
 		if ((qc == NULL) || (chg == NULL)) continue;
+
+		// basis = 1 : 傾斜関数の電流 c_n (L_h - s) ô_h / L_n (c_n = j omega q_n) の
+		// -j omega A と H。電荷サブセルの求積点に重み (L_h - s) を掛ける
+		if (p->basis) {
+			for (int i = 0; i < p->ncell; i++) {
+				if (p->carea[i] <= 0) continue;
+				const d_complex_t cn = d_rmul(1 / p->carea[i], d_mul(d_complex(0, 2 * PI * f), chg[i]));
+				for (int e = p->csoff[i]; e < p->csoff[i + 1]; e++) {
+					const int h = p->csidx[e];
+					const seg_t *s = &p->chg[h];
+					const double *nd = s->nend ? s->x2 : s->x1;
+					const double *fa = s->nend ? s->x1 : s->x2;
+					double ov[3];
+					for (int c = 0; c < 3; c++) {
+						ov[c] = (fa[c] - nd[c]) / s->len;
+					}
+					d_complex_t ic = cn;
+					if (mir) {
+						gp_vec(p, mir, ov);
+						if (sgn < 0) ic = d_rmul(-1, ic);
+					}
+					d_complex_t gs, gv[3];
+					nf_kernel(qc, h, pt, kw, p, mir, nd, s->len, &gs, gv);
+					const d_complex_t w = d_mul(ic, gs);
+					for (int c = 0; c < 3; c++) {
+						const d_complex_t u = d_rmul(ca * ov[c], w);
+						ev[c] = d_add(ev[c], d_complex(u.i, -u.r));
+					}
+					d_complex_t cx[3];
+					cx[0] = d_sub(d_rmul(ov[1], gv[2]), d_rmul(ov[2], gv[1]));
+					cx[1] = d_sub(d_rmul(ov[2], gv[0]), d_rmul(ov[0], gv[2]));
+					cx[2] = d_sub(d_rmul(ov[0], gv[1]), d_rmul(ov[1], gv[0]));
+					for (int c = 0; c < 3; c++) {
+						hv[c] = d_add(hv[c], d_rmul(ch, d_mul(ic, cx[c])));
+					}
+				}
+			}
+		}
 		for (int i = 0; i < p->ncell; i++) {
 			if (p->carea[i] <= 0) continue;
 			const d_complex_t qcell = chg[i];
@@ -214,7 +260,7 @@ static void nf_point(const peec_t *p, const nfq_t *qi, const nfq_t *qc,
 				// サブセル電荷 = q_cell x len_h / carea (セル内一様密度)
 				const double wn = (s->wid > 0) ? (1 / s->wid) : 1;
 				d_complex_t gs, gv[3];
-				nf_kernel(qc, h, pt, kw, p, mir, &gs, gv);
+				nf_kernel(qc, h, pt, kw, p, mir, NULL, 0, &gs, gv);
 				const d_complex_t qs = d_rmul(scl * wn, qcell);
 				for (int c = 0; c < 3; c++) {
 					ev[c] = d_add(ev[c], d_mul(qs, gv[c]));

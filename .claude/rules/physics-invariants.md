@@ -641,6 +641,9 @@ Z0 = √((R+jωL)/(G+jωC)) と T = e^{−γ·長さ} (γ = √((R+jωL)(G+jωC)
   (mna.c)。電荷が陽な未知数の並び (圧縮経路と同じ offQ) でしか組めないので、
   mna_numbering は basis = 1 でも電荷行を作る。cell_charges は `qexp`
   (offQ < nunknown) で読む。
+- **近傍界も同じ電流** : nearfield.c は電荷サブセルの求積点に重み (L_h − s)
+  (s は鏡像前の点と節点の距離) を掛けて c_n χ_n の −jωA と H を足す。
+  落とすと遠方界 (閉形式) と r → ∞ で一致しなくなる (`basis1 near = far`)。
 - **右辺と遠方界も同じ関数** : 平面波は電荷行に + <χ_n, E_inc>
   (`basis_rhs_planewave`、KVL 行の − <p_k, E_inc> と同じ規約)、遠方界の放射
   ベクトルに c_n χ_n の寄与 (`basis_ff_add`、電荷は exc_mix で重ね合わせる)。
@@ -652,14 +655,41 @@ Z0 = √((R+jωL)/(G+jωC)) と T = e^{−γ·長さ} (γ = √((R+jωL)(G+jωC)
 neumann_pair_k を t について Gauss 6 点で積分する。粗い格子で従来より正確
 (半波長ダイポールの Rin 誤差 4 分割 1/3、8 分割 1/2) だが、電荷が区分一定の
 ままなので漸近的な収束は従来の互い違い格子 (2 次) より遅い (1 次程度、
-tools/basis_study.py)。面導体・体積セル・誘電体・圧縮・近傍界とは併用不可
+tools/basis_study.py)。面導体・体積セル・誘電体・圧縮とは併用不可
 (パーサが拒否)。
 
 **番人**: `basis1 = study (4/arm)` / `basis1 = study (8/arm)` (独立実装の
 tools/basis_study.py と一致) / `basis1 coarse accuracy` / `basis1 ff efficiency` /
 `basis1 monopole = dip/2` (鏡像) / `basis1 2-port symmetry` (Galerkin) /
 basis_bent・basis_mono_pw の `recip` (遠方界と平面波の右辺の整合) /
-`basis1 low-f = basis0` / `basis parser guard`
+`basis1 low-f = basis0` / `basis1 near = far` / `basis1 gp bc (port)` /
+`basis1 gp bc (planewave)` / `basis1 near threads` / `basis parser guard`
+
+## (24) SPICE 出力は f = 0 の部分要素を solve() の前に書く (spice = 1)
+
+`spice = 1` (spice.c) は準静的な PEEC 等価回路を `peec.cir` に書く。守るべき
+約束は 4 つ。
+
+- **書くのは main の静的な充填 (lp_fill(0) / pot_fill(0)) の直後、solve() の前**。
+  `retardation = 1` では solve() が Lp と C = P⁻¹ を周波数ごとに複素数で作り直す
+  ので、後で書くと最後の周波数の遅延込みの値が混ざる。
+- **L の向きは区間の向き (n1 側に dot)**、相互は K = Lp_kl/√(Lp_kk Lp_ll)
+  で逆向きの区間は負。セルは n1 —R— X_k —L— n2 (R = 0 なら L だけ、誘電体セルは
+  R の代わりに過剰容量 C_e)。K を正に揃えようとして向きを変えると符号が狂う。
+- **容量は Maxwell の行列を枝に分ける** : 節点 - 基準が行和 Σ_j C_ij、節点間が
+  −C_ij。同じ導体のセル間では C_ij > 0 になり得るので負の枝が出る (省くと
+  容量行列が変わる)。`capacitor` が負の値を受け付けるのはこの読み戻しのため。
+- **数値は %.16e (17 桁)** で書き、double の往復で値が変わらないようにする。
+
+書き出しは近似を含まないので、読み戻した集中定数回路は元の PEEC と同じ Zin
+になる (違いは MNA の組み方の差による丸めだけ)。周波数依存 (遅延・表皮効果) は
+表せない (注記して DC / 準静的の値を書く)。誘電損・分散、損失のある線路、
+basis = 1、圧縮とは併用不可 (パーサが拒否)。
+
+**番人**: `spice reimport (mixed)` / `spice reimport S` / `spice reimport (gp 4-port)` /
+`spice reimport (diel)` (読み戻しが元の PEEC と 1e-7 で一致) /
+`spice netlist integrity` / `spice dielectric C_e` / `spice kmin threshold` /
+`spice parser guard`
 
 ## 並列化
 

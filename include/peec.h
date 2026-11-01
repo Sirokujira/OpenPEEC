@@ -30,6 +30,7 @@ OpenPEEC : 準静的 PEEC (部分要素等価回路) 回路ソルバー
 #define FN_NEARPW "nearpw.csv"
 #define FN_MM "mixed.csv"
 #define FN_FARPW "farpw.csv"
+#define FN_CIR "peec.cir"
 #define PW_MAX 8                  // planewave の行 (同時入射の波) の上限
 #define PW_WMAX (8 * PW_MAX)      // 地板 (3 面まで) の反射波を含む波の数の上限
 
@@ -317,6 +318,8 @@ typedef struct {
 	double tranatt;               // 帯域端でのガウス励振の減衰 [dB] (既定 40)
 	int    grading;               // grading = 1 : 面格子の縁寄せ (plate/quad 余弦、disk 正弦)
 	int    basis;                 // basis = 1 : 区分線形の電流基底 (細線のみ、basis.c)
+	int    spice;                 // spice = 1 : 準静的な等価回路を SPICE ネットリストに出す (spice.c)
+	double spkmin;                // spice の結合係数の打ち切り (|k| <= spkmin は省く、既定 0)
 	int    compress;              // compression = 1 : 部分インダクタンスを H 行列で圧縮
 	double ctol;                  // ACA の相対許容誤差 (既定 1e-6)
 	struct hmat_t *hlp;           // 圧縮された Lp (compress = 1 のときのみ)
@@ -528,6 +531,9 @@ void basis_rhs_planewave(const peec_t *p, double kw, const pw_wave_t *w, int nw,
 // 遠方界の放射ベクトルに傾斜関数の寄与 (振幅 j omega q_n) を足す
 void basis_ff_add(const peec_t *p, const d_complex_t *q, double omega, double kw,
 	const double rh[3], d_complex_t nv[3]);
+
+// spice.c (spice = 1 : 準静的な PEEC 等価回路の SPICE ネットリスト)
+int  output_spice(const peec_t *p, const char *fn, FILE *fp_log);
 
 // farfield.c
 int  output_far(const peec_t *p, const char *fn, FILE *fp_log);

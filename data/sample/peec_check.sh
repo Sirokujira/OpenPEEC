@@ -1208,11 +1208,52 @@ paste -d, "$WORK/zin_basis_lf0.csv" "$csv" | awk -F, 'NR == 2 {
 	printf "%-24s rel=%.3e -> %s (<= 1e-9)\n", "basis1 low-f = basis0", e, ok ? "OK" : "NG";
 	exit ok ? 0 : 1
 }' || status=1
-# 書き間違い・未対応の組み合わせは拒否 : capacitance = 0、面導体、近傍界、basis = 2
+# 近傍界 (傾斜関数の電流を電荷サブセルの求積点で積分) : r = 2000 m (kr = 6000) の
+# |E| r が遠方界 (傾斜関数の項は閉形式) の |rE| に一致 (2 方向、1e-4)。
+# 傾斜関数を落とすと 6% ずれる (basis = 0 の 62.52 vs 58.65 V)
+awk '{print} /^title = /{print "nearfield = 2000 0 0  2000 0 0  0 0 0"; print "nearfield = 1500 866.0254037844386 1000  1500 866.0254037844386 1000  0 0 0"}' \
+	"$SRC/basis_dipole.peec" > "$WORK/basis_nf.peec"
+run basis_nf.peec
+awk -F, 'FILENAME == ARGV[1] {if ((FNR > 1) && ((($2 + 0 == 90) && ($3 + 0 == 0)) || (($2 + 0 == 60) && ($3 + 0 == 30)))) ff[$2 + 0] = sqrt(($4 ^ 2) + ($5 ^ 2) + ($6 ^ 2) + ($7 ^ 2)); next}
+FNR > 1 {
+	r = sqrt(($2 ^ 2) + ($3 ^ 2) + ($4 ^ 2)); th = int(atan2(sqrt(($2 ^ 2) + ($3 ^ 2)), $4) * 180 / atan2(0, -1) + 0.5);
+	e = sqrt(($5 ^ 2) + ($6 ^ 2) + ($7 ^ 2) + ($8 ^ 2) + ($9 ^ 2) + ($10 ^ 2)) * r;
+	d = (e / ff[th]) - 1; if (d < 0) d = -d; if (!(d <= mx)) mx = d; n++
+} END {
+	ok = (n == 2) && (mx <= 1e-4);
+	printf "%-24s points=%d max||E|r/|rE|-1|=%.3e -> %s (<= 1e-4)\n", "basis1 near = far", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/far.csv" "$WORK/near.csv" || status=1
+# 地板上の境界条件 (接線 E と法線 H が 0) : ポート励振と平面波 (入射 + 反射 + 散乱)
+addbasis "$SRC/gp_near.peec" > "$WORK/basis_gpn.peec"
+awk '{print} /^title = /{print "planewave = 60 30 1 1.0"}' "$WORK/basis_gpn.peec" > "$WORK/basis_gpn_pw.peec"
+run basis_gpn_pw.peec
+cp "$WORK/near.csv" "$WORK/near_basis_gpn.csv"
+for nf in near_basis_gpn.csv nearpw.csv; do
+	if [ "$nf" = nearpw.csv ]; then lbn="basis1 gp bc (planewave)"; else lbn="basis1 gp bc (port)"; fi
+	awk -F, -v lb="$lbn" 'NR > 1 {
+		n++; et = sqrt(($5 ^ 2) + ($6 ^ 2) + ($7 ^ 2) + ($8 ^ 2)); hz = sqrt(($15 ^ 2) + ($16 ^ 2));
+		re = ($17 > 0) ? (et / $17) : 1; if (!(re <= mre)) mre = re;
+		rh = ($18 > 0) ? (hz / $18) : 1; if (!(rh <= mrh)) mrh = rh
+	} END {
+		ok = (n == 2) && (mre <= 1e-12) && (mrh <= 1e-12);
+		printf "%-24s points=%d |Etan|/|E|=%.3e |Hz|/|H|=%.3e -> %s\n", lb, n, mre, mrh, ok ? "OK" : "NG";
+		exit ok ? 0 : 1
+	}' "$WORK/$nf" || status=1
+done
+# スレッド数不変性 (-n 1 / -n 4 の near.csv がビット一致)
+(cd "$WORK" && "$PEEC" -n 1 basis_gpn_pw.peec > /dev/null && cp near.csv near_b1.csv && "$PEEC" -n 4 basis_gpn_pw.peec > /dev/null)
+if cmp -s "$WORK/near_b1.csv" "$WORK/near.csv"; then
+	printf "%-24s -> OK (near.csv identical for -n 1 / -n 4)\n" "basis1 near threads"
+else
+	printf "%-24s -> NG (near.csv differs between -n 1 and -n 4)\n" "basis1 near threads" >&2
+	status=1
+fi
+# 書き間違い・未対応の組み合わせは拒否 : capacitance = 0、面導体、断面分割、basis = 2
 nbad=0
 awk '{print} /^title = /{print "basis = 1"}' "$SRC/wire_gp.peec" > "$WORK/basis_bad1.peec"
 addbasis "$SRC/compress_cap.peec" | sed '/^compression/d' > "$WORK/basis_bad2.peec"
-addbasis "$SRC/array_dipoles.peec" > "$WORK/basis_bad3.peec"
+awk '{print} /^title = /{print "basis = 1"; print "capacitance = 1"}' "$SRC/wire_prox.peec" > "$WORK/basis_bad3.peec"
 sed 's/^basis = 1$/basis = 2/' "$SRC/basis_dipole.peec" > "$WORK/basis_bad4.peec"
 for k in 1 2 3 4; do
 	if (cd "$WORK" && "$PEEC" -n 1 "basis_bad$k.peec" > basis_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
@@ -2231,6 +2272,127 @@ if cmp -s "$WORK/nearpw_n1.csv" "$WORK/nearpw.csv"; then
 	printf "%-24s -> OK (-n 1 と -n 4 が完全一致)\n" "nearpw thread invariance"
 else
 	printf "%-24s -> NG (-n 1 と -n 4 が不一致)\n" "nearpw thread invariance" >&2
+	status=1
+fi
+
+echo "--- SPICE netlist export (spice = 1)"
+# (bn) 準静的な PEEC 等価回路 (peec.cir) を OpenPEEC の集中定数に読み戻し、元の
+#      PEEC と同じ Zin / S になること (書き出しが近似を含まないことの判定)。
+#      変換は SPICE の素子行 (R / C / L / K / T) を resistor / capacitor / inductor /
+#      mutual / tline に置き換えるだけで、節点 N<id> -> id、内部節点 X<k> -> 1000000 + k。
+#      元の .peec からポートと周波数の行を写す
+cir2peec() {
+	awk 'function nd(s) {
+		if (s == "0") return 0;
+		if (s ~ /^N[0-9]+$/) return substr(s, 2) + 0;
+		if (s ~ /^X[0-9]+$/) return 1000000 + substr(s, 2);
+		bad = 1; return -1
+	}
+	FNR == NR {
+		if ((NF == 0) || ($1 ~ /^\*/)) next;
+		if ($1 ~ /^\./) { if ($1 == ".end") ended = 1; next }
+		t = toupper(substr($1, 1, 1));
+		if (t == "R") out[++n] = "resistor = " nd($2) " " nd($3) " " $4;
+		else if (t == "C") out[++n] = "capacitor = " nd($2) " " nd($3) " " $4;
+		else if (t == "L") out[++n] = "inductor = " $1 " " nd($2) " " nd($3) " " $4;
+		else if (t == "K") out[++n] = "mutual = " $2 " " $3 " " $4;
+		else if (t == "T") { z = $6; sub(/^Z0=/, "", z); d = $7; sub(/^TD=/, "", d);
+			out[++n] = "tline = " nd($2) " " nd($3) " " nd($4) " " nd($5) " " z " " d }
+		else bad = 1;
+		next
+	}
+	/^(port|frequency) = / { keep[++m] = $0 }
+	END {
+		if (bad || !ended) { print "*** cir2peec : malformed netlist" > "/dev/stderr"; exit 1 }
+		print "OpenPEEC 1 0"; print "title = re-imported SPICE netlist";
+		for (i = 1; i <= n; i++) print out[i];
+		for (i = 1; i <= m; i++) print keep[i];
+		print "end"
+	}' "$1" "$2"
+}
+# spexp <label> <元の .peec (spice = 1 を含む)> : 書き出し -> 読み戻し -> zin.csv の比較
+spexp() {
+	cp "$2" "$WORK/sp_orig.peec"
+	run sp_orig.peec
+	cp "$csv" "$WORK/zin_sp_orig.csv"
+	cp "$WORK/peec.cir" "$WORK/sp_orig.cir"
+	cp "$log" "$WORK/sp_orig.log"
+	if cir2peec "$WORK/sp_orig.cir" "$2" > "$WORK/sp_re.peec"; then
+		run sp_re.peec
+		paste -d, "$WORK/zin_sp_orig.csv" "$csv" | awk -F, -v lb="$1" 'NR > 1 {
+			e = sqrt((($10 - $3) ^ 2) + (($11 - $4) ^ 2)) / sqrt(($3 ^ 2) + ($4 ^ 2)); if (!(e <= mx)) mx = e; n++
+		} END {
+			ok = (n > 0) && (mx <= 1e-7);
+			printf "%-24s rows=%d max rel=%.3e -> %s (<= 1e-7)\n", lb, n, mx, ok ? "OK" : "NG";
+			exit ok ? 0 : 1
+		}' || status=1
+	else
+		printf "%-24s -> NG (netlist could not be converted)\n" "$1" >&2
+		status=1
+	fi
+}
+# (1) 集中定数 (R / C / 結合 L / 線路) を含む 2 線 + S パラメータも比較
+spexp "spice reimport (mixed)" "$SRC/spice_export.peec"
+cp "$WORK/peec.s2p" "$WORK/sp_re.s2p"
+(cd "$WORK" && "$PEEC" -n 2 sp_orig.peec > /dev/null)
+paste "$WORK/peec.s2p" "$WORK/sp_re.s2p" | awk '$1 !~ /^[!#]/ && NF == 18 {
+	for (i = 2; i <= 9; i++) {d = $i - $(i + 9); if (d < 0) d = -d; if (!(d <= mx)) mx = d}; n++
+} END {
+	ok = (n == 5) && (mx <= 1e-8);
+	printf "%-24s rows=%d max|dS|=%.3e -> %s (<= 1e-8)\n", "spice reimport S", n, mx, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+# (2) ネットリストの整合 : 素子名が一意、K は定義済みの L を参照し 0 < |k| < 1、L > 0、
+#     セル数と結合数がログと一致、.end で終わる
+awk 'FNR == NR {if ($1 == "spice") {split($0, a, "("); split(a[2], b, " "); nc = b[1]; nk = b[3]}; next}
+($1 ~ /^\*/) || (NF == 0) {next}
+$1 == ".end" {ended = 1; next}
+{
+	if ($1 in seen) dup++; seen[$1] = 1;
+	t = substr($1, 1, 1);
+	if (t == "L") {if (!($4 > 0)) bad++; ls[$1] = 1; if ($1 ~ /^LS/) ncell++}
+	if (t == "K") {kk[++nkl] = $0; if ($1 ~ /^KS/) nks++}
+}
+END {
+	for (i = 1; i <= nkl; i++) {split(kk[i], f, " "); k = f[4] + 0; if (!((f[2] in ls) && (f[3] in ls) && (k != 0) && (k > -1) && (k < 1))) badk++}
+	ok = ended && (dup == 0) && (bad == 0) && (badk == 0) && (ncell == nc) && (nks == nk) && (nc > 0);
+	printf "%-24s cells=%d couplings=%d dup=%d badL=%d badK=%d -> %s\n", "spice netlist integrity", ncell, nks, dup + 0, bad + 0, badk + 0, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/sp_orig.log" "$WORK/sp_orig.cir" || status=1
+# (3) 地板 + 4 ポート (鏡像込みの Lp / C)
+awk '{print} /^title = /{print "spice = 1"}' "$SRC/mm_twinline.peec" > "$WORK/sp_twin.peec"
+spexp "spice reimport (gp 4-port)" "$WORK/sp_twin.peec"
+cp "$WORK/sp_orig.cir" "$WORK/sp_twin_full.cir"
+# (4) 面導体 + 誘電体 (過剰容量 C_e の枝、約 14 万本の K)
+awk '{print} /^title = /{print "spice = 1"}' "$SRC/diel_pp.peec" > "$WORK/sp_diel.peec"
+spexp "spice reimport (diel)" "$WORK/sp_diel.peec"
+# C_e の枝の数 = 全セル - 面導体のセル (8 x 8 格子 2 枚 : 2 (8 x 9 + 9 x 8) = 288)
+chk "spice dielectric C_e" "$(grep -c '^CE' "$WORK/sp_orig.cir")" \
+	"$(grep '^geometry' "$WORK/sp_orig.log" | sed 's/.*-> \([0-9]*\) cells.*/\1/' | awk '{print $1 - 288}')" 1e-9
+# (5) 結合の打ち切り : |k| <= 0.05 を省いた本数がログの dropped と全結合からの数え上げに一致
+sed 's/^spice = 1$/spice = 1 0.05/' "$WORK/sp_twin.peec" > "$WORK/sp_twin_k.peec"
+run sp_twin_k.peec
+awk -v kept="$(grep -c '^KS' "$WORK/peec.cir")" \
+    -v drop="$(grep '^spice :' "$log" | sed 's/.*, \([0-9]*\) dropped.*/\1/')" '
+$1 ~ /^KS/ {k = $4 + 0; if (k < 0) k = -k; if (k > 0.05) big++; else small++}
+END {
+	ok = (big == kept) && (small == drop) && (small > 0) && (big > 0);
+	printf "%-24s kept=%d (expect %d) dropped=%d (expect %d) -> %s\n", "spice kmin threshold", kept, big, drop, small, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' "$WORK/sp_twin_full.cir" || status=1
+# (6) 準静的な R / L / C で書けない入力は拒否 : 圧縮、basis = 1、損失のある線路、kmin >= 1
+nbad=0
+awk '{print} /^title = /{print "spice = 1"}' "$SRC/compress_cap.peec" > "$WORK/sp_bad1.peec"
+awk '{print} /^title = /{print "spice = 1"}' "$SRC/basis_dipole.peec" > "$WORK/sp_bad2.peec"
+awk '{print} /^title = /{print "spice = 1"}' "$SRC/tline_matched.peec" > "$WORK/sp_bad3.peec"
+sed 's/^spice = 1$/spice = 1 1.5/' "$SRC/spice_export.peec" > "$WORK/sp_bad4.peec"
+for k in 1 2 3 4; do
+	if (cd "$WORK" && "$PEEC" -n 1 "sp_bad$k.peec" > sp_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+done
+if [ "$nbad" -eq 4 ]; then
+	printf "%-24s -> OK (4/4 unsupported inputs rejected)\n" "spice parser guard"
+else
+	printf "%-24s -> NG (%d/4 unsupported inputs rejected)\n" "spice parser guard" "$nbad" >&2
 	status=1
 fi
 

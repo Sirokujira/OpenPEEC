@@ -211,7 +211,9 @@ int input_data(FILE *fp, peec_t *p)
 				e->n1 = nodeid(token[2], &err);
 				e->n2 = nodeid(token[3], &err);
 				e->val = atof(token[4]);
-				if (e->val <= 0) err = 1;
+				// 負の容量も受け付ける (C = P^-1 を枝に分けた PEEC の等価回路では同じ
+				// 導体のセル間の枝が負になることがある : spice 出力の読み戻し)。0 は拒否
+				if (e->val == 0) err = 1;
 				updatemax(p, e->n1);
 				updatemax(p, e->n2);
 				if (!err) p->ncap++;
@@ -321,7 +323,9 @@ int input_data(FILE *fp, peec_t *p)
 				e->name2[NAMELEN - 1] = '\0';
 				e->k = atof(token[4]);
 				e->l1 = e->l2 = -1;
-				if ((e->k <= 0) || (e->k > 1)) err = 1;
+				// 0 < |k| <= 1 (負の k はドットの向きの反転 = 逆向きの結合。
+				// PEEC の部分相互インダクタンスは区間の向きで負になる : spice 出力の読み戻し)
+				if ((e->k == 0) || (fabs(e->k) > 1)) err = 1;
 				if (!err) p->nmut++;
 			}
 			if (err) {
@@ -864,6 +868,15 @@ int input_data(FILE *fp, peec_t *p)
 		else if (!strcmp(strkey, "grading")) {
 			p->grading = atoi(token[2]);
 		}
+		else if (!strcmp(strkey, "spice")) {
+			// spice = 1 [kmin] : 準静的な等価回路を peec.cir に書く (|k| <= kmin の結合は省く)
+			p->spice = atoi(token[2]);
+			p->spkmin = (ntoken >= 4) ? atof(token[3]) : 0;
+			if (((p->spice != 0) && (p->spice != 1)) || (p->spkmin < 0) || (p->spkmin >= 1)) {
+				printf(errfmt2, "spice");
+				return 1;
+			}
+		}
 		else if (!strcmp(strkey, "basis")) {
 			// basis = 0 (区間ごとに一定の電流、既定) | 1 (区分線形の電流、細線のみ)
 			p->basis = atoi(token[2]);
@@ -989,8 +1002,25 @@ int input_data(FILE *fp, peec_t *p)
 		printf("%s\n", "*** compression = 1 requires conductor geometry (wire/bar/plate/quad/disk)");
 		return 1;
 	}
+	// spice = 1 は準静的な R / L / C で書ける構成だけ : 密な Lp / C が要る (圧縮不可)、
+	// basis = 1 の傾斜関数・誘電損と分散・損失のある線路は周波数依存で書けない
+	if (p->spice) {
+		const char *why = NULL;
+		if (p->compress) why = "compression = 0";
+		else if (p->basis) why = "basis = 0";
+		for (int i = 0; (why == NULL) && (i < p->ndiel); i++) {
+			if ((p->diel[i].tand != 0) || (p->diel[i].npole > 0)) why = "lossless non-dispersive dielectric";
+		}
+		for (int i = 0; (why == NULL) && (i < p->ntl); i++) {
+			if (p->tl[i].rlgc || (p->tl[i].att != 1)) why = "lossless tline (Z0 / delay)";
+		}
+		if (why != NULL) {
+			printf("*** spice = 1 requires %s\n", why);
+			return 1;
+		}
+	}
 	// basis = 1 は細線 (分割しない wire / bar) の電荷で駆動する傾斜関数なので、
-	// 容量性 PEEC が必須。面導体・体積セル・誘電体・圧縮・近傍界は扱わない
+	// 容量性 PEEC が必須。面導体・体積セル・誘電体・圧縮は扱わない
 	if (p->basis) {
 		const char *why = NULL;
 		if (!p->capacitance) why = "capacitance = 1";
@@ -998,7 +1028,6 @@ int input_data(FILE *fp, peec_t *p)
 		else if ((p->nplate + p->npanel) > 0) why = "thin wires only (no plate/quad/disk)";
 		else if (p->ndiel > 0) why = "no dielectric";
 		else if (p->compress) why = "compression = 0";
-		else if (p->nnf > 0) why = "no nearfield";
 		for (int i = 0; (why == NULL) && (i < p->nwire); i++) {
 			if ((p->wire[i].ndivw > 1) || (p->wire[i].ndivt > 1)) why = "no cross-section subdivision";
 		}

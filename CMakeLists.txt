@@ -34,6 +34,7 @@ add_executable(peec
     src/polygon.c
     src/potential.c
     src/basis.c
+    src/spice.c
     src/skin.c
     src/mna.c
     src/lu.c
