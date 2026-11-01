@@ -78,6 +78,10 @@ typedef struct {
 	int    shape;
 	double radius, width, thick, sigma;
 	int    ndiv;
+	// bar の断面分割 (分割数w x 分割数t、0 / 1 = 分割なし)。分割すると長さ方向の
+	// 各区間を断面の体積セル (Hoer-Love) の並列に置き換える。幅方向は z x 軸
+	// (水平、軸が z と平行なら x)、厚み方向は 軸 x 幅
+	int    ndivw, ndivt;
 } wire_t;
 
 // 構造格子でメッシュ化する平面パネル (quad / disk)。

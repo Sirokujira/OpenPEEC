@@ -353,9 +353,12 @@ int wire_build(peec_t *p, FILE *fp_log)
 	int nseg = 0;
 	int nchg = 0;
 	for (int i = 0; i < p->nwire; i++) {
-		npoint += p->wire[i].ndiv + 1;
-		nseg += p->wire[i].ndiv;
-		nchg += 2 * p->wire[i].ndiv;
+		const wire_t *w = &p->wire[i];
+		const int nsub = (w->shape == SHAPE_BAR)
+			? (((w->ndivw > 1) ? w->ndivw : 1) * ((w->ndivt > 1) ? w->ndivt : 1)) : 1;
+		npoint += w->ndiv + 1;
+		nseg += w->ndiv * nsub;
+		nchg += 2 * w->ndiv;
 	}
 	for (int i = 0; i < p->nplate; i++) {
 		const int na = p->plate[i].ndiva;
@@ -439,7 +442,8 @@ int wire_build(peec_t *p, FILE *fp_log)
 			}
 			const int id = node_at(p, x, &autoid);
 			if (k > 0) {
-				seg_t *s = &p->seg[p->nseg];
+				seg_t full;
+				seg_t *s = &full;
 				memset(s, 0, sizeof(seg_t));
 				s->n1 = idprev;
 				s->n2 = id;
@@ -481,7 +485,61 @@ int wire_build(peec_t *p, FILE *fp_log)
 				add_chg(p, s->n1, s->x1, mid, 0, NULL, s);
 				add_chg(p, s->n2, mid, s->x2, 0, NULL, s);
 
-				p->nseg++;
+				// bar の断面分割 : 区間を nw x nt の体積セル (矩形バー) の並列に置き換える。
+				// どれも区間の両端ノードを共有する (面導体の層と同じ VFI 近似) ので、
+				// 断面内の電流の再配分 (表皮効果・近接効果) は Lp (Hoer-Love) が解く。
+				// 電荷セルは分割前の区間のまま (表面電荷の断面分布は扱わない)。
+				const int nw = ((w->shape == SHAPE_BAR) && (w->ndivw > 1)) ? w->ndivw : 1;
+				const int nt = ((w->shape == SHAPE_BAR) && (w->ndivt > 1)) ? w->ndivt : 1;
+				if ((nw * nt) == 1) {
+					p->seg[p->nseg++] = full;
+				}
+				else {
+					// 局所枠 : 軸 t、幅 wv = z x t (水平)、軸が z と平行なら x、厚み nv = t x wv
+					double t[3], wv[3], nv[3];
+					for (int c = 0; c < 3; c++) {
+						t[c] = (s->x2[c] - s->x1[c]) / s->len;
+					}
+					wv[0] = -t[1];
+					wv[1] = t[0];
+					wv[2] = 0;
+					double lw = sqrt((wv[0] * wv[0]) + (wv[1] * wv[1]));
+					if (lw < 1e-9) {
+						wv[0] = 1;
+						wv[1] = 0;
+						lw = 1;
+					}
+					wv[0] /= lw;
+					wv[1] /= lw;
+					nv[0] = (t[1] * wv[2]) - (t[2] * wv[1]);
+					nv[1] = (t[2] * wv[0]) - (t[0] * wv[2]);
+					nv[2] = (t[0] * wv[1]) - (t[1] * wv[0]);
+					const double hw = w->width / nw;
+					const double ht = w->thick / nt;
+					for (int iw = 0; iw < nw; iw++) {
+						for (int it = 0; it < nt; it++) {
+							seg_t *v = &p->seg[p->nseg];
+							*v = full;
+							const double ow = (-0.5 * w->width) + ((iw + 0.5) * hw);
+							const double ot = (-0.5 * w->thick) + ((it + 0.5) * ht);
+							for (int c = 0; c < 3; c++) {
+								v->x1[c] = s->x1[c] + (ow * wv[c]) + (ot * nv[c]);
+								v->x2[c] = s->x2[c] + (ow * wv[c]) + (ot * nv[c]);
+								v->wv[c] = wv[c];
+							}
+							v->vol = 1;
+							v->wid = hw;
+							v->width = hw;
+							v->thick = ht;
+							v->area = hw * ht;
+							v->perim = 2 * (hw + ht);
+							v->aL = 0.2235 * (hw + ht);
+							v->aP = 0.25 * (hw + ht);
+							v->res = (w->sigma > 0) ? v->len / (w->sigma * v->area) : 0;
+							p->nseg++;
+						}
+					}
+				}
 			}
 			idprev = id;
 		}

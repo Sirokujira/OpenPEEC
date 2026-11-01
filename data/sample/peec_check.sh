@@ -299,6 +299,29 @@ cp "$SRC/bar_skin.peec" "$WORK/"
 run bar_skin.peec
 chk "bar skin HF Rin" "$(getR)" 0.118589 0.01
 
+# (bc) 角線の断面分割 (5 x 2 の体積セル) : f = 0.1 Hz で電流は一様、DC 抵抗は
+#      厳密、L は Hoer-Love の加法性で分割前の矩形バーの体積積分 = Grover 式
+cp "$SRC/bar_sub.peec" "$WORK/"
+run bar_sub.peec
+chk "bar sub Rin (DC)" "$(getR)" 1.724138e-3 1e-6
+chk "bar sub L (Grover)" "$(getL)" 1.141093e-6 0.001
+lsub52=$(getL)
+sed 's/ 5.8e7 1 5 2$/ 5.8e7 1 10 4/' "$SRC/bar_sub.peec" > "$WORK/bar_sub104.peec"
+run bar_sub104.peec
+chk "bar sub L (10x4 = 5x2)" "$(getL)" "$lsub52" 2e-5
+# 書き間違いは拒否されること : 分割数 0 (幅・厚み)
+nbad=0
+for sub in "1 0 2" "1 5 0"; do
+	sed "s/ 5.8e7 1 5 2\$/ 5.8e7 $sub/" "$SRC/bar_sub.peec" > "$WORK/bar_bad.peec"
+	if (cd "$WORK" && "$PEEC" -n 1 bar_bad.peec > bar_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+done
+if [ "$nbad" -eq 2 ]; then
+	printf "%-24s -> OK (2/2 malformed inputs rejected)\n" "bar sub parser guard"
+else
+	printf "%-24s -> NG (%d/2 malformed inputs rejected)\n" "bar sub parser guard" "$nbad" >&2
+	status=1
+fi
+
 echo "--- surface (plate) conductors"
 # (o) 正方形平板の対無限遠容量 : 8 分割と 16 分割から Richardson 補外
 #     C_inf = 2 C_16 - C_8 を文献値 0.3667892 * 4 pi eps0 a = 4.08100e-11 F と比較
@@ -350,6 +373,27 @@ awk -v r3="$r3" -v r6="$r6" -v r12="$r12" 'BEGIN {
 	printf "%-24s |r12-r6|=%.4f |r6-r3|=%.4f -> %s (<= 0.35)\n", "slab skin convergence", d2, d1, ok ? "OK" : "NG";
 	exit ok ? 0 : 1
 }' || status=1
+pext=$(awk -v a="$r12" -v b="$r6" 'BEGIN{printf "%.9e", a + (a-b)/3}')
+
+# (bc) 同じ対称サンドイッチを断面分割した角線 (断面ごとに 1 ノード = VFI) で組む。
+#      1D スラブ解への収束と、plate 版 (2 次元格子 + 体積セル) の補外値との一致
+cp "$SRC/bar_skin_layers.peec" "$WORK/"
+for nt in 12 6 3; do
+	sed "s/ 5.8e7 4 1 12\$/ 5.8e7 4 1 $nt/" "$SRC/bar_skin_layers.peec" > "$WORK/bar_skin_nt$nt.peec"
+	run bar_skin_nt$nt.peec
+	rat=$(awk -F, 'NR==2{rdc=$3} NR==3{printf "%.9e", $3/rdc}' "$csv")
+	if [ "$nt" = 12 ]; then b12=$rat; elif [ "$nt" = 6 ]; then b6=$rat; else b3=$rat; fi
+done
+bext=$(awk -v a="$b12" -v b="$b6" 'BEGIN{printf "%.9e", a + (a-b)/3}')
+chk "bar slab ratio (extr.)" "$bext" 1.897806 0.035
+awk -v r3="$b3" -v r6="$b6" -v r12="$b12" 'BEGIN {
+	d1 = r6 - r3; if (d1 < 0) d1 = -d1;
+	d2 = r12 - r6; if (d2 < 0) d2 = -d2;
+	ok = (d2 <= 0.35 * d1);
+	printf "%-24s |r12-r6|=%.4f |r6-r3|=%.4f -> %s (<= 0.35)\n", "bar slab convergence", d2, d1, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+chk "bar slab = plate slab" "$bext" "$pext" 0.005
 
 echo "--- panel conductors (quad / disk)"
 # (x) 一般四辺形 : 正方形シートの DC 抵抗 (1 スクエアの解析値) と、

@@ -344,7 +344,7 @@ int input_data(FILE *fp, peec_t *p)
 		}
 		else if (!strcmp(strkey, "wire") || !strcmp(strkey, "bar")) {
 			// wire = x1 y1 z1 x2 y2 z2 半径     導電率 分割数
-			// bar  = x1 y1 z1 x2 y2 z2 幅 厚さ  導電率 分割数
+			// bar  = x1 y1 z1 x2 y2 z2 幅 厚さ  導電率 分割数 [分割数w [分割数t]]
 			const int isbar = !strcmp(strkey, "bar");
 			if (ntoken < (isbar ? 12 : 11)) err = 1;
 			else {
@@ -361,7 +361,9 @@ int input_data(FILE *fp, peec_t *p)
 					e->thick = atof(token[9]);
 					e->sigma = atof(token[10]);
 					e->ndiv = atoi(token[11]);
-					if ((e->width <= 0) || (e->thick <= 0)) err = 1;
+					e->ndivw = (ntoken >= 13) ? atoi(token[12]) : 1;
+					e->ndivt = (ntoken >= 14) ? atoi(token[13]) : 1;
+					if ((e->width <= 0) || (e->thick <= 0) || (e->ndivw < 1) || (e->ndivt < 1)) err = 1;
 				}
 				else {
 					e->shape = SHAPE_ROUND;

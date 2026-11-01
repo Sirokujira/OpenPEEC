@@ -32,7 +32,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、177 判定)
+# 検証 (解析解・文献値との比較、184 判定)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -43,7 +43,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 177 判定すべて OK (h5py が
+**変更したら必ず `peec_check.sh` を通すこと。** 184 判定すべて OK (h5py が
 無い環境の `peec2h5 converter` だけは SKIP) でなければ完了ではない。
 「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
@@ -148,7 +148,9 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
    桁落ち)。正しく実装すると体積分割の部分和が全体に一致する加法性が機械精度で
    成り立つ。また体積セルの厚み方向再配分は Lp 行列が陽に解くので、`zint_seg()`
    は体積セルに表皮効果の合成式を適用しない (二重計上)。
-   (`thick plate L (Grover)` / `thick plate R (ndivt=1/2)` / `slab skin ratio (extr.)`)
+   bar の断面分割 (`分割数w 分割数t`) も同じ体積セルで、区間の両端ノードを共有する。
+   (`thick plate L (Grover)` / `thick plate R (ndivt=1/2)` / `slab skin ratio (extr.)` /
+   `bar sub L (Grover)` / `bar sub L (10x4 = 5x2)` / `bar slab = plate slab`)
 7. **多角形セルの規格化と桁落ちフリーの対数項** — パネル (quad/disk) のセルは
    `w̄ = 面積/len` で規格化する ((4) の一般化。`len·w̄ = 面積` なので P の式は
    共通のまま)。`poly_potential()` の対数項は l < 0 の側を恒等式
@@ -364,11 +366,12 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
 
 ## 既知の制限
 
-- 厚み方向の電流分布 (体積セル) は `plate` の `分割数t` で対応済み。ただし
-  Hoer–Love 閉形式が使えるのは軸・断面がそろった平行バー対のみで、それ以外
-  (遠方・非平行) は中立面リボンの面積分に落ちる。`wire` / `bar` の断面分割は
-  未対応。層間は各格子点で並列接続 (共有ノード、VFI 近似) であり、厚み方向の
-  伝導は陽には解かない。
+- 厚み方向の電流分布 (体積セル) は `plate` の `分割数t` と `bar` の
+  `分割数w 分割数t` (断面分割) で対応済み。ただし Hoer–Love 閉形式が使えるのは
+  軸・断面がそろった平行バー対のみで、それ以外 (遠方・非平行) は中立面リボンの
+  面積分に落ちる。丸線 (`wire`) の断面分割は未対応 (丸線の表皮効果は Bessel の
+  内部インピーダンス、近接効果は扱わない)。層間・断面内は各ノードで並列接続
+  (共有ノード、VFI 近似) であり、厚み方向・断面内の横方向の伝導は陽には解かない。
 - 面導体は平面パネル (矩形 `plate` / 凸四辺形 `quad` / 円板 `disk`) のみ。
   3 次元曲面 (円筒など) は平面パネルのファセット化で近似する。
   `quad` / `disk` は厚さ 1 層 (厚み方向分割は plate のみ)。パネルの

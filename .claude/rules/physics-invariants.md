@@ -87,8 +87,19 @@ Hoer-Love の原始関数 `hl_F(x,y,z)` (volume.c) では、引数が 0 のと�
 `zint_seg()` は体積セルに表皮効果の合成式を適用しない (二重計上になる)。
 内部インダクタンスも体積自己項に含まれている。
 
+角線 (`bar`) の断面分割 (`分割数w 分割数t`) も同じ体積セルを使う。区間を
+nw × nt の矩形バーの並列に置き換え、どれも区間の両端ノードを共有する
+(断面ごとに 1 ノード = VFI)。局所枠は幅 wv = ẑ × 軸 (水平、軸が z と平行なら
+x̂)、厚み nv = 軸 × wv で、平行に並んだ 2 本の角線は同じ wv を持つので
+Hoer–Love の対 (bar_use_hl) に乗る。電荷セルは分割前の区間のまま (表面電荷の
+断面分布は扱わない)。加法性は長さ/断面 ~ 2000 の細長いセルで閉形式の和に
+桁落ちが出て 1e-6 程度になる (L の分割数不変性の判定はこのため 2e-5)。
+
 **番人**: `thick plate L (Grover)` / `thick plate R (ndivt=1/2)` /
-`slab skin ratio (extr.)` / `slab skin convergence`
+`slab skin ratio (extr.)` / `slab skin convergence` / `bar sub Rin (DC)` /
+`bar sub L (Grover)` / `bar sub L (10x4 = 5x2)` / `bar slab ratio (extr.)` /
+`bar slab convergence` / `bar slab = plate slab` (2 次元格子の plate と断面ごと
+1 ノードの角線という別経路の離散化が 0.07% で一致)
 
 ## (7) 多角形セルの規格化と桁落ちフリーの対数項
 
