@@ -538,6 +538,13 @@ b1 = T a2、b2 = T a1 : Branin の方法の周波数領域版)。守るべき約
   R/L = G/C の Heaviside 線路に相当し、そのとき Z0 は実数のまま。√f の
   表皮損失や分散は持たない (README の制限)。
 
+単位長さあたりの定数で書く `rlgc` の形 (R + Rs√f、L、G + ωC tanδ、C) は
+Z0 = √((R+jωL)/(G+jωC)) と T = e^{−γ·長さ} (γ = √((R+jωL)(G+jωC))) が
+複素数になるだけで、同じ進行波のスタンプに入る (一様な TEM 線路の電信方程式の
+解は複素 Z0 でも b1 = T a2、b2 = T a1 に分かれる)。平方根は**主値 (Re ≥ 0)**
+を取ること : 逆の枝を取ると Re γ < 0 で増幅する線路になる。損失なし
+(R = G = Rs = tanδ = 0) では Z0/遅延の形とビット近くで一致する。
+
 未知数ブロック (offT, 1 本 2 個) は offS より前 = 回路側なので、圧縮経路
 (compression = 1) では前処理の Schur 補元に入る。対角が −Z0 で構造的に
 ゼロではないので、閾値ピボットの非対角落ち (不変条件 17) にも頼らない。
@@ -546,7 +553,10 @@ b1 = T a2、b2 = T a1 : Branin の方法の周波数領域版)。守るべき約
 式との代数的一致、実測 7e-17 / 1e-10) / `tline matched S (3 dB)` (位相の向き) /
 `tline TDR delay` (遅延の符号、前進させると 0.49 ずれる) / `tline-fed dipole`
 (容量性 + 遅延の PEEC との接続、実測 1.7e-10) / `tline compress = dense`
-(圧縮経路の回路側、ビット一致) / `tline parser guard`
+(圧縮経路の回路側、ビット一致) / `tline parser guard` / `tline rlgc Zin`
+(表皮効果 + 誘電損の電信方程式、実測 3.5e-10) / `tline rlgc vs ladder`
+(集中定数の T 形梯子という独立なモデルへの O(段長²) 収束 : 64 段で 4.4e-4、
+32 段との比 4.01) / `tline rlgc = Z0/td` (無損失の極限) / `tline rlgc parser guard`
 
 ## (22) 励振の重みはポート解の重ね合わせ (excitation)
 

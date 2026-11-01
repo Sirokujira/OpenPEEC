@@ -23,6 +23,10 @@ same portability rules, no external numerical libraries.
   は無ひずみ線路 (Heaviside、R/L = G/C) の片道減衰 a = 10^(−dB/20) で、
   Z0 は実数のまま周波数に依りません。給電線・整合スタブ・ケーブルを PEEC
   構造と同じ回路に入れられます (線路自体は幾何を持たず、場とは結合しません)。
+  単位長さあたりの定数で書く `tline = n1 n2 n3 n4 rlgc 長さ R L G C [Rs [tanδ]]`
+  は表皮効果 R(f) = R + Rs√f と誘電損 G(f) = G + ωC tanδ を持つ一般の損失線路で、
+  Z0 = √((R+jωL)/(G+jωC)) と γ = √((R+jωL)(G+jωC)) が周波数ごとに複素数になります
+  (進行波の形は複素 Z0・T = e^{−γ·長さ} でもそのまま厳密)。
 - **部分インダクタンス (L)** : 直線導体 (`wire` / `bar` キー) を区間分割し、
   幾何二重積分 `I = ∬ dl₁dl₂/R` から `Lp = (μ0/4π)(t̂₁·t̂₂) I` を求めて
   区間枝電流を MNA に組み込みます。ポートは 1 A 電流源励振で Zin(f) を
@@ -175,8 +179,10 @@ same portability rules, no external numerical libraries.
 
 ### 制限 / Limitations
 
-- `tline` は理想 TEM 線路です (無損失、または一定減衰の無ひずみ線路)。
-  Z0 と遅延は周波数に依らず、表皮効果のような √f の損失や分散は持ちません。
+- `tline` は一様な TEM 線路です。Z0/遅延の形は無損失または一定減衰の
+  無ひずみ線路、`rlgc` の形は表皮効果 (√f) と誘電損 (tanδ) を持つ損失線路で、
+  L と C は周波数に依りません (内部インダクタンスの周波数変化や基板の分散は
+  持ちません)。
   線路は幾何を持たないので、遠方界・近傍界・平面波入射とは結合しません
   (外部導体が完全に遮蔽している同軸に相当)。
 - `skineffect` / `capacitance` / `retardation` は既定で無効です
@@ -252,7 +258,7 @@ same portability rules, no external numerical libraries.
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値と比較、184 判定。許容は判定ごとに 1e-12 〜 3%)
+# 検証 (解析解・文献値と比較、188 判定。許容は判定ごとに 1e-12 〜 3%)
 # 実行ファイルは相対パスでもよい (スクリプトが絶対パスに直す)
 sh data/sample/peec_check.sh bin/peec /tmp/peec-check
 
@@ -397,7 +403,7 @@ d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 
 | `inductor` | `inductor = 名前 n1 n2 L` | インダクタ [H] (名前は `mutual` 参照用) |
 | `mutual` | `mutual = 名前1 名前2 k` | 結合係数 k (0 < k ≤ 1)、M = k√(L1L2) |
 | `excitation` | `excitation = ポート番号 振幅 [位相deg]` | 遠方界・近傍界のポート励振の重み (電流 [A]、複数行可)。ポート番号は 1 始まり (`port` 行の順)。書かないポートは開放。省略時は port #1 に 1 A。範囲外・重複はエラー |
-| `tline` | `tline = n1 n2 n3 n4 Z0 遅延 [損失dB]` | 伝送線路 (TEM)。端子対 1 = (n1, n2)、端子対 2 = (n3, n4)。Z0 [Ω] > 0、片道遅延 [s] > 0 (電気長 θ = 2πf·遅延)。損失 (省略時 0) は片道の減衰 [dB] で、無ひずみ線路として周波数に依らない |
+| `tline` | `tline = n1 n2 n3 n4 Z0 遅延 [損失dB]` / `tline = n1 n2 n3 n4 rlgc 長さ R L G C [Rs [tanδ]]` | 伝送線路 (TEM)。端子対 1 = (n1, n2)、端子対 2 = (n3, n4)。Z0 [Ω] > 0、片道遅延 [s] > 0 (電気長 θ = 2πf·遅延)。損失 (省略時 0) は片道の減衰 [dB] で、無ひずみ線路として周波数に依らない。`rlgc` は単位長さあたりの R [Ω/m] ≥ 0、L [H/m] > 0、G [S/m] ≥ 0、C [F/m] > 0、表皮効果 Rs [Ω/(m√Hz)] ≥ 0 (R + Rs√f)、誘電損 tanδ ≥ 0 (G + ωC tanδ) |
 | `vsource` | `vsource = n1 n2 振幅 [位相deg]` | AC 電圧源 (+ 端子 = n1) |
 | `isource` | `isource = n1 n2 振幅 [位相deg]` | AC 電流源 (電源内部を n1→n2、SPICE 規約) |
 | `node` | `node = n x y z` | 回路ノード n を 3D 座標に束縛 (ワイヤ接続点) |
@@ -544,6 +550,8 @@ d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 
 | `tline_matched.peec` 整合した損失線路 | 基準 75 Ω で S11 = S22 = 0、S21 = S12 = 10^(−3/20) e^{−j2πf·td} (td = 2 ns、10 点)。位相の向き = 遅延の符号 | 1e-9 |
 | `tline_tdr.peec` 線路の TDR (transient 併用) | 整合線路の先の R = 150 Ω で y(t) = Γ x(t − 2td) (Γ = 0.5、2td = 32Δt で厳密)。遅延の符号を取り違えると前進して落ちる | 1e-9 |
 | `dipole_halfwave.peec` + `tline` | 線路の先の半波長ダイポール : Zin = Z0(Zd + jZ0 tanθ)/(Z0 + jZd tanθ) (Zd は線路なしの Zin、13 点)。容量性 + 遅延の PEEC と浮いた端子対で繋がること。`compression = 1` でも密経路とビット一致 | 1e-7 / 1e-12 |
+| `tline_rlgc.peec` RLGC 損失線路 | 表皮効果 (Rs√f) + 誘電損 (tanδ) 付きで電信方程式の Zin = Z0(ZL cosh γl + Z0 sinh γl)/(Z0 cosh γl + ZL sinh γl) を 100 kHz〜1 GHz の 5 点で (実測 3.5e-10) | 1e-8 |
+| `tline_rlgc.peec` vs 集中定数の梯子 | T 形 64 段の RLGC 梯子 (検証済みの resistor / inductor / capacitor だけで組む独立なモデル) と 1e-3 で一致、32 段との誤差比 4.01 (O(段長²) 収束)。無損失の rlgc は Z0/遅延の形と 7e-16 で一致。語の不足・L ≤ 0・C ≤ 0・R < 0 は拒否 | 1e-3 / ≥ 3 / 1e-12 / 4/4 |
 | `tline_term.peec` 入力検証 | 語の不足、Z0 ≤ 0、遅延 ≤ 0、損失 < 0、端子対の 2 ノード同一の 5 通りがエラー終了すること | 5/5 拒否 |
 
 ## License

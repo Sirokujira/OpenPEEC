@@ -32,7 +32,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、184 判定)
+# 検証 (解析解・文献値との比較、188 判定)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -43,7 +43,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 184 判定すべて OK (h5py が
+**変更したら必ず `peec_check.sh` を通すこと。** 188 判定すべて OK (h5py が
 無い環境の `peec2h5 converter` だけは SKIP) でなければ完了ではない。
 「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
@@ -272,10 +272,12 @@ Codex から使う場合も `sh .claude/hooks/check-portability.sh` を直接叩
     なので、符号を取り違えると反射が前進し S21 の位相が逆に回る。端子対ごとに
     電流は行き帰りで等しい (同相の経路を作らない) ので、容量性 PEEC の総電荷の
     保存 (3) を壊さず浮いた端子対で構造に繋げる。損失 dB は無ひずみ線路の
-    片道減衰で、Z0 は実数のまま。未知数ブロックは offS より前 (回路側) なので
-    圧縮経路では前処理の Schur 補元に入る。
+    片道減衰で、Z0 は実数のまま。`rlgc` の形 (R + Rs√f、G + ωC tanδ) は複素 Z0 と
+    T = e^{−γ·長さ} を同じスタンプに入れるだけ (主値の平方根 Re ≥ 0 で受動側)。
+    未知数ブロックは offS より前 (回路側) なので圧縮経路では前処理の Schur 補元に入る。
     (`tline Zin (lossless)` / `tline Zin (2 dB loss)` / `tline matched S (3 dB)` /
-    `tline TDR delay` / `tline-fed dipole` / `tline compress = dense`)
+    `tline TDR delay` / `tline-fed dipole` / `tline compress = dense` /
+    `tline rlgc Zin` / `tline rlgc vs ladder` / `tline rlgc = Z0/td`)
 21. **励振の重みはポート解の重ね合わせ、Pin は wᴴZw** — `excitation` の重み
     w_j で電流 (`segi`) と**電荷 (`cellq`) の両方**を重ね合わせる (output.c の
     `exc_mix()`。近傍界の −∇φ は電荷から来る)。入力電力は相互結合を含む
@@ -329,6 +331,13 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
    実装との相互検証。コード自身の出力を期待値にすると回帰テストにしかならない。
 4. スクリプトは POSIX sh + awk/grep/sed のみ。CI は Windows でも同じスクリプトを
    Git Bash (`shell: bash`) で走らせる。
+5. **awk は実装差に注意 (CI は gawk、ローカルは mawk のことがある)**。gawk は
+   0 除算で停止し、mawk は inf / NaN を黙って返す。NaN は `if (e > mx) mx = e`
+   の最大値から**黙って抜け落ちる**ので、その点の比較が無かったことになる
+   (実際に踏んだ : tan の発散する θ = π/2 の行がローカルでは比較されず、CI では
+   停止した)。期待値の式は発散点の無い形 (tan より sin/cos、tanh より
+   cosh/sinh) で書き、誤差の最大値は `if (!(e <= mx)) mx = e` と書いて NaN を
+   判定の失敗に変える。点数 (`n == 5` など) も必ず確かめる。
 
 許容誤差の目安 :
 
