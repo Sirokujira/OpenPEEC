@@ -267,7 +267,55 @@ static void panel_seg(peec_t *p, const panel_t *pa, int n1, int n2,
 	s->aL = 0.2235 * (s->wid + pa->thick);
 	s->aP = 0.25 * (s->wid + pa->thick);
 	s->res = (pa->sigma > 0) ? s->len / (pa->sigma * s->area) : 0;
-	p->nseg++;
+
+	// 厚み方向の分割 (ndivt >= 2) : セルを法線方向に nt 層重ね、どの層も同じ
+	// 両端ノードを共有する (plate の層と同じ VFI 近似)。各層は厚さ t/nt の
+	// 体積セル (vol = 1 : 表皮効果の合成式は使わず、厚み方向の再配分は Lp が
+	// 解く)。結合は多角形の幾何二重積分 (polygon.c は面外の点も閉形式で扱う)。
+	const int nt = (pa->ndivt > 1) ? pa->ndivt : 1;
+	if (nt == 1) {
+		p->nseg++;
+		return;
+	}
+	double nv[3];
+	if (pa->kind == PANEL_QUAD) {
+		double e1[3], e2[3];
+		for (int c = 0; c < 3; c++) {
+			e1[c] = pa->v[3 + c] - pa->v[c];
+			e2[c] = pa->v[9 + c] - pa->v[c];
+		}
+		nv[0] = (e1[1] * e2[2]) - (e1[2] * e2[1]);
+		nv[1] = (e1[2] * e2[0]) - (e1[0] * e2[2]);
+		nv[2] = (e1[0] * e2[1]) - (e1[1] * e2[0]);
+	}
+	else {
+		for (int c = 0; c < 3; c++) nv[c] = pa->nrm[c];
+	}
+	const double nl = norm3(nv);
+	for (int c = 0; c < 3; c++) nv[c] /= nl;
+	const seg_t base = *s;
+	const double tl = pa->thick / nt;
+	for (int it = 0; it < nt; it++) {
+		seg_t *v = &p->seg[p->nseg];
+		*v = base;
+		const double off = (-0.5 * pa->thick) + ((it + 0.5) * tl);
+		for (int c = 0; c < 3; c++) {
+			v->x1[c] += off * nv[c];
+			v->x2[c] += off * nv[c];
+			v->papex[c] += off * nv[c];
+			for (int k = 0; k < v->npv; k++) {
+				v->pv[(3 * k) + c] += off * nv[c];
+			}
+		}
+		v->vol = 1;
+		v->thick = tl;
+		v->area = v->wid * tl;
+		v->perim = 2 * (v->wid + tl);
+		v->aL = 0.2235 * (v->wid + tl);
+		v->aP = 0.25 * (v->wid + tl);
+		v->res = (pa->sigma > 0) ? v->len / (pa->sigma * v->area) : 0;
+		p->nseg++;
+	}
 }
 
 // 電荷セル (格子点 (i,j) の双対多角形) を追加する。
@@ -371,14 +419,15 @@ int wire_build(peec_t *p, FILE *fp_log)
 	for (int i = 0; i < p->npanel; i++) {
 		const int na = p->panel[i].ndiva;
 		const int nb = p->panel[i].ndivb;
+		const int nt = (p->panel[i].ndivt > 1) ? p->panel[i].ndivt : 1;
 		if (p->panel[i].kind == PANEL_QUAD) {
 			npoint += (na + 1) * (nb + 1);
-			nseg += (na * (nb + 1)) + ((na + 1) * nb);
+			nseg += nt * ((na * (nb + 1)) + ((na + 1) * nb));
 			nchg += (na + 1) * (nb + 1);
 		}
 		else {
 			npoint += 1 + (na * nb);          // 中心 + nring x nsec
-			nseg += 2 * na * nb;              // 半径方向 + 周方向
+			nseg += nt * 2 * na * nb;         // 半径方向 + 周方向
 			nchg += 1 + (na * nb);
 		}
 	}

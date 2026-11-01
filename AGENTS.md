@@ -32,7 +32,7 @@ CSV → HDF5 の変換は `tools/peec2h5.py` (numpy + h5py)。**ソルバー本�
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値との比較、188 判定)
+# 検証 (解析解・文献値との比較、194 判定)
 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 
 # メモリ健全性 (CI の sanitize ジョブと同じ)
@@ -43,7 +43,7 @@ cmake --build build-san -j"$(nproc)"
 ASAN_OPTIONS=detect_leaks=1 sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-san
 ```
 
-**変更したら必ず `peec_check.sh` を通すこと。** 188 判定すべて OK (h5py が
+**変更したら必ず `peec_check.sh` を通すこと。** 194 判定すべて OK (h5py が
 無い環境の `peec2h5 converter` だけは SKIP) でなければ完了ではない。
 「実行が通る」だけでは不十分で、この検証群が物理の番人になっている。
 
@@ -383,7 +383,8 @@ matvec は葉行クラスタ = 出力の互いに素な区間ごとに並列化�
   (共有ノード、VFI 近似) であり、厚み方向・断面内の横方向の伝導は陽には解かない。
 - 面導体は平面パネル (矩形 `plate` / 凸四辺形 `quad` / 円板 `disk`) のみ。
   3 次元曲面 (円筒など) は平面パネルのファセット化で近似する。
-  `quad` / `disk` は厚さ 1 層 (厚み方向分割は plate のみ)。パネルの
+  `quad` / `disk` の厚み方向分割 (`分割数t`) は層を厚みのない多角形の面積分で
+  結合する (plate の層は Hoer–Love) ので少ない層数での誤差が大きい。パネルの
   DC 抵抗は格子の双対幅で決まり、矩形格子では厳密、歪んだ格子・極格子
   では O(格子幅²) の系統誤差を含む (弦近似)。
 - 電流は区間ごと一定、電荷はセルごと一定の低次基底。共振近傍の精度は分割数依存。

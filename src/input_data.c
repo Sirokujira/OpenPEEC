@@ -614,7 +614,7 @@ int input_data(FILE *fp, peec_t *p)
 			}
 		}
 		else if (!strcmp(strkey, "quad")) {
-			// quad = x1 y1 z1  x2 y2 z2  x3 y3 z3  x4 y4 z4  厚さ 導電率 分割a 分割b
+			// quad = x1 y1 z1  x2 y2 z2  x3 y3 z3  x4 y4 z4  厚さ 導電率 分割a 分割b [分割t]
 			// 凸な一般四辺形 (頂点は一周順)。双一次写像の構造格子で分割する。
 			// 分割 a は辺 1-2 (と 4-3)、分割 b は辺 1-4 (と 2-3) の方向。
 			if (ntoken < 18) err = 1;
@@ -630,8 +630,9 @@ int input_data(FILE *fp, peec_t *p)
 				e->sigma = atof(token[15]);
 				e->ndiva = atoi(token[16]);
 				e->ndivb = atoi(token[17]);
+				e->ndivt = (ntoken >= 19) ? atoi(token[18]) : 1;
 				if ((e->thick <= 0) || (e->sigma < 0)
-				 || (e->ndiva < 1) || (e->ndivb < 1)) err = 1;
+				 || (e->ndiva < 1) || (e->ndivb < 1) || (e->ndivt < 1)) err = 1;
 				// 平面性と凸性 (双一次格子と双対セルの前提)
 				if (!err) {
 					double nrm[3] = {0, 0, 0};
@@ -681,7 +682,7 @@ int input_data(FILE *fp, peec_t *p)
 			}
 		}
 		else if (!strcmp(strkey, "disk")) {
-			// disk = cx cy cz  nx ny nz  半径 厚さ 導電率 nring nsec
+			// disk = cx cy cz  nx ny nz  半径 厚さ 導電率 nring nsec [分割t]
 			// 円板。中心 + nring リング x nsec セクタの極格子で分割する。
 			if (ntoken < 13) err = 1;
 			else {
@@ -698,6 +699,8 @@ int input_data(FILE *fp, peec_t *p)
 				e->sigma = atof(token[10]);
 				e->ndiva = atoi(token[11]);       // nring
 				e->ndivb = atoi(token[12]);       // nsec
+				e->ndivt = (ntoken >= 14) ? atoi(token[13]) : 1;
+				if (e->ndivt < 1) err = 1;
 				const double nl = sqrt((e->nrm[0] * e->nrm[0])
 					+ (e->nrm[1] * e->nrm[1]) + (e->nrm[2] * e->nrm[2]));
 				// 中心の双対環は 2 x nsec 頂点なので nsec <= POLY_MAX/2

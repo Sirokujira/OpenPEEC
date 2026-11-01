@@ -126,9 +126,18 @@ Hoer–Love の対 (bar_use_hl) に乗る。電荷セルは分割前の区間の
   (δ < thick) が丸ごと落ち、1 GHz・厚さ 0.1 mm の銅シートで plate 比 −24%
   になる。面内の再配分は格子が解くので、ここで見ているのは厚み方向のみ。
 
+パネルの厚み方向分割 (`quad` / `disk` の `分割数t`) は、各セルを法線方向に nt 層
+ずらして複製し (多角形の頂点・papex・x1/x2 を同じだけ平行移動)、どの層も同じ両端
+ノードを共有する (VFI)。層は `vol = 1` なので表皮効果の合成式は使わない (厚み方向の
+再配分は Lp が解く : 二重計上の禁止は (6) と同じ)。結合は `poly_static()` の
+多角形閉形式で、面外の点 (|z| > 0) も厳密に扱う。ただし層そのものは厚みを持たない
+面積分なので、plate の Hoer–Love 層より少ない層数での誤差が大きい (3 層で
+1D スラブ比 1.28、plate は 1.50)。24 層で O(層厚²) の漸近域に入る。
+
 **番人**: `quad sheet Rin (DC)` / `quad sheet L vs plate` /
 `quad sheet R vs plate (HF)` / `quad sheet R (skin at DC)` /
-`disk C (extrapolated)` / `annulus Rin (DC)`
+`disk C (extrapolated)` / `annulus Rin (DC)` / `annulus Rin (nt=3 = 1)` /
+`quad slab ratio (extr.)` / `quad slab convergence` / `quad slab = plate slab`
 
 ## (8) 鏡像の符号規約 (groundplane)
 

@@ -395,6 +395,39 @@ awk -v r3="$b3" -v r6="$b6" -v r12="$b12" 'BEGIN {
 }' || status=1
 chk "bar slab = plate slab" "$bext" "$pext" 0.005
 
+# (be) 同じ対称サンドイッチの中心板を quad (厚み方向 nt 層) にする。多角形の層は
+#      厚みのない面積分で結合するので nt = 6/12/24 で補外する
+cp "$SRC/quad_skin_layers.peec" "$WORK/"
+for nt in 24 12 6; do
+	sed "s/ 5.8e7 4 4 24\$/ 5.8e7 4 4 $nt/" "$SRC/quad_skin_layers.peec" > "$WORK/quad_skin_nt$nt.peec"
+	run quad_skin_nt$nt.peec
+	rat=$(awk -F, 'NR==2{rdc=$3} NR==3{printf "%.9e", $3/rdc}' "$csv")
+	if [ "$nt" = 24 ]; then q24=$rat; chk "quad slab Rdc (nt=24)" "$(getR)" 1.724138e-4 0.001;
+	elif [ "$nt" = 12 ]; then q12=$rat; else q6=$rat; fi
+done
+qext=$(awk -v a="$q24" -v b="$q12" 'BEGIN{printf "%.9e", a + (a-b)/3}')
+chk "quad slab ratio (extr.)" "$qext" 1.897806 0.035
+awk -v r3="$q6" -v r6="$q12" -v r12="$q24" 'BEGIN {
+	d1 = r6 - r3; if (d1 < 0) d1 = -d1;
+	d2 = r12 - r6; if (d2 < 0) d2 = -d2;
+	ok = (d2 <= 0.35 * d1);
+	printf "%-24s |r24-r12|=%.4f |r12-r6|=%.4f -> %s (<= 0.35)\n", "quad slab convergence", d2, d1, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+chk "quad slab = plate slab" "$qext" "$pext" 0.005
+# 書き間違いは拒否されること : 厚み方向の分割数 0 (quad / disk)
+nbad=0
+sed 's/ 5.8e7 4 4 24$/ 5.8e7 4 4 0/' "$SRC/quad_skin_layers.peec" > "$WORK/panel_bad.peec"
+if (cd "$WORK" && "$PEEC" -n 1 panel_bad.peec > panel_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+sed 's/^\(disk = .*\)$/\1 0/' "$SRC/disk_annulus.peec" > "$WORK/panel_bad.peec"
+if (cd "$WORK" && "$PEEC" -n 1 panel_bad.peec > panel_bad.out 2>&1); then :; else nbad=$((nbad + 1)); fi
+if [ "$nbad" -eq 2 ]; then
+	printf "%-24s -> OK (2/2 malformed inputs rejected)\n" "panel ndivt parser guard"
+else
+	printf "%-24s -> NG (%d/2 malformed inputs rejected)\n" "panel ndivt parser guard" "$nbad" >&2
+	status=1
+fi
+
 echo "--- panel conductors (quad / disk)"
 # (x) 一般四辺形 : 正方形シートの DC 抵抗 (1 スクエアの解析値) と、
 #     L の plate (矩形リボン閉形式 = 別経路の実装) との相互検証
@@ -443,6 +476,12 @@ chk "disk C (extrapolated)" "$(awk -v a="$cd4" -v b="$cd8" 'BEGIN{printf "%.9e",
 cp "$SRC/disk_annulus.peec" "$WORK/"
 run disk_annulus.peec
 chk "annulus Rin (DC)" "$(getR)" 1.902031e-5 0.03
+# (be) disk の厚み方向分割 : 同じノードを共有する同一層の並列なので DC 抵抗は
+#      1 層と厳密に同じ (法線・層の複製・面外の多角形結合の経路を通す)
+rann=$(getR)
+sed 's/^\(disk = .*\)$/\1 3/' "$SRC/disk_annulus.peec" > "$WORK/disk_annulus_t3.peec"
+run disk_annulus_t3.peec
+chk "annulus Rin (nt=3 = 1)" "$(getR)" "$rann" 1e-6
 
 echo "--- ground plane (image method)"
 # (ab) 地板上の水平単線 : L = L_self - M(2h) (Grover)、R は鏡像の影響を受けない

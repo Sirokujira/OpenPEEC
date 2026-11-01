@@ -7,7 +7,7 @@ OpenFDTD の姉妹プロジェクトで、ビルド規約・移植性規則を�
 抵抗 R) → 入力インピーダンス Zin(f)。集中定数には伝送線路 (`tline`、TEM 線路を
 進行波の関係で組む) も含む。
 導体は丸線 (`wire`) / 角線 (`bar`、断面分割で表皮・近接効果) / 面導体 (`plate` = 矩形、
-`quad` = 凸四辺形、`disk` = 円板)、らせん / 円形ループ (`helix`、直線 `wire` 列に展開)。ほかに無限 PEC 地板 (`groundplane`、
+`quad` = 凸四辺形、`disk` = 円板。いずれも厚み方向の層分割可)、らせん / 円形ループ (`helix`、直線 `wire` 列に展開)。ほかに無限 PEC 地板 (`groundplane`、
 鏡像法)、誘電体ブリック (`dielectric`、Ruehli の過剰容量)、
 遠方界後処理 (`farfield` → `far.csv`、平面波併用時は散乱界・RCS `farpw.csv`、`excitation` で多ポートの重み付き励振)、近傍界後処理 (`nearfield` →
 `near.csv`、平面波併用時は全界 `nearpw.csv`)、平面波入射 (`planewave` → `pw.csv`、

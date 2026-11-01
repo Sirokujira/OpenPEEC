@@ -1,0 +1,80 @@
+# 検証 (be) : パネル (quad) の厚み方向分割 — 表皮効果 (対称サンドイッチ)
+#   plate_skin_layers.peec の中心板 (幅 20 mm、厚さ 1 mm、長さ 0.2 m の銅) を
+#   同じ 4 x 4 格子の quad に置き換え、厚み方向に nt 層 (各層は多角形セルを法線
+#   方向にずらした体積セル、層間は格子点で並列 = VFI) に分割する。上下の
+#   リターン板・バス・給電は plate 版と同じ。1D スラブの解析解
+#     R_ac/R_dc = Re[(1+j)X coth((1+j)X)] = 1.897806  (X = t/2δ = 2、f = 69876.68 Hz)
+#   との比較は plate 版と同じ論法 (縁の励振低下で -1.8%、許容 3.5%)。
+#   quad の層は厚みを持たない多角形の面積分で結合する (plate の層は Hoer-Love
+#   の体積閉形式) ので層数の少ないところの誤差が大きく、nt = 6/12/24 で
+#   補外する (24 層で O(層厚²) の漸近域 : 差の比 0.27)。
+#   peec_check.sh は
+#   - Richardson 補外 r24 + (r24 - r12)/3 と解析値 (許容 3.5%、実測 -1.8%)
+#   - O(層厚²) 収束 |r24 - r12| <= 0.35 |r12 - r6|
+#   - plate 版 (別経路 : 矩形格子 + Hoer-Love) の補外値との一致 (0.5%、実測 0.09%)
+#   を判定する。
+OpenPEEC 1 0
+title = sandwich with a layered quad (thickness skin effect)
+node = 1 0 -0.01 0
+node = 2 0 -0.005 0
+node = 3 0 0 0
+node = 4 0 0.005 0
+node = 5 0 0.01 0
+node = 21 0.2 -0.01 0
+node = 22 0.2 -0.005 0
+node = 23 0.2 0 0
+node = 24 0.2 0.005 0
+node = 25 0.2 0.01 0
+node = 41 0 -0.01 0.0008
+node = 42 0 -0.005 0.0008
+node = 43 0 0 0.0008
+node = 44 0 0.005 0.0008
+node = 45 0 0.01 0.0008
+node = 51 0 -0.01 -0.0008
+node = 52 0 -0.005 -0.0008
+node = 53 0 0 -0.0008
+node = 54 0 0.005 -0.0008
+node = 55 0 0.01 -0.0008
+node = 61 0.2 -0.01 0.0008
+node = 62 0.2 -0.005 0.0008
+node = 63 0.2 0 0.0008
+node = 64 0.2 0.005 0.0008
+node = 65 0.2 0.01 0.0008
+node = 71 0.2 -0.01 -0.0008
+node = 72 0.2 -0.005 -0.0008
+node = 73 0.2 0 -0.0008
+node = 74 0.2 0.005 -0.0008
+node = 75 0.2 0.01 -0.0008
+quad = 0 -0.01 0  0.2 -0.01 0  0.2 0.01 0  0 0.01 0  1e-3 5.8e7 4 4 24
+plate = 0 -0.01 0.0008  0.2 0 0  0 0.02 0  2e-4 1e12 4 4
+plate = 0 -0.01 -0.0008  0.2 0 0  0 0.02 0  2e-4 1e12 4 4
+resistor = 1 2 1e-9
+resistor = 2 3 1e-9
+resistor = 3 4 1e-9
+resistor = 4 5 1e-9
+resistor = 21 22 1e-9
+resistor = 22 23 1e-9
+resistor = 23 24 1e-9
+resistor = 24 25 1e-9
+resistor = 41 42 1e-9
+resistor = 42 43 1e-9
+resistor = 43 44 1e-9
+resistor = 44 45 1e-9
+resistor = 51 52 1e-9
+resistor = 52 53 1e-9
+resistor = 53 54 1e-9
+resistor = 54 55 1e-9
+resistor = 61 62 1e-9
+resistor = 62 63 1e-9
+resistor = 63 64 1e-9
+resistor = 64 65 1e-9
+resistor = 71 72 1e-9
+resistor = 72 73 1e-9
+resistor = 73 74 1e-9
+resistor = 74 75 1e-9
+resistor = 43 53 1e-9
+resistor = 23 63 1e-9
+resistor = 23 73 1e-9
+port = 3 43 50
+frequency = 1 69876.68 1
+end

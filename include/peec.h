@@ -109,6 +109,8 @@ typedef struct {
 	int    ndiva, ndivb;          // quad の分割数 / disk は (nring, nsec)
 	double thick, sigma;
 	int    grading;               // 1 = 縁寄せ格子 (wire_build が p->grading を写す)
+	int    ndivt;                 // 厚み方向の分割数 (0 / 1 = 1 層。>= 2 で各セルを
+	                              // 法線方向に重ねた体積セルの並列にする : plate の層と同じ)
 } panel_t;
 
 // らせん / 円形ループ (helix = cx cy cz ax ay az sx sy sz ピッチ 巻数 半径 導電率 分割数 [n1 n2])
