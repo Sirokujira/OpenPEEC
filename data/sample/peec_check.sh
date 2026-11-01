@@ -527,14 +527,14 @@ cp "$WORK/far.csv" "$WORK/far_arr.csv"
 # 鏡映対称 + 反対称励振 : ±y 方向の遠方界と x = 0 面の E_z が厳密に 0
 awk -F, 'NR > 1 {
 	a = sqrt(($4 ^ 2) + ($5 ^ 2) + ($6 ^ 2) + ($7 ^ 2)); if (a > mx) mx = a;
-	if (($2 + 0 == 90) && (($3 + 0 == 90) || ($3 + 0 == 270))) {if (a > nul) nul = a; n++}
+	if (($2 + 0 == 90) && (($3 + 0 == 90) || ($3 + 0 == 270))) {if (!(a <= nul)) nul = a; n++}
 } END {
 	r = nul / mx; ok = (n == 2) && (r <= 1e-9);
 	printf "%-24s |rE(+-y)|/max|rE|=%.3e -> %s (<= 1e-9)\n", "array antiphase null", r, ok ? "OK" : "NG";
 	exit ok ? 0 : 1
 }' "$WORK/far_arr.csv" || status=1
 awk -F, 'NR > 1 {
-	ez = sqrt(($9 ^ 2) + ($10 ^ 2)); if (ez > mz) mz = ez; if ($17 > me) me = $17; n++
+	ez = sqrt(($9 ^ 2) + ($10 ^ 2)); if (!(ez <= mz)) mz = ez; if ($17 > me) me = $17; n++
 } END {
 	r = mz / me; ok = (n == 4) && (r <= 1e-9);
 	printf "%-24s points=%d max|Ez|/max|E|=%.3e -> %s (<= 1e-9)\n", "array near Ez (x=0)", n, r, ok ? "OK" : "NG";
@@ -578,7 +578,7 @@ FILENAME == ARGV[3] && FNR > 1 {
 	k = $2 SUBSEP $3;
 	# F1 + j F2 : (re, im) = (r1 - i2, i1 + r2)
 	d = sqrt((($4 - (a1[k] - b2[k])) ^ 2) + (($5 - (b1[k] + a2[k])) ^ 2) + (($6 - (c1[k] - d2[k])) ^ 2) + (($7 - (d1[k] + c2[k])) ^ 2));
-	if (d > mx) mx = d; a = sqrt(($4 ^ 2) + ($5 ^ 2) + ($6 ^ 2) + ($7 ^ 2)); if (a > am) am = a; n++
+	if (!(d <= mx)) mx = d; a = sqrt(($4 ^ 2) + ($5 ^ 2) + ($6 ^ 2) + ($7 ^ 2)); if (a > am) am = a; n++
 } END {
 	r = mx / am; ok = (n == 888) && (r <= 1e-8);
 	printf "%-24s dirs=%d max|F-(F1+jF2)|/max|F|=%.3e -> %s (<= 1e-8)\n", "excitation superposition", n, r, ok ? "OK" : "NG";
@@ -1012,8 +1012,8 @@ ddy() {
 			a = 4; b = -1e-3 / (w * e0)
 		}
 		eG = w * K * (-b); eB = w * K * (a - 1);
-		dg = ((g1 - g2) / eG) - 1; if (dg < 0) dg = -dg; if (dg > mx) mx = dg;
-		dbv = ((b1 - b2) / eB) - 1; if (dbv < 0) dbv = -dbv; if (dbv > mx) mx = dbv;
+		dg = ((g1 - g2) / eG) - 1; if (dg < 0) dg = -dg; if (!(dg <= mx)) mx = dg;
+		dbv = ((b1 - b2) / eB) - 1; if (dbv < 0) dbv = -dbv; if (!(dbv <= mx)) mx = dbv;
 		n++
 	} END {printf "%d %.3e\n", n, mx}'
 }
@@ -1558,16 +1558,20 @@ echo "--- transmission line (tline)"
 # (az) 伝送線路 : 進行波の関係 (Branin) で MNA に組んだ線路を、tan / tanh を使う
 #      教科書の入力インピーダンス式・整合線路の S・時間領域の遅延と比べる。
 #      tlzin <損失dB> : zin.csv と Zin = Z0 (ZL + Z0 tanh γl)/(Z0 + ZL tanh γl)
-#      (Z0 = 50, ZL = 100, td = 1 ns, γl = L ln10/20 + j 2π f td) の最大相対誤差
+#      (Z0 = 50, ZL = 100, td = 1 ns, γl = L ln10/20 + j 2π f td) の最大相対誤差。
+#      tanh は θ = π/2 で発散するので、分子分母に cosh γl を掛けた
+#      Zin = Z0 (ZL ch + Z0 sh)/(Z0 ch + ZL sh) (ch = cosh γl、sh = sinh γl) で組む
+#      (gawk は 0 除算で停止し、mawk は NaN を黙って比較から外す)
 tlzin() {
 	awk -F, -v L="$1" 'NR > 1 {
 		PI = atan2(0, -1); z0 = 50; zl = 100;
 		x = L * log(10) / 20; y = 2 * PI * $2 * 1e-9;
-		den = ((exp(2 * x) + exp(-2 * x)) / 2) + cos(2 * y);
-		tr = ((exp(2 * x) - exp(-2 * x)) / 2) / den; ti = sin(2 * y) / den;
-		nr = zl + (z0 * tr); ni = z0 * ti; dr = z0 + (zl * tr); di = zl * ti; dd = (dr * dr) + (di * di);
+		cx = (exp(x) + exp(-x)) / 2; sx = (exp(x) - exp(-x)) / 2;
+		chr = cx * cos(y); chi = sx * sin(y); shr = sx * cos(y); shi = cx * sin(y);
+		nr = (zl * chr) + (z0 * shr); ni = (zl * chi) + (z0 * shi);
+		dr = (z0 * chr) + (zl * shr); di = (z0 * chi) + (zl * shi); dd = (dr * dr) + (di * di);
 		er = z0 * ((nr * dr) + (ni * di)) / dd; ei = z0 * ((ni * dr) - (nr * di)) / dd;
-		e = sqrt((($3 - er) ^ 2) + (($4 - ei) ^ 2)) / sqrt((er * er) + (ei * ei)); if (e > mx) mx = e; n++
+		e = sqrt((($3 - er) ^ 2) + (($4 - ei) ^ 2)) / sqrt((er * er) + (ei * ei)); if (!(e <= mx)) mx = e; n++
 	} END {printf "%d %.3e\n", n, mx}' "$csv"
 }
 cp "$SRC/tline_term.peec" "$WORK/"
@@ -1595,7 +1599,7 @@ awk 'NF == 9 && $1 !~ /^[!#]/ {
 	PI = atan2(0, -1); a = exp(-3 * log(10) / 20); ph = 2 * PI * $1 * 2e-9;
 	er = a * cos(ph); ei = -a * sin(ph);
 	d = sqrt(($2 ^ 2) + ($3 ^ 2) + ($8 ^ 2) + ($9 ^ 2) + (($4 - er) ^ 2) + (($5 - ei) ^ 2) + (($6 - er) ^ 2) + (($7 - ei) ^ 2));
-	if (d > mx) mx = d; n++
+	if (!(d <= mx)) mx = d; n++
 } END {
 	ok = (n == 10) && (mx <= 1e-9);
 	printf "%-24s freqs=%d max|S-S_exact|=%.3e -> %s (<= 1e-9)\n", "tline matched S (3 dB)", n, mx, ok ? "OK" : "NG";
@@ -1607,7 +1611,7 @@ cp "$SRC/tline_tdr.peec" "$WORK/"
 run tline_tdr.peec
 awk -F, '$1 == "X" {x[nx++] = $5} $1 == "S" {y[ny++] = $5}
 END {
-	for (k = 0; k < ny; k++) {d = y[k] - (0.5 * x[(k - 32 + nx) % nx]); if (d < 0) d = -d; if (d > mx) mx = d}
+	for (k = 0; k < ny; k++) {d = y[k] - (0.5 * x[(k - 32 + nx) % nx]); if (d < 0) d = -d; if (!(d <= mx)) mx = d}
 	ok = (nx == 128) && (ny == 128) && (mx <= 1e-9);
 	printf "%-24s max|y-G x(t-2td)|=%.3e -> %s (<= 1e-9)\n", "tline TDR delay", mx, ok ? "OK" : "NG";
 	exit ok ? 0 : 1
@@ -1624,10 +1628,11 @@ sed 's/^port = 1 2 50$/port = 10 0 50\ntline = 10 0 1 2 50 1e-9/' "$SRC/dipole_h
 run tline_dipole.peec
 cp "$csv" "$WORK/zin_tl_dip.csv"
 paste -d, "$WORK/zin_tl_dip0.csv" "$WORK/zin_tl_dip.csv" | awk -F, 'NR > 1 {
-	PI = atan2(0, -1); z0 = 50; th = 2 * PI * $2 * 1e-9; t = sin(th) / cos(th);
-	nr = $3; ni = $4 + (z0 * t); dr = z0 - ($4 * t); di = $3 * t; dd = (dr * dr) + (di * di);
+	PI = atan2(0, -1); z0 = 50; th = 2 * PI * $2 * 1e-9; c = cos(th); s = sin(th);
+	# Zin = Z0 (Zd cos θ + j Z0 sin θ)/(Z0 cos θ + j Zd sin θ) (tan の発散を避ける形)
+	nr = $3 * c; ni = ($4 * c) + (z0 * s); dr = (z0 * c) - ($4 * s); di = $3 * s; dd = (dr * dr) + (di * di);
 	er = z0 * ((nr * dr) + (ni * di)) / dd; ei = z0 * ((ni * dr) - (nr * di)) / dd;
-	e = sqrt((($10 - er) ^ 2) + (($11 - ei) ^ 2)) / sqrt((er * er) + (ei * ei)); if (e > mx) mx = e; n++
+	e = sqrt((($10 - er) ^ 2) + (($11 - ei) ^ 2)) / sqrt((er * er) + (ei * ei)); if (!(e <= mx)) mx = e; n++
 } END {
 	ok = (n == 13) && (mx <= 1e-7);
 	printf "%-24s freqs=%d max rel err=%.3e -> %s (<= 1e-7)\n", "tline-fed dipole", n, mx, ok ? "OK" : "NG";
@@ -1639,7 +1644,7 @@ paste -d, "$WORK/zin_tl_dip0.csv" "$WORK/zin_tl_dip.csv" | awk -F, 'NR > 1 {
 sed 's/^end$/compression = 1\nend/' "$WORK/tline_dipole.peec" > "$WORK/tline_dipole_c.peec"
 run tline_dipole_c.peec
 paste -d, "$WORK/zin_tl_dip.csv" "$csv" | awk -F, 'NR > 1 {
-	e = sqrt((($3 - $10) ^ 2) + (($4 - $11) ^ 2)) / sqrt(($3 * $3) + ($4 * $4)); if (e > mx) mx = e; n++
+	e = sqrt((($3 - $10) ^ 2) + (($4 - $11) ^ 2)) / sqrt(($3 * $3) + ($4 * $4)); if (!(e <= mx)) mx = e; n++
 } END {
 	ok = (n == 13) && (mx <= 1e-12);
 	printf "%-24s max rel diff=%.3e -> %s (<= 1e-12)\n", "tline compress = dense", mx, ok ? "OK" : "NG";
