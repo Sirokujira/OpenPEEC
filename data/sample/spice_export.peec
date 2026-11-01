@@ -1,0 +1,40 @@
+# 検証 (bn) : 準静的な PEEC 等価回路の SPICE ネットリスト出力 (spice = 1 → peec.cir)
+#   平行 2 本の細線 (長さ 50 mm、間隔 5 mm、各 4 区間、容量性 PEEC) を往復線にし、
+#   遠端を集中定数で終端 (100 ohm || 1 pF)、さらに無損失線路 (75 ohm、100 ps) で
+#   結合インダクタ (L1 = 20 nH、L2 = 30 nH、k = -0.4) と抵抗の回路へ繋ぐ 2 ポート。
+#   peec.cir には導体セルの R + Lp (内部節点 X_k)、相互部分インダクタンスの
+#   K = Lp_kl/sqrt(Lp_kk Lp_ll) (逆向きの区間で負)、Maxwell の容量行列を分けた
+#   節点 - 基準 / 節点間の C、入力の集中定数 (R / C / L / K / T) が入る。
+#
+#   peec_check.sh の判定 :
+#   (1) 読み戻し : peec.cir を awk で OpenPEEC の集中定数 (resistor / inductor /
+#       mutual / capacitor / tline) に変換し、同じポート・周波数で解いた Zin と
+#       peec.s2p が元の PEEC と一致 (相対 1e-9)。書き出しは近似を含まないので、
+#       違いは MNA の組み方の差 (内部節点の有無) による丸めだけ
+#   (2) ネットリストの整合 : 素子名が一意、K は定義済みの L だけを参照し |k| < 1、
+#       L > 0、末尾が .end
+#   (3) 結合の打ち切り : spice = 1 0.05 で書いた K の数が、全結合のうち
+#       |k| > 0.05 の数と一致し、ログの "dropped" が残りの数と一致する
+#   ほかに mm_twinline (地板 + 4 ポート) と diel_pp (面導体 + 誘電体の C_e 枝、
+#   約 9 万本の K) も読み戻しで判定する。
+OpenPEEC 1 0
+title = two-wire line with lumped termination, delay line and coupled inductors
+capacitance = 1
+spice = 1
+node = 1 0 0 0
+node = 2 0.05 0 0
+node = 3 0 0.005 0
+node = 4 0.05 0.005 0
+wire = 0 0 0 0.05 0 0 5e-4 5.8e7 4
+wire = 0 0.005 0 0.05 0.005 0 5e-4 5.8e7 4
+resistor = 2 4 100
+capacitor = 2 4 1e-12
+tline = 2 4 5 0 75 1e-10
+inductor = L1 5 6 20e-9
+inductor = L2 6 0 30e-9
+mutual = L1 L2 -0.4
+resistor = 6 0 10
+port = 1 3 50
+port = 5 0 50
+frequency = 1e8 1e9 4
+end

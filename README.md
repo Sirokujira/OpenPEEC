@@ -124,6 +124,18 @@ same portability rules, no external numerical libraries.
   遠方界は導体側の領域 (z 面があれば上半球、x / y 面は面の手前) だけを積分し、
   平面波は入射波ごとに反射波 2^面数 − 1 個を加えます。平行な 2 面 (同じ軸) は
   鏡像が無限級数になるので受け付けません。
+- **SPICE ネットリスト出力** — `spice = 1 [kmin]` : 準静的な PEEC 等価回路を
+  `peec.cir` に書き出します (ngspice / LTspice などで読めます)。導体セルは DC 抵抗と
+  部分インダクタンスの直列 (内部節点 X_k)、相互部分インダクタンスは結合係数
+  K = Lp_kl/√(Lp_kk Lp_ll) (逆向きの区間は負)、容量性 PEEC の Maxwell 容量行列
+  C = P⁻¹ は節点 - 基準 (行和) と節点間 (−C_ij、負の枝もある) のキャパシタ、
+  誘電体セルは過剰容量 C_e、入力の集中定数・電源・無損失線路はそのまま書きます。
+  |k| ≤ kmin の結合は省けます (既定 0 = すべて書く。省いた数はログに出ます)。
+  近似を含まない書き出しなので、ネットリストを OpenPEEC の集中定数に読み戻すと
+  元の PEEC と同じ Zin になります (検証で 1e-7 以下)。値は f = 0 の準静的な部分
+  要素で、遅延・表皮効果は表せません (注記を書きます)。誘電損・分散、損失のある
+  線路、`basis = 1`、`compression` とは併用できません。浮いた導体で SPICE の
+  DC 動作点が求まらないときは `.options rshunt=1e12` などを足してください。
 - **区分線形の電流基底 (高次基底)** — `basis = 1` (細線のみ、`capacitance = 1` 必須) :
   区間ごとに一定の電流に、節点の電荷 q_n で駆動する傾斜関数
   jω q_n (L_h − s)/L_n を足し、電流を連続な区分線形 (節点と区間中点で折れる) に
@@ -308,7 +320,7 @@ same portability rules, no external numerical libraries.
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
-# 検証 (解析解・文献値と比較、247 判定。許容は判定ごとに 1e-12 〜 3%)
+# 検証 (解析解・文献値と比較、255 判定。許容は判定ごとに 1e-12 〜 3%)
 # 実行ファイルは相対パスでもよい (スクリプトが絶対パスに直す)
 sh data/sample/peec_check.sh bin/peec /tmp/peec-check
 
@@ -390,6 +402,7 @@ peec [-n <threads>] input.peec
 | `mixed.csv` | 混合モード S パラメータ (差動 / 同相、`mixedmode` 指定時のみ)。1 行 1 成分で `frequency[Hz],row,col,real,imag,\|S\|[dB]`、row/col は `d1` / `c1` / `s3` など |
 | `dist.csv` | 電流・電荷分布 (`distribution = 1` のときのみ)。`port` 列が励振ポート番号 (多ポートではポートごとに 1 組)、平面波による誘起電流 `Ipw` は 0 |
 | `far.csv` | 遠方界パターン rE と D / G [dBi] (`farfield` 指定時のみ) |
+| `peec.cir` | 準静的な PEEC 等価回路の SPICE ネットリスト (`spice = 1` 指定時のみ) |
 | `farpw.csv` | 平面波の散乱遠方界 r·E_s と双方向レーダー断面積 RCS [m²] / [dBsm] (`farfield` と `planewave` の併用時のみ) |
 | `near.csv` | 近傍界 E / H の各成分と |E| / |H| (`nearfield` 指定時のみ) |
 | `nearpw.csv` | 平面波入射時の全界 (入射 + 反射 + 散乱)。列は `near.csv` と同じ (`nearfield` と `planewave` の併用時のみ) |
@@ -450,9 +463,9 @@ d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 
 |---|---|---|
 | `title` | `title = 任意文字列` | タイトル |
 | `resistor` | `resistor = n1 n2 R` | 抵抗 [Ω] |
-| `capacitor` | `capacitor = n1 n2 C` | キャパシタ [F] |
+| `capacitor` | `capacitor = n1 n2 C` | キャパシタ [F] (0 以外。負の値は PEEC 等価回路の読み戻し用) |
 | `inductor` | `inductor = 名前 n1 n2 L` | インダクタ [H] (名前は `mutual` 参照用) |
-| `mutual` | `mutual = 名前1 名前2 k` | 結合係数 k (0 < k ≤ 1)、M = k√(L1L2) |
+| `mutual` | `mutual = 名前1 名前2 k` | 結合係数 k (0 < \|k\| ≤ 1、負は逆向きの結合)、M = k√(L1L2) |
 | `excitation` | `excitation = ポート番号 振幅 [位相deg]` | 遠方界・近傍界のポート励振の重み (電流 [A]、複数行可)。ポート番号は 1 始まり (`port` 行の順)。書かないポートは開放。省略時は port #1 に 1 A。範囲外・重複はエラー |
 | `tline` | `tline = n1 n2 n3 n4 Z0 遅延 [損失dB]` / `tline = n1 n2 n3 n4 rlgc 長さ R L G C [Rs [tanδ]]` | 伝送線路 (TEM)。端子対 1 = (n1, n2)、端子対 2 = (n3, n4)。Z0 [Ω] > 0、片道遅延 [s] > 0 (電気長 θ = 2πf·遅延)。損失 (省略時 0) は片道の減衰 [dB] で、無ひずみ線路として周波数に依らない。`rlgc` は単位長さあたりの R [Ω/m] ≥ 0、L [H/m] > 0、G [S/m] ≥ 0、C [F/m] > 0、表皮効果 Rs [Ω/(m√Hz)] ≥ 0 (R + Rs√f)、誘電損 tanδ ≥ 0 (G + ωC tanδ) |
 | `vsource` | `vsource = n1 n2 振幅 [位相deg]` | AC 電圧源 (+ 端子 = n1) |
@@ -480,6 +493,7 @@ d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 
 | `capacitance` | `capacitance = 1` | 1 で容量性 PEEC (電位係数) を有効化 (省略時 0) |
 | `retardation` | `retardation = 1` | 1 で遅延 (フルウェーブ PEEC) を有効化 (省略時 0) |
 | `acceleration` | `acceleration = 1` | 1 で掃引 LU 再利用の GMRES (省略時 0 = 毎周波数 LU)。結果は密 LU と実質同一 |
+| `spice` | `spice = 1 [kmin]` | 1 で準静的な PEEC 等価回路を `peec.cir` (SPICE) に書き出す。|k| ≤ kmin の相互結合は省く (省略時 0 = すべて)。`compression`・`basis = 1`・誘電損/分散・損失のある線路とは併用不可 |
 | `basis` | `basis = 1` | 1 で区分線形の電流基底 (細線のみ、`capacitance = 1` 必須。面導体・体積セル・誘電体・`compression`・`nearfield` とは併用不可)。省略時 0 = 区間ごとに一定の電流 |
 | `compression` | `compression = 1 [tol]` | 1 で Lp (と `capacitance = 1` なら P) の H 行列圧縮 + 行列フリー GMRES (省略時 0 = 密行列)。tol は ACA の相対許容誤差 (省略時 1e-6) で Zin にほぼそのまま伝わる。`acceleration = 1` とは併用不可 |
 | `distribution` | `distribution = 1` | 1 で電流・電荷分布を `dist.csv` に出力 (省略時 0)。多ポートでは「ポート j に 1A、他は開放」の分布をポートごとに出す |
@@ -605,6 +619,7 @@ d1..dP、c1..cP、対に入らない単端ポート (番号順) で、例えば 
 | `wire_prox.peec` 丸線の断面分割 (10 × 10 格子の円内 80 セル) + 地板 | 鏡像が往復線の帰路 (中心間隔 2.5a)。低周波漸近 R/R_dc − 1 = x⁴[1/48 + Σ(a/D)²ⁿ/((2n+2)n²)] (x = a/δ = 0.3) で表皮係数 1/48 (実測 −3.1%) と近接係数 0.041128 (−1.7%)、x = 2 で Bessel の厳密解の増分 0.264643 (−1.7%)、内部インダクタンス μ0l/8π (−2.0%)、R_dc 厳密、鏡像 = 実在の帰路 (Hoer–Love の条件数による雑音 1.2e-7)。分割数 0 は拒否 | 1e-6 / 5% / 3% / 5% / 5% / 1e-6 |
 | `finite_gp.peec` 有限の地板 (plate) | 一辺 W = 16h の板の上の短い単線の 2 端子容量が鏡像法の平均電位法 C = 4πε0l²/(I_self − I(2h)) = 430.919 fF に収束 (実測 −0.15%)。W = 8h (−0.81%) より誤差が 2 倍以上小さく、どちらも下から近づく | 0.5% / 収束 |
 | `basis_dipole.peec` 区分線形の電流基底 (`basis = 1`) | 独立実装 (`tools/basis_study.py`) の Zin と片腕 4 / 8 分割で一致 (実測 8.6e-5 / 1.8e-5)。片腕 32 分割の従来の基底を参照に Rin 誤差が 4 分割で 1/3 以下・8 分割で従来より小さい。放射効率 ≈ 1、モノポール = ダイポール/2 (2e-10)、2 ポートの S21 = S12、送受の相反 4 方向 (4e-10 以下)、1 kHz で basis = 0 と一致、未対応の組み合わせは拒否 | 2e-4 / 1/3 / 0.5% / 1e-6 / 1e-9 / 1e-6 / 1e-9 |
+| `spice_export.peec` SPICE ネットリスト出力 (`spice = 1`) | `peec.cir` を awk で集中定数 (resistor / inductor / mutual / capacitor / tline) に変換して読み戻した回路の Zin・S が元の PEEC と一致 (集中定数 + 線路 + 負の k の結合 : 1.1e-10、地板 + 4 ポートの mm_twinline : 2.4e-9、面導体 + 誘電体の diel_pp (約 14 万本の K、C_e の枝 594 本) : 3.9e-10)。素子名の一意性・K の参照・\|k\| < 1・セル数と結合数、kmin の打ち切り数、未対応の入力の拒否 | 1e-7 / 1e-8 / 一致 |
 | `quad_skin_layers.peec` パネルの厚み方向分割 | 対称サンドイッチの中心板を quad (nt 層) に : nt = 6/12/24 の補外が 1D スラブ解 1.897806 (実測 −1.78%)、O(層厚²) 収束 (差の比 0.27)、plate 版の補外値と 0.09% で一致。DC 抵抗 0.1% | 3.5% / 0.35 / 0.5% / 0.1% |
 | `disk_annulus.peec` + `分割数t = 3` | 同一層の並列なので DC 抵抗が 1 層と一致 (法線・層の複製の経路)。分割数 0 は拒否 | 1e-6 / 2/2 |
 | `pw_counter.peec` 逆向きの 2 波の同時入射 | 自由空間の定在波 E_z = −2cos(kx)、H_y = −(2j/η0)sin(kx) を x = 0、λ/8、λ/4 で (散乱体は e·t = 0 で結合しない : 実測 4e-10) | 2e-6 |

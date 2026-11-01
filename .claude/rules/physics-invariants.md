@@ -661,6 +661,32 @@ tools/basis_study.py と一致) / `basis1 coarse accuracy` / `basis1 ff efficien
 basis_bent・basis_mono_pw の `recip` (遠方界と平面波の右辺の整合) /
 `basis1 low-f = basis0` / `basis parser guard`
 
+## (24) SPICE 出力は f = 0 の部分要素を solve() の前に書く (spice = 1)
+
+`spice = 1` (spice.c) は準静的な PEEC 等価回路を `peec.cir` に書く。守るべき
+約束は 4 つ。
+
+- **書くのは main の静的な充填 (lp_fill(0) / pot_fill(0)) の直後、solve() の前**。
+  `retardation = 1` では solve() が Lp と C = P⁻¹ を周波数ごとに複素数で作り直す
+  ので、後で書くと最後の周波数の遅延込みの値が混ざる。
+- **L の向きは区間の向き (n1 側に dot)**、相互は K = Lp_kl/√(Lp_kk Lp_ll)
+  で逆向きの区間は負。セルは n1 —R— X_k —L— n2 (R = 0 なら L だけ、誘電体セルは
+  R の代わりに過剰容量 C_e)。K を正に揃えようとして向きを変えると符号が狂う。
+- **容量は Maxwell の行列を枝に分ける** : 節点 - 基準が行和 Σ_j C_ij、節点間が
+  −C_ij。同じ導体のセル間では C_ij > 0 になり得るので負の枝が出る (省くと
+  容量行列が変わる)。`capacitor` が負の値を受け付けるのはこの読み戻しのため。
+- **数値は %.16e (17 桁)** で書き、double の往復で値が変わらないようにする。
+
+書き出しは近似を含まないので、読み戻した集中定数回路は元の PEEC と同じ Zin
+になる (違いは MNA の組み方の差による丸めだけ)。周波数依存 (遅延・表皮効果) は
+表せない (注記して DC / 準静的の値を書く)。誘電損・分散、損失のある線路、
+basis = 1、圧縮とは併用不可 (パーサが拒否)。
+
+**番人**: `spice reimport (mixed)` / `spice reimport S` / `spice reimport (gp 4-port)` /
+`spice reimport (diel)` (読み戻しが元の PEEC と 1e-7 で一致) /
+`spice netlist integrity` / `spice dielectric C_e` / `spice kmin threshold` /
+`spice parser guard`
+
 ## 並列化
 
 `lp_fill` / `pot_fill` / 近傍界の観測点ループは OpenMP 並列。並列ループ内で

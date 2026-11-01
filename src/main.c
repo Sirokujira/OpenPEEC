@@ -96,6 +96,13 @@ int main(int argc, char *argv[])
 		fclose(fp_log);
 		exit(1);
 	}
+	// spice = 1 : 準静的な部分要素 (f = 0) を書き出す。遅延ありでは solve() が
+	// Lp / C を周波数ごとに作り直すので、その前にここで書く
+	if (output_spice(&peec, FN_CIR, fp_log)) {
+		peec_free(&peec);
+		fclose(fp_log);
+		exit(1);
+	}
 
 	const double cpu1 = walltime();
 
@@ -138,6 +145,10 @@ int main(int argc, char *argv[])
 			strcat(str, ", ");
 			strcat(str, FN_FARPW);
 		}
+	}
+	if (peec.spice) {
+		strcat(str, ", ");
+		strcat(str, FN_CIR);
 	}
 	if (peec.nnf > 0) {
 		strcat(str, ", ");
