@@ -751,6 +751,22 @@ else
 	status=1
 fi
 
+# (bl) 有限の地板 (plate) が無限地板 (鏡像法の平均電位法) に収束すること
+getCport() { awk -F, -v tp="$TWOPI" 'NR==2{printf "%.9e", -1/(tp*$2*$4)}' "$csv"; }
+cp "$SRC/finite_gp.peec" "$WORK/"
+run finite_gp.peec
+c80=$(getCport)
+chk "finite plate C -> image" "$c80" 4.3091894e-13 0.005
+sed -e 's/^plate = .*/plate = -0.02 -0.02 0  0.04 0 0  0 0.04 0  1e-5 5.8e7 8 8/' \
+    -e 's/^node = 9 .*/node = 9 -0.02 -0.02 0/' "$SRC/finite_gp.peec" > "$WORK/finite_gp40.peec"
+run finite_gp40.peec
+awk -v a="$(getCport)" -v b="$c80" -v e=4.3091894e-13 'BEGIN {
+	e40 = (a / e) - 1; e80 = (b / e) - 1;
+	ok = (e40 < 0) && (e80 < 0) && (-e40 > -2 * e80);
+	printf "%-24s err(W=40mm)=%+.4f%% err(W=80mm)=%+.4f%% -> %s (both < 0, |e40| > 2|e80|)\n", "finite plate convergence", e40 * 100, e80 * 100, ok ? "OK" : "NG";
+	exit ok ? 0 : 1
+}' || status=1
+
 echo "--- round wire cross-section (skin and proximity)"
 # (bk) 丸線の断面分割 (10 x 10 格子の円内 80 セル) : 地板の鏡像が往復線の帰路
 #      (中心間隔 2.5a)。x = a/delta = 0.3 の低周波漸近 R/R_dc - 1 = x^4 [1/48 + Σ]

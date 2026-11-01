@@ -68,6 +68,7 @@ sh data/sample/peec_check.sh "$PWD/bin/peec" /tmp/peec-check
 | `src/nearfield.c` | 近傍界後処理 (`nearfield` → `near.csv` / 平面波の全界 `nearpw.csv`、E / H の遅延ポテンシャル) |
 | `src/transient.c` | 過渡応答 (`transient` → `tran.csv`、掃引の逆フーリエ変換) |
 | `tools/peec2h5.py` | CSV → HDF5 変換 (本体の依存を増やさないための外付け) |
+| `tools/basis_study.py` | 電流基底の次数の検討 (純 Python の試作。本体は従来の基底のまま) |
 
 ## 詳細な規則
 
